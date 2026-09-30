@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { decrypt } from './lib/auth';
 
-const publicRoutes = ['/login', '/api/auth/login', '/api/auth/logout', '/api/upload'];
+const publicRoutes = ['/login', '/api/auth/login', '/api/auth/logout', '/api/auth/microsoft/login', '/api/auth/microsoft/callback', '/api/upload'];
 const staticAssetRegex = /\.(ico|png|jpg|jpeg|svg|css|js|webp|woff|woff2|ttf|eot)$/;
 
 export async function middleware(request: NextRequest) {

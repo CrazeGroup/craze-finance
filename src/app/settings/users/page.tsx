@@ -81,7 +81,6 @@ export default function UsersPage() {
 
   const handleSave = async () => {
     if (!formData.username) return alert('El usuario es obligatorio');
-    if (!editingUserId && !formData.password) return alert('La contraseña es obligatoria para un nuevo usuario');
 
     try {
       const url = editingUserId ? `/api/users/${editingUserId}` : '/api/users';

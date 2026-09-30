@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { logAction } from '@/lib/logger';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 
 // Get all users
 export async function GET(req: Request) {
@@ -27,8 +28,8 @@ export async function POST(req: Request) {
   try {
     const { username, password, permissions } = await req.json();
 
-    if (!username || !password) {
-      return NextResponse.json({ error: 'Username and password are required' }, { status: 400 });
+    if (!username) {
+      return NextResponse.json({ error: 'Username is required' }, { status: 400 });
     }
 
     const existingUser = await prisma.user.findUnique({
@@ -39,7 +40,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Username already exists' }, { status: 400 });
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    // Without a password the user can only log in via Microsoft SSO (random, unknown hash)
+    const passwordHash = await bcrypt.hash(password || crypto.randomBytes(32).toString('hex'), 10);
     const permissionsString = JSON.stringify(permissions || []);
 
     const user = await prisma.user.create({

@@ -1,9 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Lock, User } from 'lucide-react';
 import Image from 'next/image';
+
+const SSO_ERRORS: Record<string, string> = {
+  sso_not_registered: 'Tu cuenta de Microsoft no está dada de alta en la aplicación. Contacta con un administrador.',
+  sso_cancelled: 'Inicio de sesión con Microsoft cancelado',
+  sso_invalid: 'No se pudo validar el inicio de sesión con Microsoft. Inténtalo de nuevo.',
+  sso_config: 'El inicio de sesión con Microsoft no está configurado',
+};
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
@@ -11,6 +18,11 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get('error');
+    if (code) setError(SSO_ERRORS[code] || 'Error al iniciar sesión');
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -60,6 +72,25 @@ export default function LoginPage() {
             {error}
           </div>
         )}
+
+        <a
+          href="/api/auth/microsoft/login"
+          className="w-full flex items-center justify-center gap-3 py-3 px-4 border border-gray-300 rounded-xl text-sm font-bold text-gray-800 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-black transition-colors"
+        >
+          <svg width="18" height="18" viewBox="0 0 21 21" aria-hidden="true">
+            <rect x="1" y="1" width="9" height="9" fill="#f25022" />
+            <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
+            <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
+            <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+          </svg>
+          Iniciar sesión con Microsoft
+        </a>
+
+        <div className="flex items-center my-6">
+          <div className="flex-1 border-t border-gray-200"></div>
+          <span className="px-3 text-xs font-medium text-gray-400">o con usuario y contraseña</span>
+          <div className="flex-1 border-t border-gray-200"></div>
+        </div>
 
         <form onSubmit={handleLogin} className="space-y-6">
           
