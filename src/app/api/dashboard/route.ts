@@ -33,7 +33,6 @@ export async function GET() {
     let totalCarteraClientes = 0;
     let totalVencido = 0;
     let totalMarkant = 0;
-    let totalConfirmadoMarkant = 0;
     let totalAmazon = 0;
     let totalRefundsCliente = 0;
 
@@ -48,21 +47,32 @@ export async function GET() {
         totalRefundsCliente += amt;
       }
 
-      // Check for Markant
-      const cName = (inv.customer.name || '').toLowerCase();
+      // Check for Markant — based exclusively on paymentMethod code
       const pMethod = (inv.paymentMethod || '').toLowerCase();
-      if (cName.includes('markant') || pMethod.includes('markant')) {
+      if (pMethod.includes('markant')) {
         totalMarkant += amt;
-        if (inv.confirmedPaymentDate) {
-          totalConfirmadoMarkant += amt;
-        }
       }
 
       // Check for Amazon
+      const cName = (inv.customer.name || '').toLowerCase();
       if (cName.includes('amazon') || pMethod.includes('amazon')) {
         totalAmazon += amt;
       }
     }
+
+    // Confirmado Markant: paymentMethod MARKANT + confirmedPaymentDate informed
+    // Includes both Open AND Overdue, because in Business Central there is no "Overdue" status —
+    // all outstanding invoices are "Open" in BC regardless of whether they are past due.
+    const confirmadoMarkantInvoices = await prisma.invoice.aggregate({
+      where: {
+        companyId,
+        status: { in: ['open', 'Open', 'Overdue', 'overdue'] },
+        paymentMethod: 'MARKANT',
+        confirmedPaymentDate: { not: null },
+      },
+      _sum: { amount: true },
+    });
+    const totalConfirmadoMarkant = confirmadoMarkantInvoices._sum.amount || 0;
 
     // 2. CARTERA PROVEEDORES (Pagos)
     const openPurchases = await prisma.purchaseInvoice.findMany({
