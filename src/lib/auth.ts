@@ -1,6 +1,10 @@
 import { SignJWT, jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
 
+// Login is off unless AUTH_ENABLED=true. When off, the app is public and everyone gets admin permissions.
+export const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
+export const PUBLIC_SESSION = { id: '0', username: '', permissions: '["admin"]' };
+
 const secretKey = process.env.JWT_SECRET || 'craze-super-secret-key-2026';
 const key = new TextEncoder().encode(secretKey);
 
@@ -20,6 +24,7 @@ export async function decrypt(input: string): Promise<any> {
 }
 
 export async function getSession() {
+  if (!AUTH_ENABLED) return PUBLIC_SESSION;
   const cookieStore = await cookies();
   const session = cookieStore.get('auth-token')?.value;
   if (!session) return null;

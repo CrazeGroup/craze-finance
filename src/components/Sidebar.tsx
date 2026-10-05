@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { LogOut, Building2 } from 'lucide-react';
 import { useCompany, COMPANIES } from '@/contexts/CompanyContext';
 
-export default function Sidebar({ permissions = [], username = '' }: { permissions: string[], username: string }) {
+export default function Sidebar({ permissions = [], username = '', authEnabled = true }: { permissions: string[], username: string, authEnabled?: boolean }) {
   const pathname = usePathname();
   const router = useRouter();
   const { selectedCompany, setSelectedCompany } = useCompany();
@@ -29,7 +29,7 @@ export default function Sidebar({ permissions = [], username = '' }: { permissio
     { href: '/bwa', label: 'BWA Analytics', module: 'bwa' },
     { href: '/insurances', label: 'Seguros', module: 'seguros' },
     { href: '/contracts', label: 'Contratos', module: 'contratos' },
-    { href: '/settings/users', label: 'Usuarios', module: 'admin' },
+    ...(authEnabled ? [{ href: '/settings/users', label: 'Usuarios', module: 'admin' }] : []),
     { href: '/settings/logs', label: 'Auditoría', module: 'auditoria' },
     { href: '/settings', label: 'Configuración', module: 'configuracion' },
   ];
@@ -96,6 +96,7 @@ export default function Sidebar({ permissions = [], username = '' }: { permissio
           );
         })}
       </nav>
+      {authEnabled && (
       <div className="p-4 border-t border-gray-200">
         <button 
           onClick={handleLogout}
@@ -104,6 +105,7 @@ export default function Sidebar({ permissions = [], username = '' }: { permissio
           <LogOut size={18} /> Cerrar Sesión
         </button>
       </div>
+      )}
     </aside>
   );
 }
