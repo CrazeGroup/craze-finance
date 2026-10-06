@@ -197,3 +197,41 @@ export function mergePortfolios(list: Portfolio[]): Portfolio {
   }
   return merged;
 }
+
+// ---- Excels subidos para el Reporting (guardados en ApiConfig, clave 'reporting:<tipo>:<empresa>:<mes>') ----
+
+export type UploadKind = 'inventory';
+
+const uploadKey = (kind: UploadKind, companyId: string, month: string) => `reporting:${kind}:${companyId}:${month}`;
+
+export async function getUpload<T>(kind: UploadKind, companyId: string, month: string): Promise<T | null> {
+  const row = await prisma.apiConfig.findUnique({ where: { key: uploadKey(kind, companyId, month) } });
+  if (!row?.config) return null;
+  try {
+    return JSON.parse(row.config) as T;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveUpload(kind: UploadKind, companyId: string, month: string, data: unknown) {
+  const key = uploadKey(kind, companyId, month);
+  const config = JSON.stringify(data);
+  await prisma.apiConfig.upsert({ where: { key }, update: { config }, create: { key, url: '', config } });
+}
+
+export async function deleteUpload(kind: UploadKind, companyId: string, month: string) {
+  await prisma.apiConfig.deleteMany({ where: { key: uploadKey(kind, companyId, month) } });
+}
+
+// Meses con Excel subido para una empresa
+export async function listUploads(kind: UploadKind, companyId: string) {
+  const prefix = `reporting:${kind}:${companyId}:`;
+  const rows = await prisma.apiConfig.findMany({
+    where: { key: { startsWith: prefix } },
+    select: { key: true, updatedAt: true },
+  });
+  return rows
+    .map(r => ({ month: r.key.substring(prefix.length), updatedAt: r.updatedAt }))
+    .sort((a, b) => a.month.localeCompare(b.month));
+}

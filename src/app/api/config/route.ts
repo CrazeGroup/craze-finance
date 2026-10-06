@@ -3,7 +3,8 @@ import prisma from '@/lib/prisma';
 
 export async function GET() {
   try {
-    const configs = await prisma.apiConfig.findMany();
+    // Los Excels del Reporting también se guardan en ApiConfig: no se devuelven aquí
+    const configs = await prisma.apiConfig.findMany({ where: { NOT: { key: { startsWith: 'reporting:' } } } });
     return NextResponse.json(configs);
   } catch (error) {
     return NextResponse.json({ error: 'Failed to fetch configs' }, { status: 500 });

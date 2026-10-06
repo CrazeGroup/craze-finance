@@ -1,56 +1,12 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { getBcContext, bcFetchAll, BcContext } from '@/lib/bcClient';
-import { getReportingConfig, monthEnd, parseMonths, shiftMonth } from '@/lib/reporting';
+import { getUpload, parseMonths, shiftMonth } from '@/lib/reporting';
+import { ADJUSTMENT_LABEL, compareInventory, InventoryUpload, valueByLocation } from '@/lib/reportingExcel';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
 
-// Campos de la página "Value Entries" (5802) publicada como servicio web OData en BC
-const F = {
-  date: 'Posting_Date',
-  item: 'Item_No',
-  location: 'Location_Code',
-  cost: 'Cost_Amount_Actual',
-  qty: 'Item_Ledger_Entry_Quantity',
-};
-
-type Totals = Map<string, { cost: number; qty: number }>;
-
-// Valor y cantidad de inventario a una fecha, agrupado por almacén o por producto
-type Aggregator = (date: string, groupField: string) => Promise<Totals>;
-
-// Agrega en BC con $apply (rápido, BC devuelve una fila por grupo)
-function bcAggregator(ctx: BcContext, service: string): Aggregator {
-  return async (date, groupField) => {
-    const apply = `filter(${F.date} le ${date})/groupby((${groupField}),aggregate(${F.cost} with sum as Cost,${F.qty} with sum as Qty))`;
-    const rows = await bcFetchAll(`${ctx.odataCompanyBase}/${service}?$apply=${encodeURIComponent(apply)}`, ctx.token);
-    const totals: Totals = new Map();
-    for (const r of rows) totals.set(r[groupField] || '', { cost: r.Cost || 0, qty: r.Qty || 0 });
-    return totals;
-  };
-}
-
-// Alternativa si BC no admite $apply: descarga los movimientos hasta la última fecha y agrega aquí
-async function rawAggregator(ctx: BcContext, service: string, lastDate: string): Promise<Aggregator> {
-  const select = [F.date, F.item, F.location, F.cost, F.qty].join(',');
-  const entries = await bcFetchAll(
-    `${ctx.odataCompanyBase}/${service}?$filter=${encodeURIComponent(`${F.date} le ${lastDate}`)}&$select=${select}`,
-    ctx.token
-  );
-  return async (date, groupField) => {
-    const totals: Totals = new Map();
-    for (const e of entries) {
-      if (String(e[F.date]).substring(0, 10) > date) continue;
-      const key = e[groupField] || '';
-      const t = totals.get(key) || { cost: 0, qty: 0 };
-      t.cost += e[F.cost] || 0;
-      t.qty += e[F.qty] || 0;
-      totals.set(key, t);
-    }
-    return totals;
-  };
-}
+// Temporalmente, el inventario sale de los Excels "Inventory Value" de BC subidos por mes
+// (en lugar de la API de Value Entries).
 
 export async function GET(req: Request) {
   try {
@@ -62,102 +18,43 @@ export async function GET(req: Request) {
     const months = parseMonths(new URL(req.url).searchParams.get('months'));
     if (months.length === 0) return NextResponse.json({ error: 'Selecciona al menos un mes.' }, { status: 400 });
 
-    const { valueEntriesService } = await getReportingConfig();
-    const ctx = await getBcContext(companyId);
-
     // Comparativa: cierre del mes anterior al periodo vs cierre del último mes seleccionado
     const startMonth = shiftMonth(months[0], -1);
-    const startDate = monthEnd(startMonth);
-    const endDate = monthEnd(months[months.length - 1]);
+    const endMonth = months[months.length - 1];
+    const neededMonths = Array.from(new Set([startMonth, ...months]));
+    const uploads = new Map<string, InventoryUpload | null>(
+      await Promise.all(neededMonths.map(async m => [m, await getUpload<InventoryUpload>('inventory', companyId, m)] as const))
+    );
 
-    let aggregate: Aggregator = bcAggregator(ctx, valueEntriesService);
-    let method: 'aggregate' | 'raw' = 'aggregate';
-    let firstLocation: Totals;
-    try {
-      firstLocation = await aggregate(monthEnd(months[0]), F.location);
-    } catch (applyError: any) {
-      console.warn('BC $apply no disponible, se agregan los movimientos en la app:', applyError.message);
-      try {
-        aggregate = await rawAggregator(ctx, valueEntriesService, endDate);
-        method = 'raw';
-        firstLocation = await aggregate(monthEnd(months[0]), F.location);
-      } catch (rawError: any) {
-        throw new Error(
-          `No se pudieron leer los movimientos de valor ("${valueEntriesService}") de BC. ` +
-          `Comprueba que la página Value Entries (5802) está publicada como servicio web con ese nombre. Detalle: ${rawError.message}`
-        );
-      }
-    }
-
-    const [restLocations, startItems, endItems, items] = await Promise.all([
-      Promise.all(months.slice(1).map(m => aggregate(monthEnd(m), F.location))),
-      aggregate(startDate, F.item),
-      aggregate(endDate, F.item),
-      bcFetchAll(`${ctx.apiBase}/items?$select=number,displayName,type`, ctx.token),
-    ]);
-    const locationsByMonth = [firstLocation, ...restLocations];
-
-    // Valor de inventario por almacén a cierre de cada mes seleccionado
-    const locationCodes = new Set<string>();
-    locationsByMonth.forEach(t => t.forEach((_, code) => locationCodes.add(code)));
-    const byLocation = Array.from(locationCodes)
-      .map(code => ({
-        location: code || '(Sin almacén)',
-        values: Object.fromEntries(months.map((m, i) => [m, locationsByMonth[i].get(code)?.cost || 0])),
+    // Valor por almacén de cada mes seleccionado (null si falta el Excel del mes)
+    const valuesByMonth = new Map(months.map(m => {
+      const upload = uploads.get(m);
+      return [m, upload ? valueByLocation(upload) : null] as const;
+    }));
+    const locationNames = new Set<string>();
+    valuesByMonth.forEach(v => v && Object.keys(v).forEach(l => locationNames.add(l)));
+    const byLocation = Array.from(locationNames)
+      .map(location => ({
+        location,
+        values: Object.fromEntries(months.map(m => [m, valuesByMonth.get(m) ? (valuesByMonth.get(m)![location] || 0) : null])),
       }))
-      .filter(row => Object.values(row.values).some(v => Math.abs(v) >= 0.01))
-      .sort((a, b) => a.location.localeCompare(b.location));
-    const totals = Object.fromEntries(months.map((m, i) => [m, Array.from(locationsByMonth[i].values()).reduce((s, t) => s + t.cost, 0)]));
+      .filter(row => Object.values(row.values).some(v => v !== null && Math.abs(v) >= 0.01))
+      // Almacenes de mayor a menor valor en el último mes; el ajuste al final
+      .sort((a, b) => (a.location === ADJUSTMENT_LABEL ? 1 : b.location === ADJUSTMENT_LABEL ? -1 : (b.values[endMonth] || 0) - (a.values[endMonth] || 0)));
+    const totals = Object.fromEntries(months.map(m => [m, uploads.get(m)?.total ?? null]));
 
-    // Variación por producto entre el cierre anterior y el final del periodo
-    const itemInfo = new Map(items.map((i: any) => [i.number, { name: i.displayName, type: i.type }]));
-    const itemNos = new Set([...startItems.keys(), ...endItems.keys()]);
-    const changes = Array.from(itemNos).map(itemNo => {
-      const start = startItems.get(itemNo) || { cost: 0, qty: 0 };
-      const end = endItems.get(itemNo) || { cost: 0, qty: 0 };
-      return {
-        itemNo,
-        description: itemInfo.get(itemNo)?.name || '',
-        startValue: start.cost,
-        endValue: end.cost,
-        diff: end.cost - start.cost,
-        startQty: start.qty,
-        endQty: end.qty,
-      };
-    });
-    const topUp = changes.filter(c => c.diff > 0.01).sort((a, b) => b.diff - a.diff).slice(0, 10);
-    const topDown = changes.filter(c => c.diff < -0.01).sort((a, b) => a.diff - b.diff).slice(0, 10);
-
-    // Coste medio (valor / cantidad) de productos de tipo Inventario
-    const avgCostItems = changes
-      .filter(c => itemInfo.get(c.itemNo)?.type === 'Inventory' && c.startQty > 0 && c.endQty > 0)
-      .map(c => {
-        const startUnitCost = c.startValue / c.startQty;
-        const endUnitCost = c.endValue / c.endQty;
-        return {
-          itemNo: c.itemNo,
-          description: c.description,
-          startUnitCost,
-          endUnitCost,
-          variationPct: startUnitCost !== 0 ? ((endUnitCost - startUnitCost) / Math.abs(startUnitCost)) * 100 : 0,
-          endQty: c.endQty,
-        };
-      })
-      .filter(i => Math.abs(i.endUnitCost - i.startUnitCost) >= 0.0001);
+    const start = uploads.get(startMonth);
+    const end = uploads.get(endMonth);
 
     return NextResponse.json({
-      method,
+      source: 'excel',
       startMonth,
-      endMonth: months[months.length - 1],
+      endMonth,
+      missingMonths: months.filter(m => !uploads.get(m)),
       byLocation,
       totals,
-      topUp,
-      topDown,
-      avgCost: {
-        increased: avgCostItems.filter(i => i.variationPct > 0).length,
-        decreased: avgCostItems.filter(i => i.variationPct < 0).length,
-        items: avgCostItems.sort((a, b) => Math.abs(b.variationPct) - Math.abs(a.variationPct)).slice(0, 25),
-      },
+      comparison: start && end ? compareInventory(start, end) : null,
+      comparisonMissing: [startMonth, endMonth].filter(m => !uploads.get(m)),
     });
   } catch (error: any) {
     console.error('Error in reporting inventory:', error);

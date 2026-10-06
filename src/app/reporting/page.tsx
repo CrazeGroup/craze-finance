@@ -1,11 +1,13 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import * as XLSX from 'xlsx';
 import {
   BarChart3, PackageSearch, ShoppingCart, Users, TrendingUp, TrendingDown, Banknote,
-  CheckCircle2, Clock, Truck, Globe2, Landmark, FileSpreadsheet, Wallet, Settings, Save, X, AlertCircle
+  CheckCircle2, Clock, Truck, Globe2, Landmark, FileSpreadsheet, Wallet, Settings, Save, X, AlertCircle, Upload, Trash2
 } from 'lucide-react';
 import { useCompany } from '@/contexts/CompanyContext';
+import { parseInventoryValueSheet } from '@/lib/reportingExcel';
 
 // ---------- Utilidades ----------
 
@@ -272,6 +274,83 @@ function SplitCards({ months, portfolio, pick, labels }: any) {
   );
 }
 
+// ---------- Excels subidos ----------
+
+const UPLOAD_PARSERS: Record<string, (rows: any[][]) => { month: string; toDate: string }> = {
+  inventory: parseInventoryValueSheet,
+};
+
+// Subida de un Excel de BC: se lee en el navegador, se detecta el mes y se guarda por empresa y mes
+function ExcelUploadBar({ kind, label, onUploaded }: { kind: string; label: string; onUploaded: () => void }) {
+  const [uploads, setUploads] = useState<{ month: string; updatedAt: string }[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const load = () => fetch(`/api/reporting/uploads?kind=${kind}`, { cache: 'no-store' })
+    .then(r => r.json()).then(d => setUploads(d.uploads || [])).catch(() => {});
+  useEffect(() => { load(); }, [kind]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const upload = async (file: File) => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const rows = XLSX.utils.sheet_to_json<any[]>(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: null });
+      const data = UPLOAD_PARSERS[kind](rows);
+      if (uploads.some(u => u.month === data.month) && !confirm(`Ya hay un Excel de ${monthLabel(data.month)}. ¿Sustituirlo?`)) return;
+      const res = await fetch(`/api/reporting/uploads?kind=${kind}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ month: data.month, data }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Error al guardar el Excel');
+      setMessage({ ok: true, text: `Excel guardado como ${monthLabel(data.month)} (fecha ${new Date(data.toDate).toLocaleDateString('es-ES')}).` });
+      await load();
+      onUploaded();
+    } catch (error: any) {
+      setMessage({ ok: false, text: error.message });
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+
+  const remove = async (month: string) => {
+    if (!confirm(`¿Eliminar el Excel de ${monthLabel(month)}?`)) return;
+    await fetch(`/api/reporting/uploads?kind=${kind}&month=${month}`, { method: 'DELETE' });
+    await load();
+    onUploaded();
+  };
+
+  return (
+    <div className="bg-white border border-dashed border-gray-300 rounded-xl p-4 mb-4 space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <input ref={inputRef} type="file" accept=".xlsx,.xls" className="hidden"
+          onChange={e => e.target.files?.[0] && upload(e.target.files[0])} />
+        <button onClick={() => inputRef.current?.click()} disabled={busy}
+          className="flex items-center gap-2 bg-black text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-gray-800 disabled:opacity-50">
+          <Upload size={16} /> {busy ? 'Leyendo...' : `Subir Excel ${label}`}
+        </button>
+        <span className="text-xs text-gray-500">El mes se toma de la fecha del Excel. Se guarda para la empresa seleccionada.</span>
+      </div>
+      {message && <p className={`text-sm ${message.ok ? 'text-emerald-700' : 'text-red-600'}`}>{message.text}</p>}
+      {uploads.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Cargados:</span>
+          {uploads.map(u => (
+            <span key={u.month} className="flex items-center gap-1 bg-gray-100 text-gray-700 text-xs font-semibold pl-2.5 pr-1 py-1 rounded-md">
+              {monthLabel(u.month)}
+              <button onClick={() => remove(u.month)} title="Eliminar" className="p-0.5 text-gray-400 hover:text-red-600"><Trash2 size={12} /></button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---------- Operacional ----------
 
 function TopItemsTable({ title, items, icon }: any) {
@@ -303,27 +382,44 @@ function TopItemsTable({ title, items, icon }: any) {
   );
 }
 
-function OperationalTab({ months, reloadKey }: { months: string[]; reloadKey: number }) {
-  const inventory = useReport('inventory', months, reloadKey);
+function OperationalTab({ months, reloadKey, companySelected }: { months: string[]; reloadKey: number; companySelected: boolean }) {
+  const [uploadKey, setUploadKey] = useState(0);
+  const inventory = useReport('inventory', months, reloadKey + uploadKey);
   const purchases = useReport('purchases', months, reloadKey);
   const portfolio = useReport('portfolio', months, reloadKey);
   const inv = inventory.data;
 
   return (
     <div className="space-y-10">
+      {companySelected && <ExcelUploadBar kind="inventory" label="Inventory Value" onUploaded={() => setUploadKey(k => k + 1)} />}
       <Section title="Valor de inventario por almacén" icon={<PackageSearch />} state={inventory}
-        subtitle="Valor a coste real (Value Entries de BC) a último día de cada mes seleccionado.">
+        subtitle="Excel Inventory Value de BC a último día de cada mes. Valor por almacén = cantidad x coste unitario del producto.">
         {inv && (
           <div className="space-y-4">
-            <MonthTable months={months} rows={[
-              ...inv.byLocation.map((l: any) => ({ label: l.location, values: l.values })),
-              { label: 'Total', bold: true, values: inv.totals },
-            ]} />
-            <p className="text-xs text-gray-500">Top 10 productos: cierre de {monthLabel(inv.startMonth)} vs cierre de {monthLabel(inv.endMonth)}.</p>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <TopItemsTable title="Top 10 que más han subido" items={inv.topUp} icon={<TrendingUp size={16} className="text-emerald-600" />} />
-              <TopItemsTable title="Top 10 que más han bajado" items={inv.topDown} icon={<TrendingDown size={16} className="text-red-600" />} />
-            </div>
+            {inv.missingMonths.length > 0 && (
+              <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                Falta el Excel de: {inv.missingMonths.map(monthLabel).join(', ')}.
+              </p>
+            )}
+            {inv.byLocation.length > 0 && (
+              <MonthTable months={months} rows={[
+                ...inv.byLocation.map((l: any) => ({ label: l.location, values: l.values })),
+                { label: 'Total', bold: true, values: inv.totals },
+              ]} />
+            )}
+            {inv.comparison ? (
+              <>
+                <p className="text-xs text-gray-500">Top 10 productos: cierre de {monthLabel(inv.startMonth)} vs cierre de {monthLabel(inv.endMonth)}.</p>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <TopItemsTable title="Top 10 que más han subido" items={inv.comparison.topUp} icon={<TrendingUp size={16} className="text-emerald-600" />} />
+                  <TopItemsTable title="Top 10 que más han bajado" items={inv.comparison.topDown} icon={<TrendingDown size={16} className="text-red-600" />} />
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-gray-500">
+                Para el top 10 de productos sube también el Excel de {inv.comparisonMissing.map(monthLabel).join(' y ')} (se compara con el cierre del mes anterior).
+              </p>
+            )}
           </div>
         )}
       </Section>
@@ -386,11 +482,14 @@ function OperationalTab({ months, reloadKey }: { months: string[]; reloadKey: nu
 
       <Section title="Variación del coste medio (productos de Inventario)" icon={<BarChart3 />} state={inventory}
         subtitle={inv ? `Coste medio (valor / cantidad) a cierre de ${monthLabel(inv.startMonth)} vs ${monthLabel(inv.endMonth)}. Se muestran las 25 mayores variaciones.` : ''}>
-        {inv && (
+        {inv && !inv.comparison && (
+          <p className="text-sm text-gray-500">Sube el Excel de {inv.comparisonMissing.map(monthLabel).join(' y ')} para comparar el coste medio.</p>
+        )}
+        {inv?.comparison && (
           <div className="space-y-4">
             <div className="flex gap-3 text-sm">
-              <span className="bg-red-50 text-red-700 font-semibold px-3 py-1.5 rounded-lg">{inv.avgCost.increased} productos suben</span>
-              <span className="bg-emerald-50 text-emerald-700 font-semibold px-3 py-1.5 rounded-lg">{inv.avgCost.decreased} productos bajan</span>
+              <span className="bg-red-50 text-red-700 font-semibold px-3 py-1.5 rounded-lg">{inv.comparison.avgCost.increased} productos suben</span>
+              <span className="bg-emerald-50 text-emerald-700 font-semibold px-3 py-1.5 rounded-lg">{inv.comparison.avgCost.decreased} productos bajan</span>
             </div>
             <Card>
               <table className="w-full text-sm">
@@ -404,8 +503,8 @@ function OperationalTab({ months, reloadKey }: { months: string[]; reloadKey: nu
                   </tr>
                 </thead>
                 <tbody>
-                  {inv.avgCost.items.length === 0 && <tr><td colSpan={5} className="p-3 text-gray-400 text-center">Sin variaciones de coste medio</td></tr>}
-                  {inv.avgCost.items.map((i: any) => (
+                  {inv.comparison.avgCost.items.length === 0 && <tr><td colSpan={5} className="p-3 text-gray-400 text-center">Sin variaciones de coste medio</td></tr>}
+                  {inv.comparison.avgCost.items.map((i: any) => (
                     <tr key={i.itemNo} className="border-t border-gray-100 text-gray-700">
                       <td className="p-3"><span className="font-semibold text-black">{i.itemNo}</span> <span className="text-gray-500">{i.description}</span></td>
                       <td className="p-3 text-right whitespace-nowrap">{formatCurrency(i.startUnitCost)}</td>
@@ -665,7 +764,7 @@ export default function ReportingPage() {
         </div>
 
         {tab === 'operational'
-          ? <OperationalTab months={months} reloadKey={reloadKey} />
+          ? <OperationalTab months={months} reloadKey={reloadKey} companySelected={selectedCompany !== 'ALL'} />
           : <ManagementTab months={months} reloadKey={reloadKey} openConfig={() => setShowConfig(true)} />}
       </div>
     </div>
