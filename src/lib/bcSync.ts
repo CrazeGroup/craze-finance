@@ -271,6 +271,13 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
         
         const allLedgerData = await fetchODataAllPages(ledgerUrl, accessToken);
         if (allLedgerData.length > 0) totalStats.custLedgerFields = Object.keys(allLedgerData[0]);
+        // Diagnóstico temporal: campos de la página OData Cust_LedgerEntries
+        try {
+          const odataSample = await fetchODataAllPages(`${odataBaseUrl}/Company('${escapedCompanyName}')/Cust_LedgerEntries?$top=1`, accessToken);
+          if (odataSample.length > 0) totalStats.custLedgerFields.push('--- ODataV4 Cust_LedgerEntries ---', ...Object.keys(odataSample[0]));
+        } catch (e: any) {
+          totalStats.custLedgerFields.push(`--- ODataV4 Cust_LedgerEntries error: ${e.message}`);
+        }
         const syncedCustomerInvoiceIds: string[] = [];
         
         // --- BULK OPTIMIZATION START ---
