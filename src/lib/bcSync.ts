@@ -49,15 +49,11 @@ function invoiceChanged(existing: any, data: any) {
   );
 }
 
-// Fecha de pago confirmada de un movimiento de cliente. El nombre del campo en la API custom de BC
-// puede llevar sufijo (p. ej. ...CRZ), así que se busca cualquier campo con "confirm" en el nombre.
+// Fecha de pago confirmada (campo Confirmed Payment Date de la API custom de BC, "confirmedPaymentDate").
+// Vacía si BC no la tiene; no se usa la Promised Pay Date como sustituto.
 function findConfirmedPaymentDate(entry: any): Date | null {
-  const isDate = (v: any) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) && !v.startsWith('0001-01-01');
-  const explicit = [entry.confirmedPaymentDate, entry.crazeConfirmedPaymentDate, entry.craze_ConfirmedPaymentDate].find(isDate);
-  if (explicit) return new Date(explicit);
-  const key = Object.keys(entry).find(k => k.toLowerCase().includes('confirm') && isDate(entry[k]));
-  if (key) return new Date(entry[key]);
-  return isDate(entry.promisedPayDate) ? new Date(entry.promisedPayDate) : null;
+  const value = entry.confirmedPaymentDate;
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value) && !value.startsWith('0001-01-01') ? new Date(value) : null;
 }
 
 // Helper to fetch all pages of OData V4 response
