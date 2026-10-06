@@ -129,7 +129,7 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
   const targetCompanyNames = specificCompany ? [specificCompany] : [
     'CRAZE', 
     'Craze Iberia SL', 
-    'Craze Toys', 
+    'Craze UK', // "CRAZE Toys Ltd" en BC
     'CRAZE Group AG', 
     'Craze Entertainment'
   ];

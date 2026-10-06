@@ -79,7 +79,7 @@ export default function SettingsPage() {
     const companiesToSync = [
       'CRAZE', 
       'Craze Iberia SL', 
-      'Craze Toys', 
+      'Craze UK', // "CRAZE Toys Ltd" en BC
       'CRAZE Group AG', 
       'Craze Entertainment'
     ];
