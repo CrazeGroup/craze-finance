@@ -60,13 +60,14 @@ export async function GET() {
       }
     }
 
-    // Confirmado Markant: paymentMethod MARKANT + confirmedPaymentDate informed
+    // Confirmado Markant: facturas (Document Type Invoice) abiertas con paymentMethod MARKANT + confirmedPaymentDate informed
     // Includes both Open AND Overdue, because in Business Central there is no "Overdue" status —
     // all outstanding invoices are "Open" in BC regardless of whether they are past due.
     const confirmadoMarkantInvoices = await prisma.invoice.aggregate({
       where: {
         companyId,
         status: { in: ['open', 'Open', 'Overdue', 'overdue'] },
+        type: { in: ['invoice', 'Invoice'] },
         paymentMethod: 'MARKANT',
         confirmedPaymentDate: { not: null },
       },

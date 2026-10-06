@@ -1,4 +1,5 @@
 import prisma from '@/lib/prisma';
+import { CUSTOMER_INVOICE_TYPES } from '@/lib/documentTypes';
 
 export async function generateReportHtml(customerId: number, invoiceIds: number[], customMessage?: string) {
   const customer = await prisma.customer.findUnique({
@@ -119,7 +120,7 @@ export async function generateReportHtml(customerId: number, invoiceIds: number[
   const totalAmount = invoices.reduce((acc, inv) => acc + inv.amount, 0);
 
   const balanceAggr = await prisma.invoice.aggregate({
-    where: { customerId, status: { in: ['Open', 'Overdue', 'open', 'overdue'] } },
+    where: { customerId, status: { in: ['Open', 'Overdue', 'open', 'overdue'] }, type: { in: CUSTOMER_INVOICE_TYPES } },
     _sum: { amount: true }
   });
   const customerBalance = balanceAggr._sum.amount || 0;

@@ -1,4 +1,5 @@
 import prisma from '@/lib/prisma';
+import { CUSTOMER_INVOICE_TYPES } from '@/lib/documentTypes';
 
 // Movimientos de cashflow (transferencias de clientes, manuales y recurrentes) con saldo acumulado.
 // Compartido por la página de Cashflow y el Reporting.
@@ -16,6 +17,7 @@ export async function getCashflow(companyId: string, currency: string, showArchi
       companyId,
       paymentMethod: 'MARKANT',
       status: { not: 'Closed' },
+      type: { in: CUSTOMER_INVOICE_TYPES },
       isArchived: showArchived,
       confirmedPaymentDate: { not: null },
       currencyCode: currency
@@ -48,6 +50,7 @@ export async function getCashflow(companyId: string, currency: string, showArchi
       companyId,
       paymentMethod: 'TRANSFER',
       status: { not: 'Closed' },
+      type: { in: CUSTOMER_INVOICE_TYPES },
       isArchived: showArchived,
       currencyCode: currency
     },

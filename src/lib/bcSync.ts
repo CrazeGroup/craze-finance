@@ -1,5 +1,6 @@
 import prisma from '@/lib/prisma';
 import salespeopleMapData from '@/lib/salespeopleMap.json';
+import { ledgerKey, customerDocType, vendorDocType } from '@/lib/documentTypes';
 
 // Helper to get OAuth token via Entra ID for Business Central
 export async function getAccessToken(tenantId: string, clientId: string, clientSecret: string) {
@@ -31,6 +32,21 @@ async function chunkedUpdate(updates: any[], updateFn: (update: any) => Promise<
     const chunk = updates.slice(i, i + chunkSize);
     await Promise.all(chunk.map(updateFn));
   }
+}
+
+// Compara un movimiento de cliente guardado con el que llega de BC
+// (incluye la fecha de pago confirmada, que puede informarse en BC después de crear la factura)
+function invoiceChanged(existing: any, data: any) {
+  return (
+    existing.amount !== data.amount ||
+    existing.originalAmount !== data.originalAmount ||
+    existing.status !== data.status ||
+    existing.paymentMethod !== data.paymentMethod ||
+    existing.type !== data.type ||
+    existing.customerId !== data.customerId ||
+    existing.dueDate.getTime() !== data.dueDate.getTime() ||
+    (existing.confirmedPaymentDate?.getTime() || 0) !== (data.confirmedPaymentDate?.getTime() || 0)
+  );
 }
 
 // Helper to fetch all pages of OData V4 response
@@ -237,7 +253,8 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
       if (step === 'all' || step === 'invoices') {
       console.log(`[${exactCompanyName}] Sincronizando Customer Ledger Entries...`);
       try {
-        const ledgerUrl = `${customApiBaseUrl}/custLedgerEntries?$filter=(documentType eq 'Invoice' or documentType eq 'Credit Memo' or documentType eq 'Refund') and open eq true`;
+        // Todos los movimientos abiertos, de cualquier Document Type (facturas, abonos, pagos, ...)
+        const ledgerUrl = `${customApiBaseUrl}/custLedgerEntries?$filter=open eq true`;
         
         const allLedgerData = await fetchODataAllPages(ledgerUrl, accessToken);
         const syncedCustomerInvoiceIds: string[] = [];
@@ -250,13 +267,14 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
         // Fetch all existing invoices for this company at once
         const allInvoices = await prisma.invoice.findMany({ 
           where: { companyId: exactCompanyName },
-          select: { id: true, bcId: true, amount: true, originalAmount: true, status: true, dueDate: true, paymentMethod: true }
+          select: { id: true, bcId: true, customerId: true, type: true, amount: true, originalAmount: true, status: true, dueDate: true, paymentMethod: true, confirmedPaymentDate: true }
         });
         const invoiceMap = new Map(allInvoices.map(i => [i.bcId, i]));
         
         const invoiceCreates: any[] = [];
         const invoiceUpdates: any[] = [];
         const activeDocumentIds = new Set<string>();
+        const pendingInvoices = new Map<string, any>();
 
         for (const entry of allLedgerData) {
           const customerBcId = entry.customerNo || entry.customerNumber || entry.sellToCustomerNo || entry.Customer_No;
@@ -276,11 +294,9 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
           const documentBcId = entry.documentNo || entry.documentNumber || entry.Document_No;
           if (!documentBcId) continue;
 
-          activeDocumentIds.add(String(documentBcId));
-
           const invData = {
             customerId: customer.id,
-            type: entry.documentType === 'Credit Memo' ? 'Credit Memo' : entry.documentType === 'Refund' ? 'Refund' : 'invoice',
+            type: customerDocType(entry.documentType),
             status: dueDate < new Date() ? 'Overdue' : 'Open',
             amount: remainingAmount,
             originalAmount: originalAmount,
@@ -291,16 +307,24 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
             companyId: exactCompanyName
           };
 
-          const existingInvoice = invoiceMap.get(String(documentBcId));
+          // Varios movimientos con la misma clave (p. ej. un pago repartido) se suman
+          const key = ledgerKey(entry.documentType, String(documentBcId), entry.entryNo);
+          const pending = pendingInvoices.get(key);
+          if (pending) {
+            pending.amount += invData.amount;
+            pending.originalAmount += invData.originalAmount;
+          } else {
+            pendingInvoices.set(key, invData);
+          }
+          totalStats.invoices++;
+        }
+
+        for (const [key, invData] of pendingInvoices) {
+          activeDocumentIds.add(key);
+          const existingInvoice = invoiceMap.get(key);
           if (existingInvoice) {
             // Only update if something changed
-            if (
-              existingInvoice.amount !== invData.amount ||
-              existingInvoice.originalAmount !== invData.originalAmount ||
-              existingInvoice.status !== invData.status ||
-              existingInvoice.paymentMethod !== invData.paymentMethod ||
-              existingInvoice.dueDate.getTime() !== invData.dueDate.getTime()
-            ) {
+            if (invoiceChanged(existingInvoice, invData)) {
               invoiceUpdates.push({
                 where: { id: existingInvoice.id },
                 data: invData
@@ -308,11 +332,10 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
             }
           } else {
             invoiceCreates.push({
-              bcId: String(documentBcId),
+              bcId: key,
               ...invData
             });
           }
-          totalStats.invoices++;
         }
         
         // Execute creates in bulk
@@ -342,7 +365,7 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
       } catch (error) {
         console.warn(`[${exactCompanyName}] Custom API failed, falling back to ODataV4:`, error);
         
-        const fallbackLedgerUrl = `${odataBaseUrl}/Company('${escapedCompanyName}')/Cust_LedgerEntries?$filter=Document_Type eq 'Invoice' and Open eq true`;
+        const fallbackLedgerUrl = `${odataBaseUrl}/Company('${escapedCompanyName}')/Cust_LedgerEntries?$filter=Open eq true`;
         try {
           const allFallbackData = await fetchODataAllPages(fallbackLedgerUrl, accessToken);
           // --- BULK OPTIMIZATION START (Fallback) ---
@@ -351,13 +374,14 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
           
           const fallbackAllInvoices = await prisma.invoice.findMany({ 
             where: { companyId: exactCompanyName },
-            select: { id: true, bcId: true, amount: true, originalAmount: true, status: true, dueDate: true, paymentMethod: true }
+            select: { id: true, bcId: true, customerId: true, type: true, amount: true, originalAmount: true, status: true, dueDate: true, paymentMethod: true, confirmedPaymentDate: true }
           });
           const fallbackInvoiceMap = new Map(fallbackAllInvoices.map(i => [i.bcId, i]));
           
           const fallbackCreates: any[] = [];
           const fallbackUpdates: any[] = [];
           const fallbackActiveIds = new Set<string>();
+          const fallbackPending = new Map<string, any>();
 
           for (const entry of allFallbackData) {
             const customerBcId = entry.Customer_No || entry.customerNo || entry.customerNumber || entry.sellToCustomerNo;
@@ -376,8 +400,6 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
             const documentBcId = entry.Document_No || entry.documentNo || entry.documentNumber;
             if (!documentBcId) continue;
 
-            fallbackActiveIds.add(String(documentBcId));
-
             const fallbackInvData = {
               amount: remainingAmount,
               originalAmount: originalAmount,
@@ -386,19 +408,26 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
               paymentMethod: customer.paymentMethod,
               confirmedPaymentDate: confirmedPaymentDate,
               customerId: customer.id,
-              type: 'Invoice',
+              type: customerDocType(entry.Document_Type),
               companyId: exactCompanyName
             };
 
-            const existingFallback = fallbackInvoiceMap.get(String(documentBcId));
+            const key = ledgerKey(entry.Document_Type, String(documentBcId), entry.Entry_No);
+            const pending = fallbackPending.get(key);
+            if (pending) {
+              pending.amount += fallbackInvData.amount;
+              pending.originalAmount += fallbackInvData.originalAmount;
+            } else {
+              fallbackPending.set(key, fallbackInvData);
+            }
+            totalStats.invoices++;
+          }
+
+          for (const [key, fallbackInvData] of fallbackPending) {
+            fallbackActiveIds.add(key);
+            const existingFallback = fallbackInvoiceMap.get(key);
             if (existingFallback) {
-              if (
-                existingFallback.amount !== fallbackInvData.amount ||
-                existingFallback.originalAmount !== fallbackInvData.originalAmount ||
-                existingFallback.status !== fallbackInvData.status ||
-                existingFallback.paymentMethod !== fallbackInvData.paymentMethod ||
-                existingFallback.dueDate.getTime() !== fallbackInvData.dueDate.getTime()
-              ) {
+              if (invoiceChanged(existingFallback, fallbackInvData)) {
                 fallbackUpdates.push({
                   where: { id: existingFallback.id },
                   data: fallbackInvData
@@ -406,11 +435,10 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
               }
             } else {
               fallbackCreates.push({
-                bcId: String(documentBcId),
+                bcId: key,
                 ...fallbackInvData
               });
             }
-            totalStats.invoices++;
           }
           
           if (fallbackCreates.length > 0) {
@@ -501,7 +529,8 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
       // 5. Fetch Vendor Ledger Entries (Pagos a proveedores)
       if (step === 'all' || step === 'vendorInvoices') {
       console.log(`[${exactCompanyName}] Sincronizando Vendor Ledger Entries...`);
-      const vendorLedgerUrl = `${customApiBaseUrl}/vendorLedgerEntries?$filter=(documentType eq 'Invoice' or documentType eq 'Credit Memo') and open eq true`;
+      // Todos los movimientos abiertos, de cualquier Document Type
+      const vendorLedgerUrl = `${customApiBaseUrl}/vendorLedgerEntries?$filter=open eq true`;
       
       let allVendorLedgerData: any[] = [];
       try {
@@ -515,13 +544,14 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
 
       const allPurchaseInvoices = await prisma.purchaseInvoice.findMany({
         where: { companyId: exactCompanyName },
-        select: { id: true, bcId: true, amount: true, originalAmount: true, status: true, dueDate: true, paymentMethod: true, schedulePaymentDate: true, percentagePaymentApproval: true, approvalUsers: true, approvedUsers: true, rejectedUsers: true, noPayment: true, noPaymentReason: true }
+        select: { id: true, bcId: true, type: true, vendorId: true, amount: true, originalAmount: true, status: true, dueDate: true, paymentMethod: true, schedulePaymentDate: true, percentagePaymentApproval: true, approvalUsers: true, approvedUsers: true, rejectedUsers: true, noPayment: true, noPaymentReason: true }
       });
       const purchaseInvoiceMap = new Map(allPurchaseInvoices.map(p => [p.bcId, p]));
 
       const piCreates: any[] = [];
       const piUpdates: any[] = [];
       const activeVendorDocumentIds = new Set<string>();
+      const pendingPurchaseInvoices = new Map<string, any>();
 
       for (const entry of allVendorLedgerData) {
         const vendorNo = entry.vendorNo;
@@ -532,8 +562,6 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
 
         const documentNo = entry.documentNo;
         if (!documentNo) continue;
-
-        activeVendorDocumentIds.add(documentNo);
 
         const entryStatus = entry.open ? 'Open' : 'Closed';
         const dueDate = new Date(entry.dueDate || new Date());
@@ -560,12 +588,28 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
           noPaymentReason: entry.responsibleNoPaymentBCT || entry.onHold || null,
           vendorId: vendor.id,
           companyId: exactCompanyName,
-          type: 'Invoice'
+          type: vendorDocType(entry.documentType)
         };
 
-        const existingPI = purchaseInvoiceMap.get(documentNo);
+        // Varios movimientos con la misma clave (p. ej. un pago repartido) se suman
+        const key = ledgerKey(entry.documentType, String(documentNo), entry.entryNo);
+        const pendingPI = pendingPurchaseInvoices.get(key);
+        if (pendingPI) {
+          pendingPI.amount += pInvData.amount;
+          pendingPI.originalAmount += pInvData.originalAmount;
+        } else {
+          pendingPurchaseInvoices.set(key, pInvData);
+        }
+        totalStats.purchaseInvoices++;
+      }
+
+      for (const [key, pInvData] of pendingPurchaseInvoices) {
+        activeVendorDocumentIds.add(key);
+        const existingPI = purchaseInvoiceMap.get(key);
         if (existingPI) {
           if (
+            existingPI.type !== pInvData.type ||
+            existingPI.vendorId !== pInvData.vendorId ||
             existingPI.amount !== pInvData.amount ||
             existingPI.originalAmount !== pInvData.originalAmount ||
             existingPI.status !== pInvData.status ||
@@ -586,11 +630,10 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
           }
         } else {
           piCreates.push({
-            bcId: documentNo,
+            bcId: key,
             ...pInvData
           });
         }
-        totalStats.purchaseInvoices++;
       }
 
       if (piCreates.length > 0) {

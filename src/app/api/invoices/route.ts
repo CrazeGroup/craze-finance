@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import prisma from '@/lib/prisma';
 import salespeopleMapData from '@/lib/salespeopleMap.json';
+import { CUSTOMER_INVOICE_TYPES } from '@/lib/documentTypes';
 
 export async function GET() {
   try {
@@ -14,6 +15,7 @@ export async function GET() {
       where: {
         companyId,
         status: { in: ['open', 'Open', 'Overdue', 'overdue'] },
+        type: { in: CUSTOMER_INVOICE_TYPES },
       },
       include: {
         customer: true,

@@ -105,7 +105,7 @@ export async function computePortfolio(companyId: string): Promise<Portfolio> {
 
   const invoices = await prisma.invoice.findMany({
     where: { companyId: { in: companies }, status: { in: OPEN_STATUSES } },
-    select: { amount: true, paymentMethod: true, confirmedPaymentDate: true, customer: { select: { name: true, paymentMethod: true } } }
+    select: { amount: true, type: true, paymentMethod: true, confirmedPaymentDate: true, customer: { select: { name: true, paymentMethod: true } } }
   });
 
   const customers: Portfolio['customers'] = {
@@ -125,10 +125,10 @@ export async function computePortfolio(companyId: string): Promise<Portfolio> {
     const keyAccount = KEY_ACCOUNTS.find(k => name.includes(k));
     if (keyAccount) customers.keyAccounts[keyAccount] += amount;
 
-    // Mismo criterio que el Dashboard: forma de pago MARKANT + fecha de pago confirmada informada
+    // Mismo criterio que el Dashboard: confirmado = factura (Invoice) MARKANT con fecha de pago confirmada
     if (method === 'MARKANT') {
       customers.markant.total += amount;
-      if (inv.confirmedPaymentDate) customers.markant.confirmed += amount;
+      if (inv.confirmedPaymentDate && (inv.type === 'invoice' || inv.type === 'Invoice')) customers.markant.confirmed += amount;
       else customers.markant.unconfirmed += amount;
     }
   }

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import prisma from '@/lib/prisma';
+import { VENDOR_INVOICE_TYPES } from '@/lib/documentTypes';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,7 +11,7 @@ export async function GET() {
     const companyId = cookieStore.get('craze_selected_company')?.value || 'CRAZE';
 
     const invoices = await prisma.purchaseInvoice.findMany({
-      where: { companyId },
+      where: { companyId, type: { in: VENDOR_INVOICE_TYPES } },
       include: {
         vendor: true,
         approvals: true,
