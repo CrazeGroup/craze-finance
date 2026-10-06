@@ -49,6 +49,17 @@ function invoiceChanged(existing: any, data: any) {
   );
 }
 
+// Fecha de pago confirmada de un movimiento de cliente. El nombre del campo en la API custom de BC
+// puede llevar sufijo (p. ej. ...CRZ), así que se busca cualquier campo con "confirm" en el nombre.
+function findConfirmedPaymentDate(entry: any): Date | null {
+  const isDate = (v: any) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) && !v.startsWith('0001-01-01');
+  const explicit = [entry.confirmedPaymentDate, entry.crazeConfirmedPaymentDate, entry.craze_ConfirmedPaymentDate].find(isDate);
+  if (explicit) return new Date(explicit);
+  const key = Object.keys(entry).find(k => k.toLowerCase().includes('confirm') && isDate(entry[k]));
+  if (key) return new Date(entry[key]);
+  return isDate(entry.promisedPayDate) ? new Date(entry.promisedPayDate) : null;
+}
+
 // Helper to fetch all pages of OData V4 response
 async function fetchODataAllPages(startUrl: string, accessToken: string): Promise<any[]> {
   let nextUrl: string | null = startUrl;
@@ -127,7 +138,9 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
     customers: 0,
     invoices: 0,
     vendors: 0,
-    purchaseInvoices: 0
+    purchaseInvoices: 0,
+    // Nombres de campo que devuelve BC en los movimientos de cliente (sin valores), para diagnóstico
+    custLedgerFields: [] as string[]
   };
 
   const salespeopleMap = new Map<string, string>(
@@ -257,6 +270,7 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
         const ledgerUrl = `${customApiBaseUrl}/custLedgerEntries?$filter=open eq true`;
         
         const allLedgerData = await fetchODataAllPages(ledgerUrl, accessToken);
+        if (allLedgerData.length > 0) totalStats.custLedgerFields = Object.keys(allLedgerData[0]);
         const syncedCustomerInvoiceIds: string[] = [];
         
         // --- BULK OPTIMIZATION START ---
@@ -288,8 +302,7 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
           const dueDate = entry.dueDate ? new Date(entry.dueDate) : new Date();
           const paymentMethodToSave = entry.paymentMethodCode ? entry.paymentMethodCode : customer.paymentMethod;
           
-          const confirmedDateStr = entry.confirmedPaymentDate || entry.crazeConfirmedPaymentDate || entry.craze_ConfirmedPaymentDate || entry.promisedPayDate;
-          const confirmedPaymentDate = (confirmedDateStr && !confirmedDateStr.startsWith('0001-01-01')) ? new Date(confirmedDateStr) : null;
+          const confirmedPaymentDate = findConfirmedPaymentDate(entry);
 
           const documentBcId = entry.documentNo || entry.documentNumber || entry.Document_No;
           if (!documentBcId) continue;
