@@ -515,7 +515,7 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
 
       const allPurchaseInvoices = await prisma.purchaseInvoice.findMany({
         where: { companyId: exactCompanyName },
-        select: { id: true, bcId: true, amount: true, originalAmount: true, status: true, dueDate: true, paymentMethod: true, schedulePaymentDate: true, confirmedPaymentDate: true, percentagePaymentApproval: true, approvalUsers: true, approvedUsers: true, rejectedUsers: true, noPayment: true, noPaymentReason: true }
+        select: { id: true, bcId: true, amount: true, originalAmount: true, status: true, dueDate: true, paymentMethod: true, schedulePaymentDate: true, percentagePaymentApproval: true, approvalUsers: true, approvedUsers: true, rejectedUsers: true, noPayment: true, noPaymentReason: true }
       });
       const purchaseInvoiceMap = new Map(allPurchaseInvoices.map(p => [p.bcId, p]));
 
@@ -539,10 +539,9 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
         const dueDate = new Date(entry.dueDate || new Date());
         
         // Fechas de pago
-        const schedulePaymentDateStr = entry.scheduledPaymentDateBCT || entry.paymentProvisionDateBCT || entry.dueDate;
+        // Scheduled Payment Date de BC = fecha de pago confirmada. Vacía si no está confirmada (sin usar el vencimiento).
+        const schedulePaymentDateStr = entry.scheduledPaymentDateBCT;
         const schedulePaymentDate = schedulePaymentDateStr && !schedulePaymentDateStr.startsWith('0001-01-01') ? new Date(schedulePaymentDateStr) : null;
-        const confirmedDateStr = entry.scheduledPaymentDateBCT || entry.paymentProvisionDateBCT;
-        const confirmedPaymentDate = confirmedDateStr && !confirmedDateStr.startsWith('0001-01-01') ? new Date(confirmedDateStr) : null;
         
         const noPaymentVal = entry.noPaymentBCT || entry.onHold === 'NO PAGAR';
 
@@ -551,7 +550,6 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
           originalAmount: parseFloat(entry.originalAmount !== undefined ? entry.originalAmount : entry.amount || 0),
           dueDate: dueDate,
           schedulePaymentDate: schedulePaymentDate,
-          confirmedPaymentDate,
           status: entryStatus === 'Open' && dueDate < new Date() ? 'Overdue' : entryStatus,
           paymentMethod: vendor.paymentMethod,
           percentagePaymentApproval: entry.paymentApprovalCRZ !== undefined && entry.paymentApprovalCRZ !== null ? parseFloat(entry.paymentApprovalCRZ) : null,
@@ -574,7 +572,6 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
             existingPI.paymentMethod !== pInvData.paymentMethod ||
             existingPI.dueDate.getTime() !== pInvData.dueDate.getTime() ||
             (existingPI.schedulePaymentDate?.getTime() || 0) !== (pInvData.schedulePaymentDate?.getTime() || 0) ||
-            (existingPI.confirmedPaymentDate?.getTime() || 0) !== (pInvData.confirmedPaymentDate?.getTime() || 0) ||
             existingPI.percentagePaymentApproval !== pInvData.percentagePaymentApproval ||
             existingPI.approvalUsers !== pInvData.approvalUsers ||
             existingPI.approvedUsers !== pInvData.approvedUsers ||

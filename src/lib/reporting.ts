@@ -135,7 +135,7 @@ export async function computePortfolio(companyId: string): Promise<Portfolio> {
 
   const purchaseInvoices = await prisma.purchaseInvoice.findMany({
     where: { companyId: { in: companies }, status: { in: OPEN_STATUSES } },
-    select: { amount: true, paymentMethod: true, confirmedPaymentDate: true }
+    select: { amount: true, paymentMethod: true, schedulePaymentDate: true }
   });
 
   const vendors: Portfolio['vendors'] = {
@@ -152,7 +152,8 @@ export async function computePortfolio(companyId: string): Promise<Portfolio> {
 
     if (method === 'CHINA INV') {
       vendors.chinaInv.total += amount;
-      if (pinv.confirmedPaymentDate) vendors.chinaInv.confirmed += amount;
+      // Scheduled Payment Date informada en BC = fecha de pago confirmada
+      if (pinv.schedulePaymentDate) vendors.chinaInv.confirmed += amount;
       else vendors.chinaInv.unconfirmed += amount;
     }
   }

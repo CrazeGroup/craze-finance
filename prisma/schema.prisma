@@ -163,7 +163,6 @@ model PurchaseInvoice {
   noPaymentReason      String?
   skipApproval         Boolean? @default(false)
   schedulePaymentDate  DateTime?
-  confirmedPaymentDate DateTime? // Fecha de pago confirmada en BC, sin fallback al vencimiento
 
   approvals            ApprovalEntry[]
 }
