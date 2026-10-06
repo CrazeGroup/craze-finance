@@ -43,4 +43,9 @@ Env vars: `DATABASE_URL`, `DIRECT_URL` (Postgres), `JWT_SECRET`, `GEMINI_API_KEY
 - Cashflow merges open invoices and purchase invoices (by `cashflowDate`/`confirmedPaymentDate`/`dueDate`), active `RecurringPayment`s, `CashflowManualEntry` rows, and per-company/currency starting balances (`CashflowConfig`).
 - Payment-method codes such as `MARKANT` (factoring) change how invoices are handled in cashflow and dunning. Check recent commits before touching that logic.
 
+**Reporting (`/reporting`).** Operacional and Dirección tabs over a multi-month selection (`?months=YYYY-MM,...`). Each section has its own route under `src/app/api/reporting/`; shared helpers live in `src/lib/reporting.ts` (periods, cartera, snapshots, config), `src/lib/bcClient.ts` (BC token/URLs, paged fetch) and `src/lib/cashflow.ts` (the same cashflow calculation the Cashflow page uses).
+- The cartera (customers/vendors, MARKANT, CHINA INV, AMAZON/ALDI/LIDL) is computed live for the current month. Past months read `ReportingSnapshot`, which `/api/reporting/snapshot` writes once a day (Vercel cron in `vercel.json`, and `cron.ts` in dev). Months before snapshots started have no data.
+- Inventory, CHINA TRF purchases and provisions are read live from BC. Inventory uses the ODataV4 web service for page 5802 "Value Entries" with `$apply` aggregation, falling back to aggregating the raw entries in the app. The service name and the provision G/L accounts are stored in `ApiConfig` (key `reporting`) and edited from the page's Configuración panel.
+- `PurchaseInvoice.confirmedPaymentDate` is the confirmed date from BC with no fallback. `schedulePaymentDate` falls back to the due date, so don't use it to decide whether a date is confirmed.
+
 Path alias: `@/*` → `src/*`. `src/lib/prisma.ts` exports the singleton client. Use it instead of `new PrismaClient()`, except in standalone scripts.

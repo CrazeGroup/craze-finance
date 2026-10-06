@@ -13,6 +13,7 @@ const MODULES = [
   { id: 'auditoria', label: 'Auditoría (Registro de Actividad)' },
   { id: 'inventario', label: 'Inventario (Cierre)' },
   { id: 'bwa', label: 'BWA Analytics' },
+  { id: 'reporting', label: 'Reporting' },
   { id: 'seguros', label: 'Seguros' },
   { id: 'configuracion', label: 'Configuración y Usuarios' },
 ];

@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "concurrently \"next dev\" \"npx tsx src/scripts/cron.ts\"",
-    "build": "prisma generate && next build",
+    "build": "prisma generate && (echo '===== CAMBIOS NECESARIOS EN LA BASE DE DATOS (solo lectura) =====' && prisma migrate diff --from-url \"$DIRECT_URL\" --to-schema-datamodel prisma/schema.prisma --script; echo '===== FIN CAMBIOS BASE DE DATOS =====') && next build",
     "start": "next start",
     "lint": "eslint"
   },
