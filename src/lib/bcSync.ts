@@ -138,9 +138,7 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
     customers: 0,
     invoices: 0,
     vendors: 0,
-    purchaseInvoices: 0,
-    // Nombres de campo que devuelve BC en los movimientos de cliente (sin valores), para diagnóstico
-    custLedgerFields: [] as string[]
+    purchaseInvoices: 0
   };
 
   const salespeopleMap = new Map<string, string>(
@@ -270,14 +268,6 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
         const ledgerUrl = `${customApiBaseUrl}/custLedgerEntries?$filter=open eq true`;
         
         const allLedgerData = await fetchODataAllPages(ledgerUrl, accessToken);
-        if (allLedgerData.length > 0) totalStats.custLedgerFields = Object.keys(allLedgerData[0]);
-        // Diagnóstico temporal: campos de la página OData Cust_LedgerEntries
-        try {
-          const odataSample = await fetchODataAllPages(`${odataBaseUrl}/Company('${escapedCompanyName}')/Cust_LedgerEntries?$top=1`, accessToken);
-          if (odataSample.length > 0) totalStats.custLedgerFields.push('--- ODataV4 Cust_LedgerEntries ---', ...Object.keys(odataSample[0]));
-        } catch (e: any) {
-          totalStats.custLedgerFields.push(`--- ODataV4 Cust_LedgerEntries error: ${e.message}`);
-        }
         const syncedCustomerInvoiceIds: string[] = [];
         
         // --- BULK OPTIMIZATION START ---
