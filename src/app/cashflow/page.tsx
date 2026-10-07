@@ -409,6 +409,35 @@ export default function CashflowPage() {
     }
   };
 
+  // Exporta lo que se ve en pantalla (divisa, filtro y archivadas): saldo inicial + una fila por línea,
+  // sin el detalle de facturas de los cobros agrupados
+  const handleExportCashflow = () => {
+    const visible = entries.filter(e => filterType === 'ALL' || (filterType === 'AUTO' && !e.isManual) || (filterType === 'MANUAL' && e.isManual));
+    const [d, m, y] = initialBalanceDate.split('/').map(Number);
+    const rows: any[][] = [
+      ['Fecha', 'Descripción', 'Importe', 'Saldo'],
+      [y && m && d ? new Date(Date.UTC(y, m - 1, d)) : initialBalanceDate, 'Saldo Inicial', null, initialBalance],
+      ...visible.map(e => [new Date(e.date), e.description, e.amount, e.balance]),
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(rows, { cellDates: true });
+    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+    for (let r = 1; r <= range.e.r; r++) {
+      const dateCell = ws[XLSX.utils.encode_cell({ r, c: 0 })];
+      if (dateCell && dateCell.t === 'd') dateCell.z = 'dd/mm/yyyy';
+      for (const c of [2, 3]) {
+        const cell = ws[XLSX.utils.encode_cell({ r, c })];
+        if (cell && cell.t === 'n') cell.z = '#,##0.00';
+      }
+    }
+    ws['!cols'] = [{ wch: 12 }, { wch: 50 }, { wch: 16 }, { wch: 16 }];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `Cashflow ${currentCurrency}`);
+    const today = new Date().toISOString().substring(0, 10);
+    XLSX.writeFile(wb, `Cashflow_${selectedCompany}_${currentCurrency}_${today}.xlsx`.replace(/\s+/g, '_'));
+  };
+
   const handleExportTemplate = () => {
     const ws = XLSX.utils.json_to_sheet([
       { fecha: '2026-08-01', supplier: 'Ejemplo Pago Alquiler', amount: -1500.50 }
@@ -597,6 +626,14 @@ export default function CashflowPage() {
                 <Archive size={16} /> Archivar ({selectedEntries.length})
               </button>
             )}
+            <button 
+              onClick={handleExportCashflow}
+              disabled={loading}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-gray-900 font-bold rounded-lg border border-emerald-500/20 transition-colors text-sm"
+              title="Exportar el cashflow en pantalla a Excel"
+            >
+              <Download size={16} /> Exportar Excel
+            </button>
             <button 
               onClick={handleExportTemplate}
               className="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-gray-900 font-bold rounded-lg border border-emerald-500/20 transition-colors text-sm"
