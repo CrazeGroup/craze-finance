@@ -246,7 +246,7 @@ export default function RoyaltiesPage() {
   return (
     <div className="min-h-screen bg-[#F3F4F7] pb-24">
       <header className="sticky top-0 z-20 bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
+        <div className="max-w-[1800px] mx-auto px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="mr-auto">
             <p className="font-bold text-gray-900 leading-tight text-lg">Royalties</p>
             <p className="text-xs text-gray-500">{selectedCompany} · {dateEs(range.from)} – {dateEs(range.to)} · importes en {cur}{cur !== localCur ? ` (1 ${localCur} = ${fxInput} EUR)` : ''} · Royalty Code de la ficha de artículo (CRAZE GmbH) · sin Main Item ni intercompañía</p>
@@ -302,7 +302,7 @@ export default function RoyaltiesPage() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 md:px-8 pt-6 space-y-6">
+      <main className="max-w-[1800px] mx-auto px-4 md:px-8 pt-6 space-y-6">
         {selectedCompany === 'CRAZE' && <GroupSummary range={range} reload={reload} />}
         {selectedCompany === 'ALL' ? (
           <p className="text-sm text-gray-600">Selecciona una empresa concreta en el menú lateral para ver sus royalties.</p>
@@ -728,7 +728,7 @@ function MgContractCard({ contract: c, companies, to, rate, fxReady }: {
         <span className="text-xs text-gray-500">Contrato {dateEs(c.start)} – {dateEs(c.end)} · {c.rates}</span>
       </div>
       {c.start > to ? <p className="text-sm text-gray-500">El contrato empieza después de la fecha de corte.</p> : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 2xl:grid-cols-2 gap-4">
           {c.guarantees.map(g => {
             const provision = Object.entries(byCountry).filter(([country]) => countsCountry(g, country)).reduce((s, [, v]) => s + v, 0);
             const total = g.instalments.reduce((s, i) => s + i.amount, 0);
@@ -750,8 +750,9 @@ function MgContractCard({ contract: c, companies, to, rate, fxReady }: {
                   <span className="text-sm font-semibold text-gray-900">{g.territory}</span>
                   <span className="text-xs text-gray-500">MG total {money(total)} · activa a {dateEs(to)}: {money(active)} · futura: {money(future)}</span>
                 </div>
+                <div className="overflow-x-auto">
                 <table className="w-full text-sm">
-                  <thead className="text-xs uppercase tracking-wider text-gray-500">
+                  <thead className="text-xs uppercase tracking-wider text-gray-500 whitespace-nowrap">
                     <tr>
                       <th className="text-left px-3 py-1.5">Vencimiento</th>
                       <th className="text-left px-3 py-1.5">Concepto</th>
@@ -785,6 +786,7 @@ function MgContractCard({ contract: c, companies, to, rate, fxReady }: {
                     </tr>
                   </tfoot>
                 </table>
+                </div>
                 <div className="px-3 py-2 border-t border-gray-100 text-xs text-gray-600">
                   Provisión royalties acumulada: <b>{money(provision)}</b> = mata MG {money(consumed)} + a facturar {money(toInvoice)}.
                   {toInvoice > 0
