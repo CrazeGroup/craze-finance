@@ -8,13 +8,18 @@ import { today } from '@/lib/reporting/period';
 // a Excel de esa página subida en la app. Sin líneas "Main Item" ni ventas intercompañía, agrupado por
 // Royalty Code × país de facturación × artículo. El Royalty Code de la LM no se usa: se toma siempre de la ficha
 // del artículo (tabla 27) en CRAZE GmbH, que es donde está bien mantenido (en otras empresas, como UK, no siempre).
+// La provisión tampoco se toma de la LM: se recalcula con el % de cada Royalty Code de la tabla 80007 RoyaltiesCRZ
+// de CRAZE GmbH (Turnover × % Domestic Royalty; % FOB Royalty en ventas con condición de envío FOB).
 
 // Línea normalizada (BC o Excel). Las líneas Main Item no se guardan.
 export type LmLine = {
   date: string; code: string; country: string; item: string; desc: string;
   qty: number; turnover: number; provision: number;
-  custNo: string; custName: string; dim: string; vatBus: string;
+  custNo: string; custName: string; dim: string; vatBus: string; ship: string;
 };
+
+// % de royalty por Royalty Code (tabla 80007 RoyaltiesCRZ de CRAZE GmbH), en tanto por uno
+export type RoyaltyRates = Record<string, { domestic: number; fob: number }>;
 
 export type RoyaltyRow = {
   code: string; country: string; item: string; desc: string;
@@ -39,9 +44,14 @@ async function intergroupCustomers(company: string) {
 
 // itemCodes: Royalty Code de la ficha de cada artículo en CRAZE GmbH ('' = sin royalty). Si el artículo no
 // existe allí (o no se pudo leer), se queda el código de la LM.
-export function buildReport(lines: LmLine[], from: string, to: string, icCustomers: Set<string>, itemCodes: Record<string, string> | null) {
-  const stats = { lines: 0, ic: { lines: 0, turnover: 0, provision: 0 }, noItemCard: [] as string[] };
+// rates: si no se pudieron leer, se queda la provisión de la LM. Un código sin % en RoyaltiesCRZ no provisiona.
+export function buildReport(
+  lines: LmLine[], from: string, to: string, icCustomers: Set<string>,
+  itemCodes: Record<string, string> | null, rates: RoyaltyRates | null,
+) {
+  const stats = { lines: 0, ic: { lines: 0, turnover: 0, provision: 0 }, noItemCard: [] as string[], noRate: [] as string[] };
   const noCard = new Set<string>();
+  const noRate = new Set<string>();
   const groups = new Map<string, RoyaltyRow>();
   for (const l of lines) {
     if (l.date < from || l.date > to) continue;
@@ -58,15 +68,22 @@ export function buildReport(lines: LmLine[], from: string, to: string, icCustome
       else noCard.add(l.item);
     }
     code = code || 'NOT APPLIED';
+    let provision = l.provision;
+    if (rates) {
+      const r = rates[code.toUpperCase()];
+      if (!r && code !== 'NOT APPLIED') noRate.add(code);
+      provision = r ? l.turnover * (/^FOB$/i.test(l.ship) ? r.fob : r.domestic) : 0;
+    }
     const key = `${code}|${l.country}|${l.item}`;
     const g = groups.get(key) || { code, country: l.country, item: l.item, desc: l.desc, qty: 0, turnover: 0, price: 0, provision: 0, rate: 0, lines: 0 };
     g.qty += l.qty;
     g.turnover += l.turnover;
-    g.provision += l.provision;
+    g.provision += provision;
     g.lines++;
     groups.set(key, g);
   }
   stats.noItemCard = Array.from(noCard).sort();
+  stats.noRate = Array.from(noRate).sort();
   // Precio medio por unidad y % royalty efectivo del grupo
   const rows = Array.from(groups.values()).map(g => ({
     ...g, price: g.qty ? g.turnover / g.qty : 0, rate: g.turnover ? g.provision / g.turnover : 0,
@@ -94,6 +111,7 @@ const FIELDS = {
   custNo: ['Bill_to_Customer_No', 'billToCustomerNo', 'Sell_to_Customer_No', 'sellToCustomerNo'],
   custName: ['Bill_to_Customer_Name', 'billToCustomerName', 'Sell_to_Customer_Name', 'sellToCustomerName'],
   dim: ['Customer_Dimension_Name', 'customerDimensionName'],
+  ship: ['Shipment_Method_Code', 'shipmentMethodCode'],
   vatBus: ['VAT_Bus_Posting_Group', 'vatBusPostingGroup'],
 } as const;
 type FieldKey = keyof typeof FIELDS;
@@ -166,13 +184,14 @@ async function bcLines(ctx: BcContext, from: string, to: string): Promise<{ serv
     code: str(get(r, 'code')), country: str(get(r, 'country')), item: str(get(r, 'item')), desc: str(get(r, 'desc')),
     qty: num(get(r, 'qty')), turnover: num(get(r, 'turnover')), provision: num(get(r, 'provision')),
     custNo: str(get(r, 'custNo')), custName: str(get(r, 'custName')), dim: str(get(r, 'dim')), vatBus: str(get(r, 'vatBus')),
+    ship: str(get(r, 'ship')),
   }));
   return { service: service.name, lines };
 }
 
 // ---------- Royalty Code de la ficha de artículo (CRAZE GmbH) ----------
 
-export const ITEMS_COMPANY = 'CRAZE';
+export const MASTER_COMPANY = 'CRAZE';
 const ROYALTY_FIELD = /royalt/i;
 
 async function sampleKeys(url: string, token: string): Promise<string[] | null> {
@@ -206,14 +225,41 @@ async function itemRoyaltyCodes(ctx: BcContext): Promise<Record<string, string>>
   throw new Error(`No se encuentra el Royalty Code de la ficha de artículo en ${ctx.companyName} (probado: ${tried.join(', ') || 'ningún servicio de artículos'}).`);
 }
 
-async function loadItemCodes(ctx: BcContext | null, force: boolean): Promise<{ codes: Record<string, string> | null; error: string | null }> {
+// % de royalty de la página 80007 "Royalties" (servicio web RoyaltiesCRZ, fijable con 'royaltiesRatesService')
+async function royaltyRates(ctx: BcContext): Promise<RoyaltyRates> {
+  const service = await readSetting<string>('royaltiesRatesService', 'RoyaltiesCRZ');
+  const rows = await bcFetchAll(`${ctx.odataCompanyBase}/${service}`, ctx.token);
+  if (!rows.length) throw new Error(`El servicio ${service} de ${ctx.companyName} no devuelve ningún Royalty Code.`);
+  const keys = Object.keys(rows[0]);
+  const codeKey = keys.find(k => /^code$/i.test(k));
+  const domKey = keys.find(k => /domestic/i.test(k) && !/total/i.test(k));
+  const fobKey = keys.find(k => /fob/i.test(k) && !/total/i.test(k));
+  if (!codeKey || !domKey) throw new Error(`El servicio ${service} no tiene los campos Code / % Domestic Royalty (campos: ${keys.join(', ')}).`);
+  return Object.fromEntries(rows.map(r => [str(r[codeKey]).toUpperCase(), {
+    domestic: num(r[domKey]) / 100,
+    fob: (fobKey ? num(r[fobKey]) : num(r[domKey])) / 100,
+  }]));
+}
+
+// Datos maestros de CRAZE GmbH: Royalty Code por artículo y % por Royalty Code (cada uno con su error)
+async function loadMasterData(ctx: BcContext | null, force: boolean) {
+  const out = { itemCodes: null as Record<string, string> | null, itemsError: null as string | null, rates: null as RoyaltyRates | null, ratesError: null as string | null };
+  let gmbh: BcContext;
   try {
-    const itemsCtx = ctx && ctx.companyName.toLowerCase() === ITEMS_COMPANY.toLowerCase() ? ctx : await getBcContext(ITEMS_COMPANY);
-    return { codes: await cached(`royalties:items:${ITEMS_COMPANY}`, 6 * HOUR, () => itemRoyaltyCodes(itemsCtx), force), error: null };
+    gmbh = ctx && ctx.companyName.toLowerCase() === MASTER_COMPANY.toLowerCase() ? ctx : await getBcContext(MASTER_COMPANY);
   } catch (e: any) {
-    console.error('Royalties items:', e);
-    return { codes: null, error: e.message };
+    out.itemsError = out.ratesError = e.message;
+    return out;
   }
+  const [items, rates] = await Promise.allSettled([
+    cached(`royalties:items:${MASTER_COMPANY}`, 6 * HOUR, () => itemRoyaltyCodes(gmbh), force),
+    cached(`royalties:rates:${MASTER_COMPANY}`, 6 * HOUR, () => royaltyRates(gmbh), force),
+  ]);
+  if (items.status === 'fulfilled') out.itemCodes = items.value;
+  else { out.itemsError = items.reason?.message || String(items.reason); console.error('Royalties items:', items.reason); }
+  if (rates.status === 'fulfilled') out.rates = rates.value;
+  else { out.ratesError = rates.reason?.message || String(rates.reason); console.error('Royalties rates:', rates.reason); }
+  return out;
 }
 
 // ---------- Excel subido ----------
@@ -223,7 +269,8 @@ const UPLOAD_PREFIX = 'royalties:upload:';
 export type StoredUpload = {
   fileName: string; uploadedAt: string; from: string; to: string;
   desc: Record<string, string>;
-  lines: [string, string, string, string, number, number, number, string, string, string, string][];
+  // [fecha, código, país, artículo, cantidad, turnover, provisión, nº cliente, cliente, dimensión, grupo IVA, cond. envío]
+  lines: [string, string, string, string, number, number, number, string, string, string, string, string?][];
 };
 
 export async function saveUpload(company: string, upload: StoredUpload) {
@@ -236,8 +283,8 @@ async function loadUpload(company: string): Promise<{ meta: Omit<StoredUpload, '
   const row = await prisma.apiConfig.findUnique({ where: { key: UPLOAD_PREFIX + company } });
   if (!row?.config) return null;
   const u = JSON.parse(row.config) as StoredUpload;
-  const lines = u.lines.map(([date, code, country, item, qty, turnover, provision, custNo, custName, dim, vatBus]) => ({
-    date, code, country, item, desc: u.desc[item] || '', qty, turnover, provision, custNo, custName, dim, vatBus,
+  const lines = u.lines.map(([date, code, country, item, qty, turnover, provision, custNo, custName, dim, vatBus, ship]) => ({
+    date, code, country, item, desc: u.desc[item] || '', qty, turnover, provision, custNo, custName, dim, vatBus, ship: ship || '',
   }));
   return { meta: { fileName: u.fileName, uploadedAt: u.uploadedAt, from: u.from, to: u.to }, lines };
 }
@@ -246,14 +293,15 @@ async function loadUpload(company: string): Promise<{ meta: Omit<StoredUpload, '
 
 export async function royaltiesReport(ctx: BcContext | null, company: string, from: string, to: string, force = false) {
   let bcError: string | null = null;
-  const items = await loadItemCodes(ctx, force);
+  const master = await loadMasterData(ctx, force);
+  const masterInfo = { itemsError: master.itemsError, ratesError: master.ratesError };
   if (ctx) {
     try {
       // Se guardan las líneas (no el agregado) para aplicar los Royalty Codes de artículo vigentes
       const fromBc = await cached(`royalties:lines:${company}:${from}:${to}`, to < today() ? 12 * HOUR : 1 * HOUR, () => bcLines(ctx, from, to), force);
       return {
-        from, to, company, source: 'bc' as const, service: fromBc.service, itemsError: items.error,
-        ...buildReport(fromBc.lines, from, to, await intergroupCustomers(company), items.codes),
+        from, to, company, source: 'bc' as const, service: fromBc.service, ...masterInfo,
+        ...buildReport(fromBc.lines, from, to, await intergroupCustomers(company), master.itemCodes, master.rates),
       };
     } catch (e: any) {
       bcError = e.message;
@@ -268,7 +316,7 @@ export async function royaltiesReport(ctx: BcContext | null, company: string, fr
     );
   }
   return {
-    from, to, company, source: 'excel' as const, upload: upload.meta, bcError, itemsError: items.error,
-    ...buildReport(upload.lines, from, to, await intergroupCustomers(company), items.codes),
+    from, to, company, source: 'excel' as const, upload: upload.meta, bcError, ...masterInfo,
+    ...buildReport(upload.lines, from, to, await intergroupCustomers(company), master.itemCodes, master.rates),
   };
 }

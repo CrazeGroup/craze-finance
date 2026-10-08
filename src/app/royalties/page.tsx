@@ -11,9 +11,9 @@ type Row = {
 };
 type Report = {
   from: string; to: string; company: string; rows: Row[];
-  source: 'bc' | 'excel'; service?: string; bcError?: string | null; itemsError?: string | null;
+  source: 'bc' | 'excel'; service?: string; bcError?: string | null; itemsError?: string | null; ratesError?: string | null;
   upload?: { fileName: string; uploadedAt: string; from: string; to: string };
-  stats: { lines: number; ic: { lines: number; turnover: number; provision: number }; noItemCard: string[] };
+  stats: { lines: number; ic: { lines: number; turnover: number; provision: number }; noItemCard: string[]; noRate: string[] };
 };
 type SortKey = 'code' | 'country' | 'item' | 'desc' | 'qty' | 'turnover' | 'price' | 'provision' | 'rate';
 
@@ -57,9 +57,9 @@ async function parseLmExcel(file: File) {
     date: col('Posting Date'), code: col('Royalty Code'), country: col('Bill-to Country/Region Code'), item: col('No.'),
     desc: col('Description'), qty: col('Quantity'), turnover: col('Turnover Net of Provision Sales'), provision: col('Provision Royalties'),
     main: col('Main Item'), custNo: col('Bill-to Customer No.'), custName: col('Bill-to Customer Name'),
-    dim: col('Customer Dimension Name'), vatBus: col('VAT Bus. Posting Group'),
+    dim: col('Customer Dimension Name'), vatBus: col('VAT Bus. Posting Group'), ship: col('Shipment Method Code'),
   };
-  const missing = Object.entries(C).filter(([k, i]) => i < 0 && !['dim', 'vatBus'].includes(k)).map(([k]) => k);
+  const missing = Object.entries(C).filter(([k, i]) => i < 0 && !['dim', 'vatBus', 'ship'].includes(k)).map(([k]) => k);
   if (missing.length) throw new Error(`El Excel no parece una exportación de "Documents LM Components" (faltan columnas: ${missing.join(', ')}).`);
 
   const toIso = (v: any): string => {
@@ -79,7 +79,7 @@ async function parseLmExcel(file: File) {
     const item = s(r[C.item]);
     if (!desc[item]) desc[item] = s(r[C.desc]);
     lines.push([toIso(r[C.date]), s(r[C.code]), s(r[C.country]), item, n(r[C.qty]), n(r[C.turnover]), n(r[C.provision]),
-      s(r[C.custNo]), s(r[C.custName]), C.dim >= 0 ? s(r[C.dim]) : '', C.vatBus >= 0 ? s(r[C.vatBus]) : '']);
+      s(r[C.custNo]), s(r[C.custName]), C.dim >= 0 ? s(r[C.dim]) : '', C.vatBus >= 0 ? s(r[C.vatBus]) : '', C.ship >= 0 ? s(r[C.ship]) : '']);
   }
   const dates = lines.map(l => l[0] as string).filter(Boolean).sort();
   return { fileName: file.name, from: dates[0] || '', to: dates[dates.length - 1] || '', desc, lines };
@@ -258,6 +258,20 @@ export default function RoyaltiesPage() {
                 </div>
               </div>
             )}
+            {data.ratesError && (
+              <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-800 flex items-start gap-2">
+                <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                <div>
+                  No se han podido leer los % de royalty de RoyaltiesCRZ (CRAZE GmbH): la provisión mostrada es la de la LM, sin recalcular.
+                  <span className="block text-xs mt-1">{data.ratesError}</span>
+                </div>
+              </div>
+            )}
+            {data.stats.noRate.length > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900">
+                Royalty Codes sin % en RoyaltiesCRZ (no provisionan): <b>{data.stats.noRate.join(', ')}</b>
+              </div>
+            )}
             {data.itemsError ? (
               <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-800 flex items-start gap-2">
                 <AlertCircle size={16} className="mt-0.5 shrink-0" />
@@ -381,7 +395,7 @@ export default function RoyaltiesPage() {
               </div>
             </section>
             <p className="text-xs text-gray-500">
-              Fuente: página 60000 &quot;AIT Documents LM Components&quot; de Business Central ({data.source === 'bc' ? `servicio ${data.service}` : 'Excel cargado'}), sin líneas Main Item ni intercompañía. Royalty Code de la ficha de artículo en CRAZE GmbH. Precio por unidad = turnover ÷ cantidad; royalty rate = provisión ÷ turnover.
+              Fuente: página 60000 &quot;AIT Documents LM Components&quot; de Business Central ({data.source === 'bc' ? `servicio ${data.service}` : 'Excel cargado'}), sin líneas Main Item ni intercompañía. Royalty Code de la ficha de artículo y provisión = turnover × % Domestic Royalty de RoyaltiesCRZ (% FOB en envíos FOB), ambos de CRAZE GmbH. Precio por unidad = turnover ÷ cantidad; royalty rate = provisión ÷ turnover.
             </p>
           </>
         )}
