@@ -1,4 +1,5 @@
 import { bcFetchAll, BcContext, odataUrl } from '@/lib/bcClient';
+import { readSetting } from '@/lib/reporting/cache';
 import { companyCurrency } from '@/lib/royalties';
 import { VENDOR_INVOICE_TYPES } from '@/lib/documentTypes';
 
@@ -24,6 +25,50 @@ const users = (v: any) => str(v).split('|').map(u => u.trim()).filter(Boolean);
 const joinUsers = (list: string[]) => Array.from(new Set(list)).sort().join('|');
 const realDate = (d: any) => { const s = str(d).substring(0, 10); return s && !s.startsWith('0001') ? s : ''; };
 
+// Usuarios de aprobación por nº de movimiento. La API custom no los trae siempre: se leen de la página de
+// movimientos de proveedor publicada en OData (la que se exporta a Excel: "Approval Users", "Pending Users"...).
+// Servicio fijable con el setting 'paymentProposalUsersService'.
+type Users = { approval: string[]; approved: string[]; pending: string[] | null; rejected: string[] };
+const findKey = (keys: string[], test: (k: string) => boolean) => keys.find(test);
+const isPendingKey = (k: string) => /pending/i.test(k) && /user/i.test(k);
+const isApprovalKey = (k: string) => /approval/i.test(k) && /user/i.test(k);
+const isApprovedKey = (k: string) => /approved/i.test(k) && /user/i.test(k) && !/fibu/i.test(k);
+const isRejectedKey = (k: string) => /rejected/i.test(k) && /user/i.test(k);
+
+function usersFrom(r: any, keys: string[]): Users {
+  const pendingKey = findKey(keys, isPendingKey);
+  const g = (test: (k: string) => boolean) => { const k = findKey(keys, test); return k ? users(r[k]) : []; };
+  return { approval: g(isApprovalKey), approved: g(isApprovedKey), pending: pendingKey ? users(r[pendingKey]) : null, rejected: g(isRejectedKey) };
+}
+
+async function odataUsers(ctx: BcContext, from: string, to: string): Promise<{ service: string; byEntry: Map<number, Users> } | null> {
+  const root = ctx.odataCompanyBase.replace(/\/Company\(.*$/, '');
+  const configured = await readSetting<string>('paymentProposalUsersService', '');
+  let names: string[] = configured ? [configured] : [];
+  if (!names.length) {
+    const res = await fetch(root, { headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json' } });
+    if (!res.ok) return null;
+    const list: string[] = ((await res.json()).value || []).map((s: any) => s.name);
+    // Primero los servicios "…_Excel" (como Currencies_Excel o General_Ledger_Entries_Excel)
+    names = list.filter(n => /vendor.?ledger.?entr/i.test(n)).sort((a, b) => Number(!/excel/i.test(a)) - Number(!/excel/i.test(b)));
+  }
+  for (const name of names) {
+    const base = `${ctx.odataCompanyBase}/${name}`;
+    const sample = await bcFetchAll(odataUrl(base, { $top: '1' }), ctx.token).catch(() => []);
+    if (!sample.length) continue;
+    const keys = Object.keys(sample[0]);
+    const entryKey = findKey(keys, k => /^entry_?no$/i.test(k));
+    const dueKey = findKey(keys, k => /^due_?date$/i.test(k));
+    const openKey = findKey(keys, k => /^open$/i.test(k));
+    if (!entryKey || !findKey(keys, k => isPendingKey(k) || isApprovalKey(k))) continue;
+    const filter = [openKey && `${openKey} eq true`, dueKey && `${dueKey} ge ${from} and ${dueKey} le ${to}`].filter(Boolean).join(' and ');
+    const select = [entryKey, ...keys.filter(k => isPendingKey(k) || isApprovalKey(k) || isApprovedKey(k) || isRejectedKey(k))].join(',');
+    const rows = await bcFetchAll(odataUrl(base, { $filter: filter || undefined, $select: select }), ctx.token);
+    return { service: name, byEntry: new Map(rows.map(r => [num(r[entryKey]), usersFrom(r, keys)])) };
+  }
+  return null;
+}
+
 export async function paymentProposal(ctx: BcContext, company: string, from: string, to: string) {
   const rows = await bcFetchAll(odataUrl(`${ctx.customApiBase}/vendorLedgerEntries`, {
     $filter: `open eq true and paymentMethodCode eq '${PAYMENT_METHOD}' and dueDate ge ${from} and dueDate le ${to}`,
@@ -31,24 +76,30 @@ export async function paymentProposal(ctx: BcContext, company: string, from: str
   const lcy = companyCurrency(company);
   const sample = rows[0] || {};
   const has = (keys: string[]) => keys.some(k => k in sample);
+  const apiKeys = Object.keys(sample).filter(k => !k.startsWith('@'));
   const fields = {
-    pendingUsers: has(['pendingUsersBCT', 'pendingUsers']),
-    approvalUsers: has(['approvalUsersBCT', 'approvalUsers']),
     currency: has(['currencyCode']),
     remainingLCY: has(['remainingAmtLCY', 'remainingAmountLCY', 'remainingAmtLcy']),
   };
+  // Usuarios: de la API si trae los pendientes; si no, de la página OData; si no, aprobadores − aprobados
+  let usersSource = 'none';
+  let byEntry: Map<number, Users> | null = null;
+  if (apiKeys.some(isPendingKey)) usersSource = 'api';
+  else {
+    const od = rows.length ? await odataUsers(ctx, from, to).catch(e => { console.error('Payment proposal users:', e); return null; }) : null;
+    if (od) { byEntry = od.byEntry; usersSource = `odata:${od.service}`; }
+    else if (apiKeys.some(isApprovalKey)) usersSource = 'derived';
+  }
 
   const entries: ProposalEntry[] = rows
     .filter(r => !isTrue(pick(r, ['noPaymentBCT', 'noPayment'])) && str(r.onHold) !== 'NO PAGAR')
     .filter(r => !/^craze/i.test(str(r.vendorName)))
     .filter(r => VENDOR_INVOICE_TYPES.includes(str(r.documentType).replace(/_x0020_/g, ' ')))
     .map(r => {
-      const approved = users(pick(r, ['approvedUsersBCT', 'approvedUsers']));
-      const pendingRaw = pick(r, ['pendingUsersBCT', 'pendingUsers']);
-      // Sin campo de pendientes: los aprobadores que aún no han aprobado
-      const pending = pendingRaw !== undefined
-        ? users(pendingRaw)
-        : users(pick(r, ['approvalUsersBCT', 'approvalUsers'])).filter(u => !approved.includes(u));
+      const u = byEntry?.get(num(r.entryNo)) || usersFrom(r, apiKeys);
+      const approved = u.approved.length ? u.approved : users(pick(r, ['approvedUsersBCT', 'approvedUsers']));
+      // Sin campo de pendientes: los aprobadores que aún no han aprobado ni rechazado
+      const pending = u.pending ?? u.approval.filter(x => !approved.includes(x) && !u.rejected.includes(x));
       const currency = str(r.currencyCode) || lcy;
       const remaining = num(r.remainingAmount);
       const lcyRaw = pick(r, ['remainingAmtLCY', 'remainingAmountLCY', 'remainingAmtLcy']);
@@ -66,5 +117,5 @@ export async function paymentProposal(ctx: BcContext, company: string, from: str
     })
     .sort((a, b) => a.vendorName.localeCompare(b.vendorName) || a.dueDate.localeCompare(b.dueDate));
 
-  return { company, from, to, lcy, fields, entries };
+  return { company, from, to, lcy, fields, usersSource, apiKeys, entries };
 }

@@ -13,7 +13,8 @@ type Entry = {
 };
 type Proposal = {
   company: string; from: string; to: string; lcy: string; entries: Entry[];
-  fields: { pendingUsers: boolean; approvalUsers: boolean; currency: boolean; remainingLCY: boolean };
+  fields: { currency: boolean; remainingLCY: boolean };
+  usersSource: string; apiKeys: string[];
 };
 
 const APPROVED_PCT = 100;
@@ -120,11 +121,19 @@ export default function PaymentProposalPage() {
             </div>
 
             <ProposalTable title="Approved for Payment" subtitle={`% Payment Approval ≥ ${APPROVED_PCT}`} entries={approved} currencies={currencies} lcy={lcy} />
+            {data.usersSource === 'none' && data.entries.length > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900">
+                Business Central no devuelve los Pending Users de los movimientos de proveedor (ni en la API ni en una página &quot;Vendor Ledger Entries&quot; publicada en OData),
+                así que Pending Approval no se puede agrupar por usuario. Publica en Servicios web la página de movimientos de proveedor que exportas a Excel.
+                <details className="mt-1 text-xs"><summary className="cursor-pointer">Campos que devuelve la API</summary><p className="font-mono break-words mt-1">{data.apiKeys.join(', ')}</p></details>
+              </div>
+            )}
             <ProposalTable title="Pending Approval" subtitle={`% Payment Approval < ${APPROVED_PCT} · agrupado por Pending Users`} entries={pending} currencies={currencies} lcy={lcy} groupByPending />
 
             <p className="text-xs text-gray-500">
               Fuente: Vendor Ledger Entries de Business Central en directo. Importes = Remaining Amount en la divisa del documento; la columna {lcy} usa Remaining Amt. (LCY).
-              {!data.fields.pendingUsers && ' Pending Users calculado como Approval Users menos Approved Users.'}
+              {data.usersSource.startsWith('odata:') && ` Approval / Pending Users de la página ${data.usersSource.substring(6)} de BC.`}
+              {data.usersSource === 'derived' && ' Pending Users calculado como Approval Users menos Approved Users.'}
               {!data.fields.remainingLCY && data.entries.some(e => e.remainingLCY == null) && ` Los documentos en divisa no tienen importe en ${lcy} en la API: no suman en esa columna.`}
             </p>
           </>
