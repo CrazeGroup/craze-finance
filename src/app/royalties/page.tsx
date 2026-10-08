@@ -11,9 +11,9 @@ type Row = {
 };
 type Report = {
   from: string; to: string; company: string; rows: Row[];
-  source: 'bc' | 'excel'; service?: string; bcError?: string | null;
+  source: 'bc' | 'excel'; service?: string; bcError?: string | null; itemsError?: string | null;
   upload?: { fileName: string; uploadedAt: string; from: string; to: string };
-  stats: { lines: number; ic: { lines: number; turnover: number; provision: number } };
+  stats: { lines: number; ic: { lines: number; turnover: number; provision: number }; noItemCard: string[] };
 };
 type SortKey = 'code' | 'country' | 'item' | 'desc' | 'qty' | 'turnover' | 'price' | 'provision' | 'rate';
 
@@ -206,7 +206,7 @@ export default function RoyaltiesPage() {
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="mr-auto">
             <p className="font-bold text-gray-900 leading-tight text-lg">Royalties</p>
-            <p className="text-xs text-gray-500">{selectedCompany} · {dateEs(range.from)} – {dateEs(range.to)} · sin Main Item ni intercompañía</p>
+            <p className="text-xs text-gray-500">{selectedCompany} · {dateEs(range.from)} – {dateEs(range.to)} · Royalty Code de la ficha de artículo (CRAZE GmbH) · sin Main Item ni intercompañía</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex bg-gray-100 rounded-lg p-1">
@@ -257,6 +257,20 @@ export default function RoyaltiesPage() {
                   {data.bcError && <span className="block text-xs text-amber-700 mt-1">BC: {data.bcError}</span>}
                 </div>
               </div>
+            )}
+            {data.itemsError ? (
+              <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-800 flex items-start gap-2">
+                <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                <div>
+                  No se han podido leer los Royalty Codes de las fichas de artículo de CRAZE GmbH: se muestran los de la LM, que pueden no ser correctos.
+                  <span className="block text-xs mt-1">{data.itemsError}</span>
+                </div>
+              </div>
+            ) : data.stats.noItemCard.length > 0 && (
+              <details className="bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700">
+                <summary className="cursor-pointer">{data.stats.noItemCard.length} artículos no existen en CRAZE GmbH: se usa su Royalty Code de la LM.</summary>
+                <p className="mt-2 font-mono text-xs break-words">{data.stats.noItemCard.join(', ')}</p>
+              </details>
             )}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <Kpi label="Provisión royalties" value={money(totals.provision)} sub={licensedTurnover ? `${pct(totals.provision / licensedTurnover)} sobre ventas con licencia` : undefined} />
@@ -367,7 +381,7 @@ export default function RoyaltiesPage() {
               </div>
             </section>
             <p className="text-xs text-gray-500">
-              Fuente: página 60000 &quot;AIT Documents LM Components&quot; de Business Central ({data.source === 'bc' ? `servicio ${data.service}` : 'Excel cargado'}), sin líneas Main Item ni intercompañía. Precio por unidad = turnover ÷ cantidad; royalty rate = provisión ÷ turnover.
+              Fuente: página 60000 &quot;AIT Documents LM Components&quot; de Business Central ({data.source === 'bc' ? `servicio ${data.service}` : 'Excel cargado'}), sin líneas Main Item ni intercompañía. Royalty Code de la ficha de artículo en CRAZE GmbH. Precio por unidad = turnover ÷ cantidad; royalty rate = provisión ÷ turnover.
             </p>
           </>
         )}

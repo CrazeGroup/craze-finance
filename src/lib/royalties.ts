@@ -1,12 +1,13 @@
 import prisma from '@/lib/prisma';
-import { bcFetchAll, BcContext, odataUrl } from '@/lib/bcClient';
+import { bcFetchAll, BcContext, getBcContext, odataUrl } from '@/lib/bcClient';
 import { cached, HOUR, readSetting } from '@/lib/reporting/cache';
 import { today } from '@/lib/reporting/period';
 
 // Royalties: líneas de la tabla 60000 "AIT Document LM Components" (página 60000 "AIT Documents LM Components").
 // Se leen de BC (servicio web OData de la página) o, mientras no esté disponible, de la última exportación
 // a Excel de esa página subida en la app. Sin líneas "Main Item" ni ventas intercompañía, agrupado por
-// Royalty Code × país de facturación × artículo.
+// Royalty Code × país de facturación × artículo. El Royalty Code de la LM no se usa: se toma siempre de la ficha
+// del artículo (tabla 27) en CRAZE GmbH, que es donde está bien mantenido (en otras empresas, como UK, no siempre).
 
 // Línea normalizada (BC o Excel). Las líneas Main Item no se guardan.
 export type LmLine = {
@@ -36,8 +37,11 @@ async function intergroupCustomers(company: string) {
 
 // ---------- Agregado ----------
 
-export function buildReport(lines: LmLine[], from: string, to: string, icCustomers: Set<string>) {
-  const stats = { lines: 0, ic: { lines: 0, turnover: 0, provision: 0 } };
+// itemCodes: Royalty Code de la ficha de cada artículo en CRAZE GmbH ('' = sin royalty). Si el artículo no
+// existe allí (o no se pudo leer), se queda el código de la LM.
+export function buildReport(lines: LmLine[], from: string, to: string, icCustomers: Set<string>, itemCodes: Record<string, string> | null) {
+  const stats = { lines: 0, ic: { lines: 0, turnover: 0, provision: 0 }, noItemCard: [] as string[] };
+  const noCard = new Set<string>();
   const groups = new Map<string, RoyaltyRow>();
   for (const l of lines) {
     if (l.date < from || l.date > to) continue;
@@ -48,7 +52,12 @@ export function buildReport(lines: LmLine[], from: string, to: string, icCustome
       stats.ic.provision += l.provision;
       continue;
     }
-    const code = l.code || 'NOT APPLIED';
+    let code = l.code;
+    if (itemCodes) {
+      if (l.item in itemCodes) code = itemCodes[l.item];
+      else noCard.add(l.item);
+    }
+    code = code || 'NOT APPLIED';
     const key = `${code}|${l.country}|${l.item}`;
     const g = groups.get(key) || { code, country: l.country, item: l.item, desc: l.desc, qty: 0, turnover: 0, price: 0, provision: 0, rate: 0, lines: 0 };
     g.qty += l.qty;
@@ -57,6 +66,7 @@ export function buildReport(lines: LmLine[], from: string, to: string, icCustome
     g.lines++;
     groups.set(key, g);
   }
+  stats.noItemCard = Array.from(noCard).sort();
   // Precio medio por unidad y % royalty efectivo del grupo
   const rows = Array.from(groups.values()).map(g => ({
     ...g, price: g.qty ? g.turnover / g.qty : 0, rate: g.turnover ? g.provision / g.turnover : 0,
@@ -160,6 +170,52 @@ async function bcLines(ctx: BcContext, from: string, to: string): Promise<{ serv
   return { service: service.name, lines };
 }
 
+// ---------- Royalty Code de la ficha de artículo (CRAZE GmbH) ----------
+
+export const ITEMS_COMPANY = 'CRAZE';
+const ROYALTY_FIELD = /royalt/i;
+
+async function sampleKeys(url: string, token: string): Promise<string[] | null> {
+  const res = await fetch(odataUrl(url, { $top: '1' }), { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+  if (!res.ok) return null;
+  const data: any = await res.json();
+  return data.value?.[0] ? Object.keys(data.value[0]) : null;
+}
+
+// Busca un listado de artículos que incluya el Royalty Code: API custom "items" o una página de artículos
+// publicada en OData (Items, Item_Card…). Nombre del servicio fijable con el setting 'royaltiesItemService'.
+async function itemRoyaltyCodes(ctx: BcContext): Promise<Record<string, string>> {
+  const odataRoot = ctx.odataCompanyBase.replace(/\/Company\(.*$/, '');
+  const configured = await readSetting<string>('royaltiesItemService', '');
+  const odataNames = configured ? [configured] : (await serviceNames(odataRoot, ctx.token)).filter(n => /^item/i.test(n));
+  const candidates = [
+    `${ctx.customApiBase}/items`,
+    ...odataNames.sort((a, b) => Number(!/^items?(_card)?$/i.test(a)) - Number(!/^items?(_card)?$/i.test(b))).map(n => `${ctx.odataCompanyBase}/${n}`),
+  ];
+  const tried: string[] = [];
+  for (const url of candidates) {
+    const keys = await sampleKeys(url, ctx.token);
+    const name = url.split('/').pop() as string;
+    tried.push(`${name}${keys ? '' : ' (no accesible)'}`);
+    const codeKey = keys?.find(k => ROYALTY_FIELD.test(k));
+    const noKey = keys?.find(k => ['number', 'no', 'No'].includes(k));
+    if (!codeKey || !noKey) continue;
+    const rows = await bcFetchAll(odataUrl(url, { $select: `${noKey},${codeKey}` }), ctx.token);
+    return Object.fromEntries(rows.map(r => [str(r[noKey]), str(r[codeKey])]));
+  }
+  throw new Error(`No se encuentra el Royalty Code de la ficha de artículo en ${ctx.companyName} (probado: ${tried.join(', ') || 'ningún servicio de artículos'}).`);
+}
+
+async function loadItemCodes(ctx: BcContext | null, force: boolean): Promise<{ codes: Record<string, string> | null; error: string | null }> {
+  try {
+    const itemsCtx = ctx && ctx.companyName.toLowerCase() === ITEMS_COMPANY.toLowerCase() ? ctx : await getBcContext(ITEMS_COMPANY);
+    return { codes: await cached(`royalties:items:${ITEMS_COMPANY}`, 6 * HOUR, () => itemRoyaltyCodes(itemsCtx), force), error: null };
+  } catch (e: any) {
+    console.error('Royalties items:', e);
+    return { codes: null, error: e.message };
+  }
+}
+
 // ---------- Excel subido ----------
 
 const UPLOAD_PREFIX = 'royalties:upload:';
@@ -190,13 +246,15 @@ async function loadUpload(company: string): Promise<{ meta: Omit<StoredUpload, '
 
 export async function royaltiesReport(ctx: BcContext | null, company: string, from: string, to: string, force = false) {
   let bcError: string | null = null;
+  const items = await loadItemCodes(ctx, force);
   if (ctx) {
     try {
-      const fromBc = await cached(`royalties:${company}:${from}:${to}`, to < today() ? 12 * HOUR : 1 * HOUR, async () => {
-        const { service, lines } = await bcLines(ctx, from, to);
-        return { service, ...buildReport(lines, from, to, await intergroupCustomers(company)) };
-      }, force);
-      return { from, to, company, source: 'bc' as const, ...fromBc };
+      // Se guardan las líneas (no el agregado) para aplicar los Royalty Codes de artículo vigentes
+      const fromBc = await cached(`royalties:lines:${company}:${from}:${to}`, to < today() ? 12 * HOUR : 1 * HOUR, () => bcLines(ctx, from, to), force);
+      return {
+        from, to, company, source: 'bc' as const, service: fromBc.service, itemsError: items.error,
+        ...buildReport(fromBc.lines, from, to, await intergroupCustomers(company), items.codes),
+      };
     } catch (e: any) {
       bcError = e.message;
       if (!(e instanceof RoyaltiesSetupError)) console.error('Royalties BC:', e);
@@ -210,7 +268,7 @@ export async function royaltiesReport(ctx: BcContext | null, company: string, fr
     );
   }
   return {
-    from, to, company, source: 'excel' as const, upload: upload.meta, bcError,
-    ...buildReport(upload.lines, from, to, await intergroupCustomers(company)),
+    from, to, company, source: 'excel' as const, upload: upload.meta, bcError, itemsError: items.error,
+    ...buildReport(upload.lines, from, to, await intergroupCustomers(company), items.codes),
   };
 }
