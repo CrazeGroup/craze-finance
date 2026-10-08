@@ -46,6 +46,16 @@ async function intergroupCustomers(company: string) {
 // itemCodes: Royalty Code de la ficha de cada artículo en CRAZE GmbH ('' = sin royalty). Si el artículo no
 // existe allí (o no se pudo leer), se queda el código de la LM.
 // rates: null = se queda la provisión de la LM. Un código sin % en la tabla de royalties no provisiona.
+// Artículo con ficha en CRAZE GmbH: el propio o, si no existe, su artículo base quitando el sufijo de letras
+// (48412MEILI → 48412, 52327DEX → 52327DE → 52327)
+function cardItem(item: string, itemCodes: Record<string, string>): string | null {
+  for (let i = item; i; i = i.replace(/[A-Z]$/i, '')) {
+    if (i in itemCodes) return i;
+    if (!/[A-Z]$/i.test(i)) break;
+  }
+  return null;
+}
+
 // excludedCodes: licencias que la empresa no puede vender (se quitan del informe, ver EXCLUDED_CODES)
 export function buildReport(
   lines: LmLine[], from: string, to: string, icCustomers: Set<string>,
@@ -69,7 +79,8 @@ export function buildReport(
     }
     let code = l.code;
     if (itemCodes) {
-      if (l.item in itemCodes) code = itemCodes[l.item];
+      const card = cardItem(l.item, itemCodes);
+      if (card) code = itemCodes[card];
       else noCard.add(l.item);
     }
     code = code || 'NOT APPLIED';
@@ -82,7 +93,8 @@ export function buildReport(
     if (rates) {
       const r = rates[code.toUpperCase()];
       if (!r && code !== 'NOT APPLIED') noRate.add(code);
-      provision = r ? l.turnover * (/^FOB$/i.test(l.ship) ? r.fob : r.domestic) : 0;
+      // Venta FOB: % Fob Royalty, salvo que el código no tenga (0) → % Domestic
+      provision = r ? l.turnover * (/^FOB$/i.test(l.ship) && r.fob ? r.fob : r.domestic) : 0;
     }
     const key = `${code}|${l.country}|${l.item}`;
     const g = groups.get(key) || { code, country: l.country, item: l.item, desc: l.desc, qty: 0, turnover: 0, price: 0, provision: 0, rate: 0, lines: 0 };
