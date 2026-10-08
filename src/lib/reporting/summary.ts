@@ -9,6 +9,11 @@ export type SummaryLang = 'es' | 'en' | 'de';
 export type SummaryView = 'operational' | 'management';
 
 const LANG_NAME: Record<SummaryLang, string> = { es: 'castellano', en: 'English', de: 'Deutsch' };
+const LANG_FORMAT: Record<SummaryLang, string> = {
+  es: '14,23 M€ para millones y 616 k€ para miles (coma decimal)',
+  en: '€14.23M for millions and €616k for thousands (decimal point)',
+  de: '14,23 Mio. € für Millionen und 616 T€ für Tausend (Dezimalkomma)',
+};
 
 const VIEW_BRIEF: Record<SummaryView, string> = {
   operational: 'inventario por almacén y su variación, top productos que suben/bajan, compras a China (CHINA TRF), cartera sin seguro (Amazon, Aldi, Lidl) y variación del coste medio unitario',
@@ -28,9 +33,9 @@ empresa ${company}, cierre ${month}.
 
 Reglas:
 - Escribe en ${LANG_NAME[lang]}, con la terminología financiera habitual en ese idioma.
-- Entre 4 y 6 puntos, cada uno de 1 o 2 frases, con cifras concretas (formato de importes del idioma, p. ej. 14,23 M€ / €14.23M / 14,23 Mio. €; k€ para miles).
+- Entre 4 y 6 puntos, cada uno de 1 o 2 frases, con cifras concretas. Formato de importes: ${LANG_FORMAT[lang]}.
 - Prioriza lo que requiere atención o decisión: riesgos, desviaciones, vencidos, superación del límite de descubierto, diferencias a conciliar.
-- Usa solo los datos proporcionados; no inventes cifras ni causas. Si comparas, indica contra qué periodo.
+- Usa solo los datos proporcionados; no inventes cifras ni causas. Si comparas, indica contra qué periodo y compara siempre la misma sociedad o columna (p. ej. consolidado con consolidado).
 - Las provisiones del año son elevadas y todavía tienen mucho saldo abierto: tenlo en cuenta al leer el resultado.
 - Marca la cifra principal de cada punto con **negrita** (markdown).
 - Devuelve solo un JSON: {"points": ["...", "..."]}

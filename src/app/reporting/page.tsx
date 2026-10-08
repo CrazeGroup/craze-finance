@@ -45,7 +45,8 @@ function summaryInput(view: View, d: Record<SectionKey, any>) {
     markant: ar && { total: ar.markant.total, conFecha: ar.markant.conf, sinFecha: ar.markant.unconf, principalesSinFecha: ar.markant.unconfTop.slice(0, 3) },
     proveedores: ap && { total: ap.ap.total, chinaTrf: { total: ap.china.total, conFechaProgramada: ap.china.conf, sinFecha: ap.china.unconf, vencido: ap.china.overdue, vencidoSinFecha: ap.china.unconfOverdue } },
     provisiones: prov && { original: prov.orig, consumido: prov.cons, abierto: prov.open, porTipo: prov.byType, dotacionMes: prov.month },
-    bwaAcumulado: bwa && ['1020', '1080', '1300', '1380'].map(code => ({ linea: bwaLine(code)?.description, porSociedad: Object.fromEntries(bwa.columns.map((c: string) => [c, Math.round(bwaLine(code)?.values[c]?.ytd || 0)])), crazeAnoAnterior: Math.round(bwaLine(code)?.values.CRAZE?.prevYtd || 0) })),
+    bwaAcumuladoAnoActual: bwa && ['1020', '1080', '1300', '1380'].map(code => ({ linea: bwaLine(code)?.description, porColumna: Object.fromEntries(bwa.columns.map((c: string) => [c, Math.round(bwaLine(code)?.values[c]?.ytd || 0)])) })),
+    bwaMismoPeriodoAnoAnterior: bwa && ['1020', '1080', '1300', '1380'].map(code => ({ linea: bwaLine(code)?.description, porColumna: Object.fromEntries(bwa.columns.map((c: string) => [c, Math.round(bwaLine(code)?.values[c]?.prevYtd || 0)])) })),
     tesoreria: cf && { limite: cf.limit, saldoInicial: cf.start, minimo: cf.min, saldoFinal: cf.end, diasBajoLimite: cf.breachDays, tramosBajoLimite: cf.breaches.slice(0, 4), movimientosGrandes: cf.bigMoves.slice(0, 12) },
   };
 }
