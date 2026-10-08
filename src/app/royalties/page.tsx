@@ -522,8 +522,10 @@ function GroupSummary({ range, reload }: { range: { from: string; to: string }; 
   }, [range, reload]);
 
   const rate = (cur: string) => (cur === 'EUR' ? 1 : parseFloat((fx[cur] || '').replace(',', '.')) || 0);
-  const currencies = Array.from(new Set((companies || []).map(c => c.currency).filter(c => c !== 'EUR')));
-  const cols = companies || [];
+  // Solo las empresas con datos (BC o Excel cargado)
+  const cols = (companies || []).filter(c => !c.error && Object.keys(c.byCode).length > 0);
+  const omitted = (companies || []).filter(c => !cols.includes(c)).map(c => SHORT[c.company] || c.company);
+  const currencies = Array.from(new Set(cols.map(c => c.currency).filter(c => c !== 'EUR')));
   const codes = Array.from(new Set(cols.flatMap(c => Object.keys(c.byCode)))).filter(c => c !== NOT_APPLIED)
     .map(code => {
       const values = cols.map(c => (c.byCode[code] || 0) * rate(c.currency));
@@ -587,9 +589,9 @@ function GroupSummary({ range, reload }: { range: { from: string; to: string }; 
                 {cols.map(c => (
                   <th key={c.company} className="text-right px-4 py-2 align-bottom">
                     {SHORT[c.company] || c.company}
-                    <span className={`block normal-case tracking-normal font-normal ${c.error ? 'text-red-600' : 'text-gray-400'}`}
-                      title={c.error || (c.upload ? `${c.upload.fileName}: ${dateEs(c.upload.from)} – ${dateEs(c.upload.to)}` : '')}>
-                      {c.error ? 'sin datos' : `${c.source === 'bc' ? 'BC' : 'Excel'}${c.currency !== 'EUR' ? ` · ${c.currency}→EUR` : ''}`}
+                    <span className="block normal-case tracking-normal font-normal text-gray-400"
+                      title={c.upload ? `${c.upload.fileName}: ${dateEs(c.upload.from)} – ${dateEs(c.upload.to)}` : ''}>
+                      {`${c.source === 'bc' ? 'BC' : 'Excel'}${c.currency !== 'EUR' ? ` · ${c.currency}→EUR` : ''}`}
                     </span>
                   </th>
                 ))}
@@ -620,10 +622,12 @@ function GroupSummary({ range, reload }: { range: { from: string; to: string }; 
           </table>
         </div>
       )}
-      {(missingFx.length > 0 || cols.some(c => c.error) || cols.some(c => c.upload && (range.from < c.upload.from || range.to > c.upload.to))) && (
+      {omitted.length > 0 && companies && (
+        <p className="px-4 py-2 border-t border-gray-100 text-xs text-gray-500">Sin datos para el periodo (no se muestran): {omitted.join(', ')}.</p>
+      )}
+      {(missingFx.length > 0 || cols.some(c => c.upload && (range.from < c.upload.from || range.to > c.upload.to))) && (
         <div className="px-4 py-2 border-t border-gray-100 text-xs text-amber-800 bg-amber-50 space-y-0.5">
           {missingFx.length > 0 && <p>Falta el tipo de cambio de {missingFx.join(', ')}: esas empresas suman 0 hasta que lo indiques.</p>}
-          {cols.filter(c => c.error).map(c => <p key={c.company}>{SHORT[c.company] || c.company}: sin datos ({c.error})</p>)}
           {cols.filter(c => c.upload && (range.from < c.upload.from || range.to > c.upload.to)).map(c => (
             <p key={c.company}>{SHORT[c.company] || c.company}: su Excel cubre del {dateEs(c.upload!.from)} al {dateEs(c.upload!.to)}, no todo el periodo elegido.</p>
           ))}
