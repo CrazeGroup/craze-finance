@@ -429,13 +429,22 @@ export async function groupRoyaltiesReport(from: string, to: string, force = fal
       const ctx = await getBcContext(company).catch(() => null);
       const r = await royaltiesReport(ctx, company, from, to, force);
       const byCode: Record<string, number> = {};
-      r.rows.forEach(x => { byCode[x.code] = (byCode[x.code] || 0) + x.provision; });
+      // Por código y país de facturación (para las Minimum Guarantees por territorio)
+      const byCodeCountry: Record<string, Record<string, number>> = {};
+      r.rows.forEach(x => {
+        byCode[x.code] = (byCode[x.code] || 0) + x.provision;
+        const c = (byCodeCountry[x.code] ||= {});
+        c[x.country] = (c[x.country] || 0) + x.provision;
+      });
       return {
-        company, currency, fx: r.fx?.rate ?? null, fxDate: r.fx?.date ?? null, byCode, error: null as string | null,
+        company, currency, fx: r.fx?.rate ?? null, fxDate: r.fx?.date ?? null, byCode, byCodeCountry, error: null as string | null,
         source: r.source, upload: r.source === 'excel' ? r.upload : undefined,
       };
     } catch (e: any) {
-      return { company, currency, fx: null, fxDate: null, byCode: {} as Record<string, number>, error: e.message as string, source: null, upload: undefined };
+      return {
+        company, currency, fx: null, fxDate: null, byCode: {} as Record<string, number>,
+        byCodeCountry: {} as Record<string, Record<string, number>>, error: e.message as string, source: null, upload: undefined,
+      };
     }
   };
   // CRAZE primero: deja en caché las fichas de artículo y los % que usan las demás

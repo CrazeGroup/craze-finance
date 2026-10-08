@@ -486,6 +486,7 @@ export default function RoyaltiesPage() {
 
 type GroupCompany = {
   company: string; currency: string; fx: number | null; fxDate: string | null; byCode: Record<string, number>;
+  byCodeCountry: Record<string, Record<string, number>>;
   error: string | null; source: 'bc' | 'excel' | null; upload?: { fileName: string; uploadedAt: string; from: string; to: string };
 };
 const SHORT: Record<string, string> = { 'CRAZE': 'CRAZE GmbH', 'Craze Iberia SL': 'Iberia', 'Craze UK': 'UK', 'CRAZE Group AG': 'Group AG', 'Craze Entertainment': 'Entertainment' };
@@ -556,6 +557,7 @@ function GroupSummary({ range, reload }: { range: { from: string; to: string }; 
   };
 
   return (
+    <>
     <section className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap items-center gap-3">
         <h2 className="text-sm font-bold text-gray-900 mr-auto">
@@ -634,6 +636,168 @@ function GroupSummary({ range, reload }: { range: { from: string; to: string }; 
         </div>
       )}
     </section>
+    <MgSummary to={range.to} reload={reload} rate={rate} fxReady={c => !!rate(c)} />
+    </>
+  );
+}
+
+// ---------- Minimum Guarantees (en CRAZE) ----------
+
+type MgInstalment = { date: string; amount: number; label: string };
+type MgGuarantee = { id: string; territory: string; countries: string[] | 'ALL_EXCEPT'; exceptCountries?: string[]; instalments: MgInstalment[] };
+type MgContract = {
+  id: string; licence: string; codes: string[]; licensor: string; licensee: string; reference: string;
+  start: string; end: string; rates: string; notes?: string; guarantees: MgGuarantee[];
+};
+const countsCountry = (g: MgGuarantee, country: string) =>
+  g.countries === 'ALL_EXCEPT' ? !(g.exceptCountries || []).includes(country) : g.countries.includes(country);
+
+function MgSummary({ to, reload, rate, fxReady }: {
+  to: string; reload: { n: number; force: boolean }; rate: (cur: string) => number; fxReady: (cur: string) => boolean;
+}) {
+  const [data, setData] = useState<{ contracts: MgContract[]; byStart: Record<string, GroupCompany[]> } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!to) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetch(`/api/royalties/mg?to=${to}${reload.force ? '&force=1' : ''}`)
+      .then(async res => {
+        const json = await res.json();
+        if (cancelled) return;
+        if (!res.ok) setError(json.error || 'Error al cargar las Minimum Guarantees');
+        else setData(json);
+      })
+      .catch(e => { if (!cancelled) setError(e.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [to, reload]);
+
+  return (
+    <section className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-200">
+        <h2 className="text-sm font-bold text-gray-900">
+          Minimum Guarantees por licencia (EUR)
+          {loading && <RefreshCw size={12} className="inline ml-2 animate-spin text-gray-400" />}
+        </h2>
+        <p className="text-xs text-gray-500 mt-0.5">
+          Provisión de royalties de todas las empresas del grupo desde el inicio de cada contrato hasta el {dateEs(to)}, asignada a cada garantía por país de facturación.
+          Mientras quede MG abierta, el licenciante no debería facturar royalties.
+        </p>
+      </div>
+      {error ? <p className="px-4 py-3 text-sm text-red-700">{error}</p>
+        : !data ? <p className="px-4 py-3 text-sm text-gray-500">Calculando las Minimum Guarantees…</p>
+        : (
+          <div className="divide-y divide-gray-200">
+            {data.contracts.map(c => <MgContractCard key={c.id} contract={c} companies={data.byStart[c.start] || []} to={to} rate={rate} fxReady={fxReady} />)}
+          </div>
+        )}
+    </section>
+  );
+}
+
+function MgContractCard({ contract: c, companies, to, rate, fxReady }: {
+  contract: MgContract; companies: GroupCompany[]; to: string; rate: (cur: string) => number; fxReady: (cur: string) => boolean;
+}) {
+  const withData = companies.filter(x => !x.error && Object.keys(x.byCodeCountry || {}).length > 0);
+  // Provisión (EUR) de los códigos de la licencia por país de facturación
+  const byCountry: Record<string, number> = {};
+  for (const co of withData) {
+    const r = rate(co.currency);
+    for (const code of c.codes) {
+      for (const [country, v] of Object.entries(co.byCodeCountry[code] || {})) byCountry[country] = (byCountry[country] || 0) + v * r;
+    }
+  }
+  const outside = Object.entries(byCountry).filter(([country]) => !c.guarantees.some(g => countsCountry(g, country)));
+  const outsideTotal = outside.reduce((s, [, v]) => s + v, 0);
+  const missingFx = Array.from(new Set(withData.map(x => x.currency))).filter(cur => cur !== 'EUR' && !fxReady(cur));
+  const lateData = withData.filter(x => x.upload && x.upload.from > c.start);
+
+  return (
+    <div className="px-4 py-4 space-y-3">
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        <h3 className="text-base font-bold text-gray-900">{c.licence}</h3>
+        <span className="text-xs text-gray-500">{c.codes.join(' + ')}</span>
+        <span className="text-xs text-gray-500">{c.licensor} · {c.reference}</span>
+        <span className="text-xs text-gray-500">Contrato {dateEs(c.start)} – {dateEs(c.end)} · {c.rates}</span>
+      </div>
+      {c.start > to ? <p className="text-sm text-gray-500">El contrato empieza después de la fecha de corte.</p> : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {c.guarantees.map(g => {
+            const provision = Object.entries(byCountry).filter(([country]) => countsCountry(g, country)).reduce((s, [, v]) => s + v, 0);
+            const total = g.instalments.reduce((s, i) => s + i.amount, 0);
+            let remaining = Math.max(0, provision);
+            const rows = [...g.instalments].sort((a, b) => a.date.localeCompare(b.date)).map(i => {
+              const consumed = Math.min(i.amount, remaining);
+              remaining -= consumed;
+              return { ...i, consumed, open: i.amount - consumed, due: i.date <= to };
+            });
+            const consumed = rows.reduce((s, r) => s + r.consumed, 0);
+            const dueToDate = rows.filter(r => r.due).reduce((s, r) => s + r.amount, 0);
+            const excess = Math.max(0, provision - total);
+            return (
+              <div key={g.id} className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex flex-wrap items-baseline gap-x-3">
+                  <span className="text-sm font-semibold text-gray-900">{g.territory}</span>
+                  <span className="text-xs text-gray-500">MG total {money(total)} · vencida a {dateEs(to)}: {money(dueToDate)}</span>
+                </div>
+                <table className="w-full text-sm">
+                  <thead className="text-xs uppercase tracking-wider text-gray-500">
+                    <tr>
+                      <th className="text-left px-3 py-1.5">Vencimiento</th>
+                      <th className="text-left px-3 py-1.5">Concepto</th>
+                      <th className="text-right px-3 py-1.5">Minimum Guarantee</th>
+                      <th className="text-right px-3 py-1.5">Provisión royalties</th>
+                      <th className="text-right px-3 py-1.5">MG abierta</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => (
+                      <tr key={i} className={`border-t border-gray-100 ${r.due ? 'text-gray-900' : 'text-gray-500'}`}>
+                        <td className="px-3 py-1.5 whitespace-nowrap">{dateEs(r.date)}</td>
+                        <td className="px-3 py-1.5">{r.label}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">{money(r.amount)}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">{r.consumed ? money(r.consumed) : '—'}</td>
+                        <td className={`px-3 py-1.5 text-right tabular-nums ${r.open ? 'font-semibold' : 'text-green-700'}`}>{r.open ? money(r.open) : 'Consumida'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-gray-50 font-bold text-gray-900">
+                    <tr className="border-t-2 border-gray-300">
+                      <td className="px-3 py-2" colSpan={2}>Total</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{money(total)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{money(consumed)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{money(total - consumed)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+                <div className="px-3 py-2 border-t border-gray-100 text-xs text-gray-600">
+                  Provisión royalties acumulada: <b>{money(provision)}</b>
+                  {excess > 0
+                    ? <> · <span className="text-amber-800">MG consumida: {money(excess)} de royalties por encima de la garantía, a facturar por el licenciante.</span></>
+                    : <> · Sin royalties a facturar hasta consumir {money(total - consumed)} de MG.</>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {(c.notes || outsideTotal !== 0 || missingFx.length > 0 || lateData.length > 0) && (
+        <div className="text-xs text-gray-500 space-y-0.5">
+          {c.notes && <p>{c.notes}</p>}
+          {outsideTotal !== 0 && (
+            <p>Provisión fuera de los territorios con garantía (no consume MG): {money(outsideTotal)} ({outside.map(([k, v]) => `${k || 'sin país'} ${money(v)}`).join(', ')}).</p>
+          )}
+          {missingFx.length > 0 && <p className="text-amber-800">Falta el tipo de cambio de {missingFx.join(', ')}: esas empresas no suman.</p>}
+          {lateData.map(x => (
+            <p key={x.company} className="text-amber-800">{SHORT[x.company] || x.company}: su Excel empieza el {dateEs(x.upload!.from)}; faltan los royalties desde el {dateEs(c.start)}.</p>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
