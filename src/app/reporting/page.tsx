@@ -116,7 +116,8 @@ export default function ReportingPage() {
         body: JSON.stringify({ view: v, lang, month, data, force: summaryForce[v] > 0 }),
       })
         .then(async res => {
-          const r = await res.json();
+          // Si la función supera el tiempo, Vercel responde con texto en vez de JSON
+          const r = await res.json().catch(() => ({ error: t('aiUnavailable') }));
           if (stale()) return;
           setSummaries(prev => ({ ...prev, [v]: res.ok && !r.error ? { points: r.points, loading: false, error: null, waiting: false } : { points: null, loading: false, error: r.error || `HTTP ${res.status}`, waiting: false } }));
         })

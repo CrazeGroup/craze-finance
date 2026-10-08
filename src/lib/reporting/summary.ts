@@ -45,23 +45,31 @@ ${payload}`;
   }, force);
 }
 
-// Gemini devuelve 503/429 cuando hay mucha demanda: se reintenta y, si sigue, se usa un modelo más ligero
+// Gemini devuelve 503/429 cuando hay mucha demanda: se reintenta y, si sigue, se usa un modelo más ligero.
+// Todo dentro de ~50 s para no pasar del límite de 60 s de la función en Vercel.
 const MODELS = ['gemini-flash-latest', 'gemini-flash-lite-latest'];
+const BUDGET_MS = 50_000;
 
 async function generateWithRetry(genAI: GoogleGenerativeAI, prompt: string): Promise<string> {
+  const deadline = Date.now() + BUDGET_MS;
   let lastError: unknown;
   for (const name of MODELS) {
-    const model = genAI.getGenerativeModel({ model: name, generationConfig: { responseMimeType: 'application/json' } });
     for (let attempt = 0; attempt < 2; attempt++) {
+      const remaining = deadline - Date.now();
+      if (remaining < 5_000) break;
+      const model = genAI.getGenerativeModel(
+        { model: name, generationConfig: { responseMimeType: 'application/json' } },
+        { timeout: Math.min(25_000, remaining) }
+      );
       try {
         const result = await model.generateContent(prompt);
         return result.response.text();
       } catch (error: any) {
         lastError = error;
-        if (!/\b(429|500|503)\b|overloaded|high demand|unavailable/i.test(String(error?.message))) throw error;
-        await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+        if (!/\b(429|500|503)\b|overloaded|high demand|unavailable|timeout|abort/i.test(String(error?.message))) throw error;
+        await new Promise(r => setTimeout(r, 1000));
       }
     }
   }
-  throw lastError;
+  throw new Error(`La IA no está disponible ahora mismo (${String((lastError as any)?.message || lastError).substring(0, 120)}). Pulsa Regenerar en unos minutos.`);
 }
