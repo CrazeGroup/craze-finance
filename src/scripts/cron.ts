@@ -1,12 +1,10 @@
 import { syncBusinessCentral } from '../lib/bcSync';
-import { saveSnapshots } from '../lib/reporting';
 
 async function runSync() {
   try {
     console.log(`[${new Date().toISOString()}] Running scheduled BC sync...`);
     await syncBusinessCentral();
     console.log(`[${new Date().toISOString()}] Scheduled sync completed successfully.`);
-    await saveSnapshots();
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Scheduled sync error:`, error);
   }

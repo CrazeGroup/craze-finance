@@ -1,5 +1,0 @@
-{
-  "crons": [
-    { "path": "/api/reporting/snapshot", "schedule": "0 21 * * *" }
-  ]
-}

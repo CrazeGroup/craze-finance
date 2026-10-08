@@ -37,9 +37,8 @@ export async function getBcContext(companyName: string): Promise<BcContext> {
   };
 }
 
-// Descarga todas las páginas de una consulta OData. Timeout más largo que el de la sync,
-// porque las agregaciones ($apply) sobre movimientos de valor pueden tardar.
-export async function bcFetchAll(url: string, token: string, timeoutMs = 25000): Promise<any[]> {
+// Descarga todas las páginas de una consulta OData (páginas de hasta 20.000 filas)
+export async function bcFetchAll(url: string, token: string, timeoutMs = 45000): Promise<any[]> {
   let nextUrl: string | null = url;
   const results: any[] = [];
   let pages = 0;
@@ -50,7 +49,7 @@ export async function bcFetchAll(url: string, token: string, timeoutMs = 25000):
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res: Response = await fetch(nextUrl, {
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', Prefer: 'odata.maxpagesize=20000' },
         signal: controller.signal
       });
       if (!res.ok) throw new Error(`Consulta a BC fallida (${res.status}): ${await res.text()}`);
@@ -68,4 +67,32 @@ export async function bcFetchAll(url: string, token: string, timeoutMs = 25000):
     }
   }
   return results;
+}
+
+// Construye una URL OData con parámetros ($filter, $select...) codificados
+export function odataUrl(base: string, params: Record<string, string | undefined>): string {
+  const query = Object.entries(params)
+    .filter(([, v]) => v !== undefined && v !== '')
+    .map(([k, v]) => `${k}=${encodeURIComponent(v as string)}`)
+    .join('&');
+  return query ? `${base}?${query}` : base;
+}
+
+// Descarga una tabla grande en paralelo, partiendo por rangos del campo de nº de movimiento.
+// El nº de filas ($count) sirve de referencia para los rangos (algunos servicios, como las Query de BC,
+// no admiten $orderby); el último rango queda abierto. `extraFilter` se combina con el rango.
+export async function bcFetchByEntryRanges(
+  base: string, token: string, entryField: string, select: string, extraFilter: string, parts = 6
+): Promise<any[]> {
+  const res = await fetch(`${base}/$count`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`Consulta a BC fallida (${res.status}): ${await res.text()}`);
+  const count = parseInt((await res.text()).replace(/[^0-9]/g, ''), 10) || 0;
+  const size = Math.max(1, Math.ceil(count / parts));
+  const chunks = await Promise.all(Array.from({ length: parts }, (_, i) => {
+    const range = i === parts - 1
+      ? `${entryField} gt ${i * size}`
+      : `${entryField} gt ${i * size} and ${entryField} le ${(i + 1) * size}`;
+    return bcFetchAll(odataUrl(base, { $select: select, $filter: extraFilter ? `${range} and ${extraFilter}` : range }), token);
+  }));
+  return chunks.flat();
 }

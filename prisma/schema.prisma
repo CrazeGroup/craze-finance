@@ -254,14 +254,3 @@ model BwaReport {
   data         String   @db.Text
 }
 
-// Foto mensual de la cartera de clientes/proveedores (una por empresa y mes, se sobrescribe durante el mes)
-model ReportingSnapshot {
-  id        Int      @id @default(autoincrement())
-  companyId String
-  month     String   // "YYYY-MM"
-  data      Json
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([companyId, month])
-}

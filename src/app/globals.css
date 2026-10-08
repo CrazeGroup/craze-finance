@@ -23,3 +23,18 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Reporting: exportación a PDF (imprimir → Guardar como PDF) */
+@media print {
+  @page { size: A4 landscape; margin: 10mm; }
+  html, body { height: auto !important; overflow: visible !important; display: block !important; background: #fff !important; }
+  body > aside, aside { display: none !important; }
+  main { overflow: visible !important; }
+  .rpt-root { background: #fff !important; padding-bottom: 0 !important; }
+  .rpt-header { position: static !important; border: 0 !important; }
+  .rpt-noprint { display: none !important; }
+  .rpt-card, .rpt-section > div { break-inside: avoid; }
+  .rpt-section { break-before: page; }
+  .rpt-pagebreak { break-before: page; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
