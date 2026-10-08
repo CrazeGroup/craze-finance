@@ -2,6 +2,7 @@ import prisma from '@/lib/prisma';
 import { bcFetchAll, BcContext, getBcContext, odataUrl } from '@/lib/bcClient';
 import { cached, HOUR, readSetting } from '@/lib/reporting/cache';
 import { today } from '@/lib/reporting/period';
+import { DEFAULT_ROYALTY_RATES } from '@/lib/royaltyRates';
 
 // Royalties: líneas de la tabla 60000 "AIT Document LM Components" (página 60000 "AIT Documents LM Components").
 // Se leen de BC (servicio web OData de la página) o, mientras no esté disponible, de la última exportación
@@ -44,7 +45,7 @@ async function intergroupCustomers(company: string) {
 
 // itemCodes: Royalty Code de la ficha de cada artículo en CRAZE GmbH ('' = sin royalty). Si el artículo no
 // existe allí (o no se pudo leer), se queda el código de la LM.
-// rates: si no se pudieron leer, se queda la provisión de la LM. Un código sin % en RoyaltiesCRZ no provisiona.
+// rates: null = se queda la provisión de la LM. Un código sin % en la tabla de royalties no provisiona.
 export function buildReport(
   lines: LmLine[], from: string, to: string, icCustomers: Set<string>,
   itemCodes: Record<string, string> | null, rates: RoyaltyRates | null,
@@ -241,24 +242,56 @@ async function royaltyRates(ctx: BcContext): Promise<RoyaltyRates> {
   }]));
 }
 
-// Datos maestros de CRAZE GmbH: Royalty Code por artículo y % por Royalty Code (cada uno con su error)
+// Excel de la página 80007 "Royalties" subido en la app (para cuando RoyaltiesCRZ no se puede leer de BC)
+const RATES_UPLOAD_KEY = 'royalties:rates-upload';
+export type StoredRates = { fileName: string; uploadedAt: string; rates: RoyaltyRates };
+
+export async function saveRatesUpload(upload: StoredRates) {
+  const config = JSON.stringify(upload);
+  await prisma.apiConfig.upsert({ where: { key: RATES_UPLOAD_KEY }, update: { config }, create: { key: RATES_UPLOAD_KEY, url: '', config } });
+}
+
+async function loadRatesUpload(): Promise<StoredRates | null> {
+  const row = await prisma.apiConfig.findUnique({ where: { key: RATES_UPLOAD_KEY } });
+  return row?.config ? JSON.parse(row.config) as StoredRates : null;
+}
+
+// Datos maestros de CRAZE GmbH: Royalty Code por artículo y % por Royalty Code.
+// % de royalty: RoyaltiesCRZ de BC → Excel de royalties subido → tabla fija de royaltyRates.ts
 async function loadMasterData(ctx: BcContext | null, force: boolean) {
-  const out = { itemCodes: null as Record<string, string> | null, itemsError: null as string | null, rates: null as RoyaltyRates | null, ratesError: null as string | null };
-  let gmbh: BcContext;
+  const out = {
+    itemCodes: null as Record<string, string> | null, itemsError: null as string | null,
+    rates: null as RoyaltyRates | null, ratesSource: 'bc' as 'bc' | 'excel' | 'default', ratesInfo: null as string | null, ratesBcError: null as string | null,
+  };
+  let gmbh: BcContext | null = null;
   try {
     gmbh = ctx && ctx.companyName.toLowerCase() === MASTER_COMPANY.toLowerCase() ? ctx : await getBcContext(MASTER_COMPANY);
   } catch (e: any) {
-    out.itemsError = out.ratesError = e.message;
-    return out;
+    out.itemsError = out.ratesBcError = e.message;
   }
-  const [items, rates] = await Promise.allSettled([
-    cached(`royalties:items:${MASTER_COMPANY}`, 6 * HOUR, () => itemRoyaltyCodes(gmbh), force),
-    cached(`royalties:rates:${MASTER_COMPANY}`, 6 * HOUR, () => royaltyRates(gmbh), force),
-  ]);
-  if (items.status === 'fulfilled') out.itemCodes = items.value;
-  else { out.itemsError = items.reason?.message || String(items.reason); console.error('Royalties items:', items.reason); }
-  if (rates.status === 'fulfilled') out.rates = rates.value;
-  else { out.ratesError = rates.reason?.message || String(rates.reason); console.error('Royalties rates:', rates.reason); }
+  if (gmbh) {
+    const g = gmbh;
+    const [items, rates] = await Promise.allSettled([
+      cached(`royalties:items:${MASTER_COMPANY}`, 6 * HOUR, () => itemRoyaltyCodes(g), force),
+      cached(`royalties:rates:${MASTER_COMPANY}`, 6 * HOUR, () => royaltyRates(g), force),
+    ]);
+    if (items.status === 'fulfilled') out.itemCodes = items.value;
+    else { out.itemsError = items.reason?.message || String(items.reason); console.error('Royalties items:', items.reason); }
+    if (rates.status === 'fulfilled') out.rates = rates.value;
+    else { out.ratesBcError = rates.reason?.message || String(rates.reason); console.error('Royalties rates:', rates.reason); }
+  }
+  if (!out.rates) {
+    const uploaded = await loadRatesUpload();
+    if (uploaded) {
+      out.rates = uploaded.rates;
+      out.ratesSource = 'excel';
+      out.ratesInfo = `${uploaded.fileName} (cargado el ${uploaded.uploadedAt.substring(0, 10).split('-').reverse().join('/')})`;
+    } else {
+      out.rates = DEFAULT_ROYALTY_RATES;
+      out.ratesSource = 'default';
+      out.ratesInfo = 'tabla Royalties de CRAZE GmbH del 08/10/2026';
+    }
+  }
   return out;
 }
 
@@ -294,7 +327,7 @@ async function loadUpload(company: string): Promise<{ meta: Omit<StoredUpload, '
 export async function royaltiesReport(ctx: BcContext | null, company: string, from: string, to: string, force = false) {
   let bcError: string | null = null;
   const master = await loadMasterData(ctx, force);
-  const masterInfo = { itemsError: master.itemsError, ratesError: master.ratesError };
+  const masterInfo = { itemsError: master.itemsError, ratesSource: master.ratesSource, ratesInfo: master.ratesInfo, ratesBcError: master.ratesBcError };
   if (ctx) {
     try {
       // Se guardan las líneas (no el agregado) para aplicar los Royalty Codes de artículo vigentes

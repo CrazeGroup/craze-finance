@@ -11,7 +11,8 @@ type Row = {
 };
 type Report = {
   from: string; to: string; company: string; rows: Row[];
-  source: 'bc' | 'excel'; service?: string; bcError?: string | null; itemsError?: string | null; ratesError?: string | null;
+  source: 'bc' | 'excel'; service?: string; bcError?: string | null; itemsError?: string | null;
+  ratesSource?: 'bc' | 'excel' | 'default'; ratesInfo?: string | null; ratesBcError?: string | null;
   upload?: { fileName: string; uploadedAt: string; from: string; to: string };
   stats: { lines: number; ic: { lines: number; turnover: number; provision: number }; noItemCard: string[]; noRate: string[] };
 };
@@ -85,6 +86,22 @@ async function parseLmExcel(file: File) {
   return { fileName: file.name, from: dates[0] || '', to: dates[dates.length - 1] || '', desc, lines };
 }
 
+// Excel de la página 80007 "Royalties" de BC: % de royalty por Royalty Code (null si no es ese Excel)
+async function parseRatesExcel(file: File) {
+  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+  const rows = XLSX.utils.sheet_to_json<any[]>(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: null });
+  const header = (rows[0] || []).map((h: any) => String(h ?? '').trim());
+  const code = header.indexOf('Code'), dom = header.indexOf('% Domestic Royalty'), fob = header.indexOf('% Fob Royalty');
+  if (code < 0 || dom < 0) return null;
+  const n = (v: any) => (typeof v === 'number' ? v : parseFloat(String(v ?? '').replace(',', '.')) || 0);
+  const rates: Record<string, { domestic: number; fob: number }> = {};
+  for (const r of rows.slice(1)) {
+    const c = String(r?.[code] ?? '').trim().toUpperCase();
+    if (c) rates[c] = { domestic: n(r[dom]) / 100, fob: n(r[fob >= 0 ? fob : dom]) / 100 };
+  }
+  return { kind: 'rates', fileName: file.name, rates };
+}
+
 const sum = (rows: Row[], k: 'qty' | 'turnover' | 'provision') => rows.reduce((s, r) => s + r[k], 0);
 
 export default function RoyaltiesPage() {
@@ -106,7 +123,7 @@ export default function RoyaltiesPage() {
   const uploadExcel = async (file: File) => {
     setUploading(true);
     try {
-      const payload = await parseLmExcel(file);
+      const payload = (await parseRatesExcel(file)) || (await parseLmExcel(file));
       const res = await fetch('/api/royalties/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || `Error al subir el Excel (${res.status})`);
@@ -227,9 +244,9 @@ export default function RoyaltiesPage() {
               <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             </button>
             <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e => e.target.files?.[0] && uploadExcel(e.target.files[0])} />
-            <button onClick={() => fileRef.current?.click()} disabled={uploading || selectedCompany === 'ALL'} title='Cargar la exportación a Excel de la página "Documents LM Components" de BC'
+            <button onClick={() => fileRef.current?.click()} disabled={uploading || selectedCompany === 'ALL'} title='Cargar la exportación a Excel de "Documents LM Components" (líneas de la empresa) o de "Royalties" (% por Royalty Code)'
               className="flex items-center gap-2 border border-gray-300 bg-white text-gray-700 text-sm font-semibold px-3 py-2 rounded-lg hover:text-gray-900 disabled:opacity-40">
-              <Upload size={16} className={uploading ? 'animate-pulse' : ''} /> {uploading ? 'Cargando…' : 'Cargar Excel LM'}
+              <Upload size={16} className={uploading ? 'animate-pulse' : ''} /> {uploading ? 'Cargando…' : 'Cargar Excel'}
             </button>
             <button onClick={exportExcel} disabled={loading || !visible.length}
               className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
@@ -258,13 +275,11 @@ export default function RoyaltiesPage() {
                 </div>
               </div>
             )}
-            {data.ratesError && (
-              <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-800 flex items-start gap-2">
-                <AlertCircle size={16} className="mt-0.5 shrink-0" />
-                <div>
-                  No se han podido leer los % de royalty de RoyaltiesCRZ (CRAZE GmbH): la provisión mostrada es la de la LM, sin recalcular.
-                  <span className="block text-xs mt-1">{data.ratesError}</span>
-                </div>
+            {data.ratesSource && data.ratesSource !== 'bc' && (
+              <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700">
+                % de royalty tomados de {data.ratesSource === 'excel' ? <>el Excel <b>{data.ratesInfo}</b></> : <>la <b>{data.ratesInfo}</b></>}, no de RoyaltiesCRZ en directo.
+                Para actualizarlos, carga con &quot;Cargar Excel&quot; la exportación de la página Royalties de CRAZE GmbH.
+                {data.ratesBcError && <span className="block text-xs text-gray-500 mt-1">BC: {data.ratesBcError}</span>}
               </div>
             )}
             {data.stats.noRate.length > 0 && (
