@@ -414,3 +414,32 @@ export async function royaltiesReport(ctx: BcContext | null, company: string, fr
     ...buildReport(upload.lines, from, to, await intergroupCustomers(company), master.itemCodes, master.rates, excludedCodesFor(company)),
   };
 }
+
+// ---------- Resumen de grupo ----------
+
+// Empresas del grupo (mismo listado que bcSync.ts y CompanyContext)
+export const GROUP_COMPANIES = ['CRAZE', 'Craze Iberia SL', 'Craze UK', 'CRAZE Group AG', 'Craze Entertainment'];
+
+// Provisión de royalties por licencia y empresa, en la divisa de cada empresa (la conversión a EUR la hace
+// la página con el tipo de Currencies_Excel, editable). Cada empresa sale de BC o de su último Excel LM.
+export async function groupRoyaltiesReport(from: string, to: string, force = false) {
+  const one = async (company: string) => {
+    const currency = companyCurrency(company);
+    try {
+      const ctx = await getBcContext(company).catch(() => null);
+      const r = await royaltiesReport(ctx, company, from, to, force);
+      const byCode: Record<string, number> = {};
+      r.rows.forEach(x => { byCode[x.code] = (byCode[x.code] || 0) + x.provision; });
+      return {
+        company, currency, fx: r.fx?.rate ?? null, fxDate: r.fx?.date ?? null, byCode, error: null as string | null,
+        source: r.source, upload: r.source === 'excel' ? r.upload : undefined,
+      };
+    } catch (e: any) {
+      return { company, currency, fx: null, fxDate: null, byCode: {} as Record<string, number>, error: e.message as string, source: null, upload: undefined };
+    }
+  };
+  // CRAZE primero: deja en caché las fichas de artículo y los % que usan las demás
+  const first = await one(GROUP_COMPANIES[0]);
+  const rest = await Promise.all(GROUP_COMPANIES.slice(1).map(one));
+  return { from, to, companies: [first, ...rest] };
+}

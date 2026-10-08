@@ -303,6 +303,7 @@ export default function RoyaltiesPage() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 md:px-8 pt-6 space-y-6">
+        {selectedCompany === 'CRAZE' && <GroupSummary range={range} reload={reload} />}
         {selectedCompany === 'ALL' ? (
           <p className="text-sm text-gray-600">Selecciona una empresa concreta en el menú lateral para ver sus royalties.</p>
         ) : error ? (
@@ -478,6 +479,157 @@ export default function RoyaltiesPage() {
         )}
       </main>
     </div>
+  );
+}
+
+// ---------- Resumen de grupo (en CRAZE) ----------
+
+type GroupCompany = {
+  company: string; currency: string; fx: number | null; fxDate: string | null; byCode: Record<string, number>;
+  error: string | null; source: 'bc' | 'excel' | null; upload?: { fileName: string; uploadedAt: string; from: string; to: string };
+};
+const SHORT: Record<string, string> = { 'CRAZE': 'CRAZE GmbH', 'Craze Iberia SL': 'Iberia', 'Craze UK': 'UK', 'CRAZE Group AG': 'Group AG', 'Craze Entertainment': 'Entertainment' };
+
+function GroupSummary({ range, reload }: { range: { from: string; to: string }; reload: { n: number; force: boolean } }) {
+  const [companies, setCompanies] = useState<GroupCompany[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [fx, setFx] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!range.from || !range.to || range.from > range.to) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetch(`/api/royalties/group?from=${range.from}&to=${range.to}${reload.force ? '&force=1' : ''}`)
+      .then(async res => {
+        const json = await res.json();
+        if (cancelled) return;
+        if (!res.ok) { setError(json.error || 'Error al cargar el resumen del grupo'); return; }
+        setCompanies(json.companies);
+        // Tipos de BC como valor inicial (editables); se mantienen los que ya se hayan escrito
+        setFx(prev => {
+          const next = { ...prev };
+          (json.companies as GroupCompany[]).forEach(c => {
+            if (c.currency !== 'EUR' && !next[c.currency] && c.fx) next[c.currency] = String(c.fx).replace('.', ',');
+          });
+          return next;
+        });
+      })
+      .catch(e => { if (!cancelled) setError(e.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [range, reload]);
+
+  const rate = (cur: string) => (cur === 'EUR' ? 1 : parseFloat((fx[cur] || '').replace(',', '.')) || 0);
+  const currencies = Array.from(new Set((companies || []).map(c => c.currency).filter(c => c !== 'EUR')));
+  const cols = companies || [];
+  const codes = Array.from(new Set(cols.flatMap(c => Object.keys(c.byCode)))).filter(c => c !== NOT_APPLIED)
+    .map(code => {
+      const values = cols.map(c => (c.byCode[code] || 0) * rate(c.currency));
+      return { code, values, total: values.reduce((a, b) => a + b, 0) };
+    })
+    .filter(r => r.values.some(v => Math.abs(v) >= 0.005))
+    .sort((a, b) => b.total - a.total);
+  const colTotals = cols.map((_, i) => codes.reduce((s, r) => s + r.values[i], 0));
+  const grand = colTotals.reduce((a, b) => a + b, 0);
+  const missingFx = currencies.filter(c => !rate(c));
+
+  const exportExcel = () => {
+    const aoa: any[][] = [
+      [`PROVISIÓN ROYALTIES GRUPO (EUR) · ${dateEs(range.from)} – ${dateEs(range.to)} · ${currencies.map(c => `1 ${c} = ${fx[c]} EUR`).join(' · ')}`],
+      ['Royalty Code', ...cols.map(c => SHORT[c.company] || c.company), 'Total'],
+      ...codes.map(r => [r.code, ...r.values, r.total]),
+      ['Total', ...colTotals, grand],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    for (let r = 2; r < aoa.length; r++) for (let c = 1; c <= cols.length + 1; c++) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      if (cell && cell.t === 'n') cell.z = '#,##0.00';
+    }
+    ws['!cols'] = [{ wch: 24 }, ...cols.map(() => ({ wch: 14 })), { wch: 14 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Grupo');
+    XLSX.writeFile(wb, `Royalties_Grupo_${range.from}_${range.to}_EUR.xlsx`);
+  };
+
+  return (
+    <section className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap items-center gap-3">
+        <h2 className="text-sm font-bold text-gray-900 mr-auto">
+          Provisión royalties del grupo por licencia (EUR)
+          {loading && <RefreshCw size={12} className="inline ml-2 animate-spin text-gray-400" />}
+        </h2>
+        {currencies.map(c => (
+          <label key={c} className="flex items-center gap-1 text-xs text-gray-500"
+            title={(() => { const d = cols.find(x => x.currency === c)?.fxDate; return `Tipo de Currencies_Excel (CRAZE GmbH)${d ? ' del ' + dateEs(d) : ''}`; })()}>
+            1 {c} =
+            <input value={fx[c] || ''} onChange={e => setFx(f => ({ ...f, [c]: e.target.value }))} inputMode="decimal" placeholder="tipo"
+              className="w-20 border border-gray-300 rounded-md px-2 py-1 text-sm font-semibold text-gray-900 bg-white text-right" />
+            EUR
+          </label>
+        ))}
+        <button onClick={exportExcel} disabled={loading || !codes.length}
+          className="flex items-center gap-2 border border-gray-300 bg-white text-gray-700 text-sm font-semibold px-3 py-1.5 rounded-lg hover:text-gray-900 disabled:opacity-40">
+          <Download size={14} /> Excel
+        </button>
+      </div>
+      {error ? (
+        <p className="px-4 py-3 text-sm text-red-700">{error}</p>
+      ) : !companies ? (
+        <p className="px-4 py-3 text-sm text-gray-500">Leyendo los royalties de todas las empresas…</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-500">
+              <tr>
+                <th className="text-left px-4 py-2">Royalty Code</th>
+                {cols.map(c => (
+                  <th key={c.company} className="text-right px-4 py-2 align-bottom">
+                    {SHORT[c.company] || c.company}
+                    <span className={`block normal-case tracking-normal font-normal ${c.error ? 'text-red-600' : 'text-gray-400'}`}
+                      title={c.error || (c.upload ? `${c.upload.fileName}: ${dateEs(c.upload.from)} – ${dateEs(c.upload.to)}` : '')}>
+                      {c.error ? 'sin datos' : `${c.source === 'bc' ? 'BC' : 'Excel'}${c.currency !== 'EUR' ? ` · ${c.currency}→EUR` : ''}`}
+                    </span>
+                  </th>
+                ))}
+                <th className="text-right px-4 py-2 align-bottom">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {codes.map(r => (
+                <tr key={r.code} className="border-t border-gray-100 text-gray-900">
+                  <td className="px-4 py-2 font-semibold whitespace-nowrap">{r.code}</td>
+                  {r.values.map((v, i) => <td key={i} className="px-4 py-2 text-right tabular-nums">{v ? money(v) : '—'}</td>)}
+                  <td className="px-4 py-2 text-right tabular-nums font-semibold">{money(r.total)}</td>
+                </tr>
+              ))}
+              {!codes.length && (
+                <tr><td colSpan={cols.length + 2} className="px-4 py-6 text-center text-gray-500">No hay provisión de royalties en el grupo para este periodo.</td></tr>
+              )}
+            </tbody>
+            {codes.length > 0 && (
+              <tfoot className="bg-gray-50 font-bold text-gray-900">
+                <tr className="border-t-2 border-gray-300">
+                  <td className="px-4 py-2">Total</td>
+                  {colTotals.map((v, i) => <td key={i} className="px-4 py-2 text-right tabular-nums">{money(v)}</td>)}
+                  <td className="px-4 py-2 text-right tabular-nums">{money(grand)}</td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      )}
+      {(missingFx.length > 0 || cols.some(c => c.error) || cols.some(c => c.upload && (range.from < c.upload.from || range.to > c.upload.to))) && (
+        <div className="px-4 py-2 border-t border-gray-100 text-xs text-amber-800 bg-amber-50 space-y-0.5">
+          {missingFx.length > 0 && <p>Falta el tipo de cambio de {missingFx.join(', ')}: esas empresas suman 0 hasta que lo indiques.</p>}
+          {cols.filter(c => c.error).map(c => <p key={c.company}>{SHORT[c.company] || c.company}: sin datos ({c.error})</p>)}
+          {cols.filter(c => c.upload && (range.from < c.upload.from || range.to > c.upload.to)).map(c => (
+            <p key={c.company}>{SHORT[c.company] || c.company}: su Excel cubre del {dateEs(c.upload!.from)} al {dateEs(c.upload!.to)}, no todo el periodo elegido.</p>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
