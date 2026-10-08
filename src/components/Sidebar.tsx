@@ -28,6 +28,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
     { href: '/inventario', label: 'Inventario (Cierre)', module: 'inventario' },
     { href: '/bwa', label: 'BWA Analytics', module: 'bwa' },
     { href: '/reporting', label: 'Reporting', module: 'reporting' },
+    { href: '/royalties', label: 'Royalties', module: 'royalties' },
     { href: '/insurances', label: 'Seguros', module: 'seguros' },
     { href: '/contracts', label: 'Contratos', module: 'contratos' },
     ...(authEnabled ? [{ href: '/settings/users', label: 'Usuarios', module: 'admin' }] : []),
