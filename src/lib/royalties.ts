@@ -350,14 +350,16 @@ export async function saveUpload(company: string, upload: StoredUpload) {
   await prisma.apiConfig.upsert({ where: { key }, update: { config }, create: { key, url: '', config } });
 }
 
-async function loadUpload(company: string): Promise<{ meta: Omit<StoredUpload, 'lines' | 'desc'>; lines: LmLine[] } | null> {
+async function loadUpload(company: string): Promise<{ meta: Omit<StoredUpload, 'lines' | 'desc'> & { hasShipment: boolean }; lines: LmLine[] } | null> {
   const row = await prisma.apiConfig.findUnique({ where: { key: UPLOAD_PREFIX + company } });
   if (!row?.config) return null;
   const u = JSON.parse(row.config) as StoredUpload;
   const lines = u.lines.map(([date, code, country, item, qty, turnover, provision, custNo, custName, dim, vatBus, ship]) => ({
     date, code, country, item, desc: u.desc[item] || '', qty, turnover, provision, custNo, custName, dim, vatBus, ship: ship || '',
   }));
-  return { meta: { fileName: u.fileName, uploadedAt: u.uploadedAt, from: u.from, to: u.to }, lines };
+  // Los Excel subidos antes de guardar la condición de envío no distinguen las ventas FOB
+  const hasShipment = u.lines.some(l => l[11] !== undefined);
+  return { meta: { fileName: u.fileName, uploadedAt: u.uploadedAt, from: u.from, to: u.to, hasShipment }, lines };
 }
 
 // ---------- Informe ----------

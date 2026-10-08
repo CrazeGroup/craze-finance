@@ -14,7 +14,7 @@ type Report = {
   source: 'bc' | 'excel'; service?: string; bcError?: string | null; itemsError?: string | null;
   currency: string; fx: { rate: number | null; date: string | null; error: string | null } | null;
   ratesSource?: 'bc' | 'excel' | 'default'; ratesInfo?: string | null; ratesBcError?: string | null;
-  upload?: { fileName: string; uploadedAt: string; from: string; to: string };
+  upload?: { fileName: string; uploadedAt: string; from: string; to: string; hasShipment: boolean };
   stats: { lines: number; ic: { lines: number; turnover: number; provision: number }; noItemCard: string[]; noRate: string[];
     excluded: { codes: string[]; lines: number; turnover: number } };
 };
@@ -307,6 +307,9 @@ export default function RoyaltiesPage() {
                 <div>
                   Datos del Excel <b>{data.upload.fileName}</b> (cargado el {new Date(data.upload.uploadedAt).toLocaleString('es-ES')}, líneas del {dateEs(data.upload.from)} al {dateEs(data.upload.to)}), no de Business Central en directo.
                   {(range.from < data.upload.from || range.to > data.upload.to) && <> El periodo elegido sale del rango del Excel: las fechas fuera de él no tienen datos.</>}
+                  {!data.upload.hasShipment && (
+                    <b className="block mt-1">Este Excel se cargó sin la condición de envío: las ventas FOB se están calculando con el % Domestic. Vuelve a cargarlo para aplicar el % FOB.</b>
+                  )}
                   {data.bcError && <span className="block text-xs text-amber-700 mt-1">BC: {data.bcError}</span>}
                 </div>
               </div>
