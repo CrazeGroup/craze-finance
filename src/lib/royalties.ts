@@ -59,10 +59,12 @@ function cardItem(item: string, itemCodes: Record<string, string>): string | nul
 }
 
 // excludedCodes: licencias que la empresa no puede vender (se quitan del informe, ver EXCLUDED_CODES)
+// trackDates: además, provisión por código → país → fecha (para repartir por periodos de Minimum Guarantee)
 export function buildReport(
   lines: LmLine[], from: string, to: string, icCustomers: Set<string>,
-  itemCodes: Record<string, string> | null, rates: RoyaltyRates | null, excludedCodes: string[] = [],
+  itemCodes: Record<string, string> | null, rates: RoyaltyRates | null, excludedCodes: string[] = [], trackDates = false,
 ) {
+  const dated: Record<string, Record<string, Record<string, number>>> = {};
   const stats = {
     lines: 0, ic: { lines: 0, turnover: 0, provision: 0 }, noItemCard: [] as string[], noRate: [] as string[],
     excluded: { codes: excludedCodes, lines: 0, turnover: 0 },
@@ -98,6 +100,11 @@ export function buildReport(
       // Venta FOB: % Fob Royalty, salvo que el código no tenga (0) → % Domestic
       provision = r ? l.turnover * (/^FOB$/i.test(l.ship) && r.fob ? r.fob : r.domestic) : 0;
     }
+    if (trackDates && provision) {
+      const byCountry = (dated[code] ||= {});
+      const byDate = (byCountry[l.country] ||= {});
+      byDate[l.date] = (byDate[l.date] || 0) + provision;
+    }
     const key = `${code}|${l.country}|${l.item}`;
     const r = rates?.[code.toUpperCase()];
     const g = groups.get(key) || {
@@ -117,7 +124,7 @@ export function buildReport(
   const rows = Array.from(groups.values()).map(g => ({
     ...g, price: g.qty ? g.turnover / g.qty : 0, rate: g.turnover ? g.provision / g.turnover : 0,
   }));
-  return { rows, stats };
+  return { rows, stats, dated };
 }
 
 // ---------- Business Central ----------
@@ -383,7 +390,7 @@ async function loadUpload(company: string): Promise<{ meta: Omit<StoredUpload, '
 
 // ---------- Informe ----------
 
-export async function royaltiesReport(ctx: BcContext | null, company: string, from: string, to: string, force = false) {
+export async function royaltiesReport(ctx: BcContext | null, company: string, from: string, to: string, force = false, trackDates = false) {
   let bcError: string | null = null;
   const master = await loadMasterData(ctx, force);
   const currency = companyCurrency(company);
@@ -395,7 +402,7 @@ export async function royaltiesReport(ctx: BcContext | null, company: string, fr
       const fromBc = await cached(`royalties:lines:${company}:${from}:${to}`, to < today() ? 12 * HOUR : 1 * HOUR, () => bcLines(ctx, from, to), force);
       return {
         from, to, company, source: 'bc' as const, service: fromBc.service, ...masterInfo,
-        ...buildReport(fromBc.lines, from, to, await intergroupCustomers(company), master.itemCodes, master.rates, excludedCodesFor(company)),
+        ...buildReport(fromBc.lines, from, to, await intergroupCustomers(company), master.itemCodes, master.rates, excludedCodesFor(company), trackDates),
       };
     } catch (e: any) {
       bcError = e.message;
@@ -411,7 +418,7 @@ export async function royaltiesReport(ctx: BcContext | null, company: string, fr
   }
   return {
     from, to, company, source: 'excel' as const, upload: upload.meta, bcError, ...masterInfo,
-    ...buildReport(upload.lines, from, to, await intergroupCustomers(company), master.itemCodes, master.rates, excludedCodesFor(company)),
+    ...buildReport(upload.lines, from, to, await intergroupCustomers(company), master.itemCodes, master.rates, excludedCodesFor(company), trackDates),
   };
 }
 
@@ -422,12 +429,12 @@ export const GROUP_COMPANIES = ['CRAZE', 'Craze Iberia SL', 'Craze UK', 'CRAZE G
 
 // Provisión de royalties por licencia y empresa, en la divisa de cada empresa (la conversión a EUR la hace
 // la página con el tipo de Currencies_Excel, editable). Cada empresa sale de BC o de su último Excel LM.
-export async function groupRoyaltiesReport(from: string, to: string, force = false) {
+export async function groupRoyaltiesReport(from: string, to: string, force = false, trackDates = false) {
   const one = async (company: string) => {
     const currency = companyCurrency(company);
     try {
       const ctx = await getBcContext(company).catch(() => null);
-      const r = await royaltiesReport(ctx, company, from, to, force);
+      const r = await royaltiesReport(ctx, company, from, to, force, trackDates);
       const byCode: Record<string, number> = {};
       // Por código y país de facturación (para las Minimum Guarantees por territorio)
       const byCodeCountry: Record<string, Record<string, number>> = {};
@@ -437,13 +444,14 @@ export async function groupRoyaltiesReport(from: string, to: string, force = fal
         c[x.country] = (c[x.country] || 0) + x.provision;
       });
       return {
-        company, currency, fx: r.fx?.rate ?? null, fxDate: r.fx?.date ?? null, byCode, byCodeCountry, error: null as string | null,
+        company, currency, fx: r.fx?.rate ?? null, fxDate: r.fx?.date ?? null, byCode, byCodeCountry, dated: r.dated, error: null as string | null,
         source: r.source, upload: r.source === 'excel' ? r.upload : undefined,
       };
     } catch (e: any) {
       return {
         company, currency, fx: null, fxDate: null, byCode: {} as Record<string, number>,
-        byCodeCountry: {} as Record<string, Record<string, number>>, error: e.message as string, source: null, upload: undefined,
+        byCodeCountry: {} as Record<string, Record<string, number>>, dated: {} as Record<string, Record<string, Record<string, number>>>,
+        error: e.message as string, source: null, upload: undefined,
       };
     }
   };

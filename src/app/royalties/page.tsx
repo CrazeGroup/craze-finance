@@ -652,10 +652,12 @@ type MgContract = {
 const countsCountry = (g: MgGuarantee, country: string) =>
   g.countries === 'ALL_EXCEPT' ? !(g.exceptCountries || []).includes(country) : g.countries.includes(country);
 
+type MgCompany = Omit<GroupCompany, 'byCode' | 'byCodeCountry'> & { dated: Record<string, Record<string, Record<string, number>>> };
+
 function MgSummary({ to, reload, rate, fxReady }: {
   to: string; reload: { n: number; force: boolean }; rate: (cur: string) => number; fxReady: (cur: string) => boolean;
 }) {
-  const [data, setData] = useState<{ contracts: MgContract[]; byStart: Record<string, GroupCompany[]> } | null>(null);
+  const [data, setData] = useState<{ contracts: MgContract[]; companies: MgCompany[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -692,7 +694,7 @@ function MgSummary({ to, reload, rate, fxReady }: {
         : !data ? <p className="px-4 py-3 text-sm text-gray-500">Calculando las Minimum Guarantees…</p>
         : (
           <div className="divide-y divide-gray-200">
-            {[...data.contracts].sort((a, b) => companyOrder(a.owner) - companyOrder(b.owner) || a.licence.localeCompare(b.licence)).map(c => <MgContractCard key={c.id} contract={c} companies={data.byStart[c.start] || []} to={to} rate={rate} fxReady={fxReady} />)}
+            {[...data.contracts].sort((a, b) => companyOrder(a.owner) - companyOrder(b.owner) || a.licence.localeCompare(b.licence)).map(c => <MgContractCard key={c.id} contract={c} companies={data.companies} to={to} rate={rate} fxReady={fxReady} />)}
           </div>
         )}
     </section>
@@ -701,19 +703,29 @@ function MgSummary({ to, reload, rate, fxReady }: {
 
 const companyOrder = (company: string) => { const i = Object.keys(SHORT).indexOf(company); return i < 0 ? 99 : i; };
 
+// Día anterior a una fecha YYYY-MM-DD
+const dayBefore = (d: string) => new Date(Date.parse(d) - 86400000).toISOString().substring(0, 10);
+
 function MgContractCard({ contract: c, companies, to, rate, fxReady }: {
-  contract: MgContract; companies: GroupCompany[]; to: string; rate: (cur: string) => number; fxReady: (cur: string) => boolean;
+  contract: MgContract; companies: MgCompany[]; to: string; rate: (cur: string) => number; fxReady: (cur: string) => boolean;
 }) {
-  const withData = companies.filter(x => !x.error && Object.keys(x.byCodeCountry || {}).length > 0);
-  // Provisión (EUR) de los códigos de la licencia por país de facturación
-  const byCountry: Record<string, number> = {};
+  const withData = companies.filter(x => !x.error && x.source);
+  // Provisión (EUR) de los códigos de la licencia por país y fecha, desde el inicio del contrato
+  const byCountryDate: Record<string, Record<string, number>> = {};
   for (const co of withData) {
     const r = rate(co.currency);
     for (const code of c.codes) {
-      for (const [country, v] of Object.entries(co.byCodeCountry[code] || {})) byCountry[country] = (byCountry[country] || 0) + v * r;
+      for (const [country, dates] of Object.entries(co.dated?.[code] || {})) {
+        for (const [date, v] of Object.entries(dates)) {
+          if (date < c.start || date > to) continue;
+          const m = (byCountryDate[country] ||= {});
+          m[date] = (m[date] || 0) + v * r;
+        }
+      }
     }
   }
-  const outside = Object.entries(byCountry).filter(([country]) => !c.guarantees.some(g => countsCountry(g, country)));
+  const countryTotal = (country: string) => Object.values(byCountryDate[country] || {}).reduce((a, b) => a + b, 0);
+  const outside = Object.keys(byCountryDate).filter(country => !c.guarantees.some(g => countsCountry(g, country))).map(k => [k, countryTotal(k)] as const);
   const outsideTotal = outside.reduce((s, [, v]) => s + v, 0);
   const missingFx = Array.from(new Set(withData.map(x => x.currency))).filter(cur => cur !== 'EUR' && !fxReady(cur));
   const lateData = withData.filter(x => x.upload && x.upload.from > c.start);
@@ -730,20 +742,32 @@ function MgContractCard({ contract: c, companies, to, rate, fxReady }: {
       {c.start > to ? <p className="text-sm text-gray-500">El contrato empieza después de la fecha de corte.</p> : (
         <div className="grid grid-cols-1 2xl:grid-cols-2 gap-4">
           {c.guarantees.map(g => {
-            const provision = Object.entries(byCountry).filter(([country]) => countsCountry(g, country)).reduce((s, [, v]) => s + v, 0);
-            const total = g.instalments.reduce((s, i) => s + i.amount, 0);
-            let remaining = Math.max(0, provision);
-            // Solo la MG ya activa a la fecha de corte puede consumirse; lo que la supera se factura
-            const rows = [...g.instalments].sort((a, b) => a.date.localeCompare(b.date)).map(i => {
+            // Provisión del territorio entre dos fechas (incluidas)
+            const provisionBetween = (from: string, until: string) => Object.entries(byCountryDate)
+              .filter(([country]) => countsCountry(g, country))
+              .reduce((s, [, dates]) => s + Object.entries(dates).filter(([d]) => d >= from && d <= until).reduce((a, [, v]) => a + v, 0), 0);
+            const instalments = [...g.instalments].sort((a, b) => a.date.localeCompare(b.date));
+            const total = instalments.reduce((s, i) => s + i.amount, 0);
+            // Cada plazo abre un periodo hasta el siguiente plazo (o la fecha de corte). La MG se activa en su fecha y
+            // se acumula con la no consumida de plazos anteriores; la provisión del periodo va a MG mientras quede MG
+            // activa y el resto se factura. El primer periodo empieza en el inicio del contrato.
+            let pool = 0;
+            const rows = instalments.map((i, k) => {
               const due = i.date <= to;
-              const consumed = due ? Math.min(i.amount, remaining) : 0;
-              remaining -= consumed;
-              return { ...i, consumed, open: i.amount - consumed, due };
+              if (!due) return { ...i, due, from: '', until: '', provision: 0, toMg: 0, toInvoice: 0, open: i.amount };
+              const from = k === 0 ? c.start : i.date;
+              const next = instalments[k + 1];
+              const until = next && next.date <= to ? dayBefore(next.date) : to;
+              pool += i.amount;
+              const provision = provisionBetween(from, until);
+              const toMg = provision < 0 ? provision : Math.min(provision, pool);
+              pool -= toMg;
+              return { ...i, due, from, until, provision, toMg, toInvoice: provision - toMg, open: pool };
             });
-            const consumed = rows.reduce((s, r) => s + r.consumed, 0);
+            const sumOf = (f: (r: typeof rows[number]) => number) => rows.reduce((s, r) => s + f(r), 0);
             const active = rows.filter(r => r.due).reduce((s, r) => s + r.amount, 0);
             const future = total - active;
-            const toInvoice = Math.max(0, provision - active);
+            const provision = sumOf(r => r.provision), toMg = sumOf(r => r.toMg), toInvoice = sumOf(r => r.toInvoice);
             return (
               <div key={g.id} className="border border-gray-200 rounded-lg overflow-hidden">
                 <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex flex-wrap items-baseline gap-x-3">
@@ -756,10 +780,12 @@ function MgContractCard({ contract: c, companies, to, rate, fxReady }: {
                     <tr>
                       <th className="text-left px-3 py-1.5">Vencimiento</th>
                       <th className="text-left px-3 py-1.5">Concepto</th>
+                      <th className="text-left px-3 py-1.5">Periodo</th>
                       <th className="text-right px-3 py-1.5">Minimum Guarantee</th>
-                      <th className="text-right px-3 py-1.5">Provisión mata MG</th>
+                      <th className="text-right px-3 py-1.5">Provision Royalty</th>
+                      <th className="text-right px-3 py-1.5">Royalty to MG</th>
+                      <th className="text-right px-3 py-1.5">Royalty to Invoice</th>
                       <th className="text-right px-3 py-1.5">MG abierta</th>
-                      <th className="text-right px-3 py-1.5">Provisión a facturar</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -767,31 +793,34 @@ function MgContractCard({ contract: c, companies, to, rate, fxReady }: {
                       <tr key={i} className={`border-t border-gray-100 ${r.due ? 'text-gray-900' : 'text-gray-500'}`}>
                         <td className="px-3 py-1.5 whitespace-nowrap">{dateEs(r.date)}</td>
                         <td className="px-3 py-1.5">{r.label}</td>
+                        <td className="px-3 py-1.5 whitespace-nowrap text-xs">{r.due ? `${dateEs(r.from)} – ${dateEs(r.until)}` : <span className="uppercase text-[10px]">futura</span>}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums">{money(r.amount)}</td>
-                        <td className="px-3 py-1.5 text-right tabular-nums">{r.consumed ? money(r.consumed) : '—'}</td>
-                        <td className={`px-3 py-1.5 text-right tabular-nums ${!r.due ? '' : r.open ? 'font-semibold' : 'text-green-700'}`}>
-                          {!r.due ? <span title={`Se activa el ${dateEs(r.date)}`}>{money(r.open)} <span className="text-[10px] uppercase">futura</span></span> : r.open ? money(r.open) : 'Consumida'}
+                        <td className="px-3 py-1.5 text-right tabular-nums">{r.due ? money(r.provision) : '—'}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">{r.due ? money(r.toMg) : '—'}</td>
+                        <td className={`px-3 py-1.5 text-right tabular-nums ${r.toInvoice > 0.005 ? 'text-amber-800 font-semibold' : ''}`}>{r.due ? money(r.toInvoice) : '—'}</td>
+                        <td className={`px-3 py-1.5 text-right tabular-nums ${!r.due ? '' : r.open > 0.005 ? 'font-semibold' : 'text-green-700'}`}>
+                          {!r.due ? money(r.open) : r.open > 0.005 ? money(r.open) : 'Consumida'}
                         </td>
-                        <td className="px-3 py-1.5" />
                       </tr>
                     ))}
                   </tbody>
                   <tfoot className="bg-gray-50 font-bold text-gray-900">
                     <tr className="border-t-2 border-gray-300">
-                      <td className="px-3 py-2" colSpan={2}>Total</td>
+                      <td className="px-3 py-2" colSpan={3}>Total</td>
                       <td className="px-3 py-2 text-right tabular-nums">{money(total)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{money(consumed)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{money(active - consumed)}</td>
-                      <td className={`px-3 py-2 text-right tabular-nums ${toInvoice ? 'text-amber-800' : ''}`}>{money(toInvoice)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{money(provision)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{money(toMg)}</td>
+                      <td className={`px-3 py-2 text-right tabular-nums ${toInvoice > 0.005 ? 'text-amber-800' : ''}`}>{money(toInvoice)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{money(active - toMg)}</td>
                     </tr>
                   </tfoot>
                 </table>
                 </div>
                 <div className="px-3 py-2 border-t border-gray-100 text-xs text-gray-600">
-                  Provisión royalties acumulada: <b>{money(provision)}</b> = mata MG {money(consumed)} + a facturar {money(toInvoice)}.
-                  {toInvoice > 0
-                    ? <span className="text-amber-800"> La MG activa a {dateEs(to)} ya está consumida: el licenciante debería facturar {money(toInvoice)}.</span>
-                    : <> Quedan {money(active - consumed)} de MG activa por consumir antes de que facturen royalties.</>}
+                  Provision Royalty {money(provision)} = Royalty to MG {money(toMg)} + Royalty to Invoice {money(toInvoice)}.
+                  {toInvoice > 0.005
+                    ? <span className="text-amber-800"> El licenciante debería facturar {money(toInvoice)} (provisión por encima de la MG activa en su periodo).</span>
+                    : <> Quedan {money(active - toMg)} de MG activa por consumir antes de que facturen royalties.</>}
                   {future > 0 && <> MG futura (aún no activa): {money(future)}.</>}
                 </div>
               </div>
