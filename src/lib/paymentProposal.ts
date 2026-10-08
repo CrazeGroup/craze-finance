@@ -1,8 +1,9 @@
 import { bcFetchAll, BcContext, odataUrl } from '@/lib/bcClient';
 import { companyCurrency } from '@/lib/royalties';
+import { VENDOR_INVOICE_TYPES } from '@/lib/documentTypes';
 
 // Payment Proposal: movimientos de proveedor (API custom vendorLedgerEntries) con los filtros fijos de la propuesta
-// de pagos de BC: abiertos, No Payment = No, forma de pago TRANSFER y sin proveedores del grupo (CRAZE…),
+// de pagos de BC: facturas y abonos abiertos, No Payment = No, forma de pago TRANSFER y sin proveedores del grupo (CRAZE…),
 // con vencimiento entre `from` y `to`. Aprobado para pago = % Payment Approval ≥ 100.
 
 export const PAYMENT_METHOD = 'TRANSFER';
@@ -40,6 +41,7 @@ export async function paymentProposal(ctx: BcContext, company: string, from: str
   const entries: ProposalEntry[] = rows
     .filter(r => !isTrue(pick(r, ['noPaymentBCT', 'noPayment'])) && str(r.onHold) !== 'NO PAGAR')
     .filter(r => !/^craze/i.test(str(r.vendorName)))
+    .filter(r => VENDOR_INVOICE_TYPES.includes(str(r.documentType).replace(/_x0020_/g, ' ')))
     .map(r => {
       const approved = users(pick(r, ['approvedUsersBCT', 'approvedUsers']));
       const pendingRaw = pick(r, ['pendingUsersBCT', 'pendingUsers']);
@@ -52,7 +54,7 @@ export async function paymentProposal(ctx: BcContext, company: string, from: str
       const lcyRaw = pick(r, ['remainingAmtLCY', 'remainingAmountLCY', 'remainingAmtLcy']);
       return {
         entryNo: num(r.entryNo), vendorNo: str(r.vendorNo), vendorName: str(r.vendorName),
-        docType: str(r.documentType), docNo: str(r.documentNo), extDocNo: str(r.externalDocumentNo),
+        docType: str(r.documentType).replace(/_x0020_/g, ' '), docNo: str(r.documentNo), extDocNo: str(r.externalDocumentNo),
         description: str(r.description), postingDate: realDate(r.postingDate), dueDate: realDate(r.dueDate),
         remaining,
         remainingLCY: lcyRaw !== undefined ? num(lcyRaw) : currency === lcy ? remaining : null,

@@ -63,11 +63,11 @@ export default function PaymentProposalPage() {
   const pending = entries.filter(e => e.approvalPct < APPROVED_PCT);
 
   const exportExcel = () => {
-    const head = ['Proveedor', 'Nº proveedor', 'Nº documento', 'Nº documento externo', 'Descripción', 'Fecha registro', 'Vencimiento', '% Payment Approval', 'Approved Users', 'Pending Users', 'Divisa', 'Remaining Amount', `Remaining Amt. (${lcy})`];
-    const line = (e: Entry) => [e.vendorName, e.vendorNo, e.docNo, e.extDocNo, e.description, e.postingDate, e.dueDate, e.approvalPct, e.approvedUsers, e.pendingUsers, e.currency, e.remaining, e.remainingLCY];
+    const head = ['Proveedor', 'Nº proveedor', 'Document Type', 'Nº documento', 'Nº documento externo', 'Descripción', 'Fecha registro', 'Vencimiento', '% Payment Approval', 'Approved Users', 'Pending Users', 'Divisa', 'Remaining Amount', `Remaining Amt. (${lcy})`];
+    const line = (e: Entry) => [e.vendorName, e.vendorNo, e.docType, e.docNo, e.extDocNo, e.description, e.postingDate, e.dueDate, e.approvalPct, e.approvedUsers, e.pendingUsers, e.currency, e.remaining, e.remainingLCY];
     const sheet = (title: string, list: Entry[]) => {
       const ws = XLSX.utils.aoa_to_sheet([[title], head, ...list.map(line)]);
-      ws['!cols'] = [{ wch: 36 }, { wch: 12 }, { wch: 16 }, { wch: 20 }, { wch: 28 }, { wch: 11 }, { wch: 11 }, { wch: 8 }, { wch: 28 }, { wch: 28 }, { wch: 7 }, { wch: 14 }, { wch: 14 }];
+      ws['!cols'] = [{ wch: 36 }, { wch: 12 }, { wch: 12 }, { wch: 16 }, { wch: 20 }, { wch: 28 }, { wch: 11 }, { wch: 11 }, { wch: 8 }, { wch: 28 }, { wch: 28 }, { wch: 7 }, { wch: 14 }, { wch: 14 }];
       return ws;
     };
     const wb = XLSX.utils.book_new();
@@ -83,7 +83,7 @@ export default function PaymentProposalPage() {
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="mr-auto">
             <p className="font-bold text-gray-900 leading-tight text-lg">Payment Proposal</p>
-            <p className="text-xs text-gray-500">{selectedCompany} · abiertos · No Payment = No · forma de pago TRANSFER · sin proveedores CRAZE</p>
+            <p className="text-xs text-gray-500">{selectedCompany} · facturas y abonos abiertos · No Payment = No · forma de pago TRANSFER · sin proveedores CRAZE</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Due Date</span>
@@ -209,6 +209,7 @@ function ProposalTable({ title, subtitle, entries, currencies, lcy, groupByPendi
                             <table className="w-full text-xs">
                               <thead className="text-gray-500">
                                 <tr>
+                                  <th className="text-left py-1 pr-3">Tipo</th>
                                   <th className="text-left py-1 pr-3">Nº documento</th>
                                   <th className="text-left py-1 pr-3">Nº doc. externo</th>
                                   <th className="text-left py-1 pr-3">Descripción</th>
@@ -224,6 +225,7 @@ function ProposalTable({ title, subtitle, entries, currencies, lcy, groupByPendi
                               <tbody>
                                 {docs.map(d => (
                                   <tr key={d.entryNo} className="border-t border-gray-200 text-gray-800">
+                                    <td className="py-1 pr-3 whitespace-nowrap">{d.docType === 'Credit Memo' ? 'Abono' : 'Factura'}</td>
                                     <td className="py-1 pr-3 font-mono">{d.docNo}</td>
                                     <td className="py-1 pr-3">{d.extDocNo}</td>
                                     <td className="py-1 pr-3">{d.description}</td>
