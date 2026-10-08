@@ -12,6 +12,7 @@ export type MgGuarantee = {
 export type MgContract = {
   id: string;
   licence: string;
+  owner: string;                          // empresa del grupo titular del contrato (nombre de empresa en BC)
   codes: string[];                        // Royalty Codes de la app que aportan a la MG
   licensor: string;
   licensee: string;
@@ -30,6 +31,7 @@ export const MG_CONTRACTS: MgContract[] = [
   {
     id: 'paw-patrol',
     licence: 'PAW PATROL',
+    owner: 'CRAZE Group AG',
     codes: ['PAW PATROL COSMETIC', 'PAW PATROL TOYS'],
     licensor: 'Viacom International Inc. (agente Super RTL)',
     licensee: 'CRAZE Group AG (distribuidores: CRAZE GmbH, CRAZE Toys Ltd, CRAZE Iberia, CRAZE Swiss)',
@@ -64,6 +66,7 @@ export const MG_CONTRACTS: MgContract[] = [
   {
     id: 'sponge-bob',
     licence: 'SPONGE BOB',
+    owner: 'CRAZE Group AG',
     codes: ['SPONGE BOB COSMETIC', 'SPONGE BOB TOYS'],
     licensor: 'Viacom International Inc. (agente Super RTL)',
     licensee: 'CRAZE Group AG (distribuidores: CRAZE GmbH, CRAZE Toys Ltd, CRAZE Iberia, CRAZE Swiss)',
@@ -97,6 +100,7 @@ export const MG_CONTRACTS: MgContract[] = [
   {
     id: 'bluey',
     licence: 'BLUEY',
+    owner: 'CRAZE',
     codes: ['BLUEY'],
     licensor: 'BBC Studios Distribution Ltd',
     licensee: 'CRAZE GmbH',
