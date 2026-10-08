@@ -15,7 +15,8 @@ type Report = {
   currency: string; fx: { rate: number | null; date: string | null; error: string | null } | null;
   ratesSource?: 'bc' | 'excel' | 'default'; ratesInfo?: string | null; ratesBcError?: string | null;
   upload?: { fileName: string; uploadedAt: string; from: string; to: string };
-  stats: { lines: number; ic: { lines: number; turnover: number; provision: number }; noItemCard: string[]; noRate: string[] };
+  stats: { lines: number; ic: { lines: number; turnover: number; provision: number }; noItemCard: string[]; noRate: string[];
+    excluded: { codes: string[]; lines: number; turnover: number } };
 };
 type SortKey = 'code' | 'country' | 'item' | 'desc' | 'qty' | 'turnover' | 'price' | 'provision' | 'rate';
 
@@ -315,6 +316,12 @@ export default function RoyaltiesPage() {
                 % de royalty tomados de {data.ratesSource === 'excel' ? <>el Excel <b>{data.ratesInfo}</b></> : <>la <b>{data.ratesInfo}</b></>}, no de RoyaltiesCRZ en directo.
                 Para actualizarlos, carga con &quot;Cargar Excel&quot; la exportación de la página Royalties de CRAZE GmbH.
                 {data.ratesBcError && <span className="block text-xs text-gray-500 mt-1">BC: {data.ratesBcError}</span>}
+              </div>
+            )}
+            {data.stats.excluded.codes.length > 0 && (
+              <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700">
+                {selectedCompany} no puede vender <b>{data.stats.excluded.codes.join(', ')}</b>: excluido del informe
+                ({data.stats.excluded.lines} líneas, turnover {money(data.stats.excluded.turnover * factor)} {cur}).
               </div>
             )}
             {data.stats.noRate.length > 0 && (

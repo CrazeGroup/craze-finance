@@ -46,11 +46,15 @@ async function intergroupCustomers(company: string) {
 // itemCodes: Royalty Code de la ficha de cada artículo en CRAZE GmbH ('' = sin royalty). Si el artículo no
 // existe allí (o no se pudo leer), se queda el código de la LM.
 // rates: null = se queda la provisión de la LM. Un código sin % en la tabla de royalties no provisiona.
+// excludedCodes: licencias que la empresa no puede vender (se quitan del informe, ver EXCLUDED_CODES)
 export function buildReport(
   lines: LmLine[], from: string, to: string, icCustomers: Set<string>,
-  itemCodes: Record<string, string> | null, rates: RoyaltyRates | null,
+  itemCodes: Record<string, string> | null, rates: RoyaltyRates | null, excludedCodes: string[] = [],
 ) {
-  const stats = { lines: 0, ic: { lines: 0, turnover: 0, provision: 0 }, noItemCard: [] as string[], noRate: [] as string[] };
+  const stats = {
+    lines: 0, ic: { lines: 0, turnover: 0, provision: 0 }, noItemCard: [] as string[], noRate: [] as string[],
+    excluded: { codes: excludedCodes, lines: 0, turnover: 0 },
+  };
   const noCard = new Set<string>();
   const noRate = new Set<string>();
   const groups = new Map<string, RoyaltyRow>();
@@ -69,6 +73,11 @@ export function buildReport(
       else noCard.add(l.item);
     }
     code = code || 'NOT APPLIED';
+    if (excludedCodes.includes(code.toUpperCase())) {
+      stats.excluded.lines++;
+      stats.excluded.turnover += l.turnover;
+      continue;
+    }
     let provision = l.provision;
     if (rates) {
       const r = rates[code.toUpperCase()];
@@ -295,6 +304,12 @@ async function loadMasterData(ctx: BcContext | null, force: boolean) {
   return out;
 }
 
+// Licencias que una empresa no puede vender: sus líneas no entran en el informe
+const EXCLUDED_CODES: { company: RegExp; codes: string[] }[] = [
+  { company: /\bUK\b/i, codes: ['BLUEY'] },
+];
+export const excludedCodesFor = (company: string) => EXCLUDED_CODES.filter(e => e.company.test(company)).flatMap(e => e.codes);
+
 // ---------- Divisa ----------
 
 // Divisa local de cada empresa (UK en GBP, Group AG en CHF; el resto en EUR)
@@ -359,7 +374,7 @@ export async function royaltiesReport(ctx: BcContext | null, company: string, fr
       const fromBc = await cached(`royalties:lines:${company}:${from}:${to}`, to < today() ? 12 * HOUR : 1 * HOUR, () => bcLines(ctx, from, to), force);
       return {
         from, to, company, source: 'bc' as const, service: fromBc.service, ...masterInfo,
-        ...buildReport(fromBc.lines, from, to, await intergroupCustomers(company), master.itemCodes, master.rates),
+        ...buildReport(fromBc.lines, from, to, await intergroupCustomers(company), master.itemCodes, master.rates, excludedCodesFor(company)),
       };
     } catch (e: any) {
       bcError = e.message;
@@ -375,6 +390,6 @@ export async function royaltiesReport(ctx: BcContext | null, company: string, fr
   }
   return {
     from, to, company, source: 'excel' as const, upload: upload.meta, bcError, ...masterInfo,
-    ...buildReport(upload.lines, from, to, await intergroupCustomers(company), master.itemCodes, master.rates),
+    ...buildReport(upload.lines, from, to, await intergroupCustomers(company), master.itemCodes, master.rates, excludedCodesFor(company)),
   };
 }
