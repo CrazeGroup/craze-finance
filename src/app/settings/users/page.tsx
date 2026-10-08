@@ -15,6 +15,7 @@ const MODULES = [
   { id: 'bwa', label: 'BWA Analytics' },
   { id: 'reporting', label: 'Reporting' },
   { id: 'royalties', label: 'Royalties' },
+  { id: 'payment_proposal', label: 'Payment Proposal' },
   { id: 'seguros', label: 'Seguros' },
   { id: 'configuracion', label: 'Configuración y Usuarios' },
 ];
