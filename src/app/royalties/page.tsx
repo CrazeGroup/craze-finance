@@ -8,6 +8,7 @@ import { useCompany } from '@/contexts/CompanyContext';
 type Row = {
   code: string; country: string; item: string; desc: string;
   qty: number; turnover: number; price: number; provision: number; rate: number; lines: number;
+  turnoverFob: number; domestic: number | null; fob: number | null;
 };
 type Report = {
   from: string; to: string; company: string; rows: Row[];
@@ -18,7 +19,7 @@ type Report = {
   stats: { lines: number; ic: { lines: number; turnover: number; provision: number }; noItemCard: string[]; noRate: string[];
     excluded: { codes: string[]; lines: number; turnover: number } };
 };
-type SortKey = 'code' | 'country' | 'item' | 'desc' | 'qty' | 'turnover' | 'price' | 'provision' | 'rate';
+type SortKey = 'code' | 'country' | 'item' | 'desc' | 'qty' | 'turnover' | 'price' | 'provision' | 'domestic' | 'fob';
 
 const NOT_APPLIED = 'NOT APPLIED';
 const iso = (d: Date) => d.toISOString().substring(0, 10);
@@ -35,6 +36,7 @@ const nf = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFra
 const qf = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 });
 const money = (v: number) => nf.format(v || 0);
 const pct = (v: number) => `${nf.format((v || 0) * 100)} %`;
+const pctOrDash = (v: number | null) => (v == null ? '—' : pct(v));
 const dateEs = (d: string) => d.split('-').reverse().join('/');
 
 const COLUMNS: { key: SortKey; label: string; num?: boolean }[] = [
@@ -46,14 +48,18 @@ const COLUMNS: { key: SortKey; label: string; num?: boolean }[] = [
   { key: 'turnover', label: 'Turnover neto de provisión', num: true },
   { key: 'price', label: 'Precio por unidad', num: true },
   { key: 'provision', label: 'Provisión royalties', num: true },
-  { key: 'rate', label: 'Royalty rate', num: true },
+  { key: 'domestic', label: '% Domestic', num: true },
+  { key: 'fob', label: '% FOB', num: true },
 ];
 
 // Lee la exportación a Excel de la página 60000 "Documents LM Components" y deja solo lo necesario
 // (sin líneas Main Item), con las descripciones por artículo aparte para que el envío sea pequeño
 async function parseLmExcel(file: File) {
   const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-  const rows = XLSX.utils.sheet_to_json<any[]>(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: null });
+  // La hoja de datos (puede haber otras, p. ej. una tabla dinámica añadida)
+  const sheet = wb.SheetNames.map(n => XLSX.utils.sheet_to_json<any[]>(wb.Sheets[n], { header: 1, defval: null }))
+    .find(r => (r[0] || []).some((h: any) => String(h ?? '').trim() === 'Royalty Code'));
+  const rows = sheet || [];
   const header = (rows[0] || []).map((h: any) => String(h ?? '').trim());
   const col = (name: string) => header.indexOf(name);
   const C = {
@@ -104,7 +110,7 @@ async function parseRatesExcel(file: File) {
   return { kind: 'rates', fileName: file.name, rates };
 }
 
-const sum = (rows: Row[], k: 'qty' | 'turnover' | 'provision') => rows.reduce((s, r) => s + r[k], 0);
+const sum = (rows: Row[], k: 'qty' | 'turnover' | 'turnoverFob' | 'provision') => rows.reduce((s, r) => s + r[k], 0);
 
 export default function RoyaltiesPage() {
   const { selectedCompany } = useCompany();
@@ -167,7 +173,7 @@ export default function RoyaltiesPage() {
   const factor = inEur && canConvert ? fxRate : 1;
   const cur = inEur && canConvert ? 'EUR' : localCur;
   const rows = useMemo(
-    () => (data?.rows || []).map(r => (factor === 1 ? r : { ...r, turnover: r.turnover * factor, provision: r.provision * factor, price: r.price * factor })),
+    () => (data?.rows || []).map(r => (factor === 1 ? r : { ...r, turnover: r.turnover * factor, turnoverFob: r.turnoverFob * factor, provision: r.provision * factor, price: r.price * factor })),
     [data, factor]
   );
   const codes = useMemo(() => Array.from(new Set(rows.map(r => r.code))).sort(byCode), [rows]);
@@ -183,7 +189,8 @@ export default function RoyaltiesPage() {
     return list.sort((a, b) => {
       if (sort) {
         const va = a[sort.key], vb = b[sort.key];
-        return (typeof va === 'number' ? va - (vb as number) : String(va).localeCompare(String(vb))) * sort.dir;
+        const num = COLUMNS.find(c => c.key === sort.key)?.num;
+        return (num ? ((va as number | null) ?? -1) - ((vb as number | null) ?? -1) : String(va).localeCompare(String(vb))) * sort.dir;
       }
       return byCode(a.code, b.code) || a.country.localeCompare(b.country) || a.item.localeCompare(b.item);
     });
@@ -196,7 +203,10 @@ export default function RoyaltiesPage() {
     const map = new Map<string, Row[]>();
     base.forEach(r => map.set(r.code, [...(map.get(r.code) || []), r]));
     return Array.from(map.entries())
-      .map(([code, list]) => ({ code, n: list.length, qty: sum(list, 'qty'), turnover: sum(list, 'turnover'), provision: sum(list, 'provision') }))
+      .map(([code, list]) => ({
+        code, n: list.length, qty: sum(list, 'qty'), turnover: sum(list, 'turnover'), turnoverFob: sum(list, 'turnoverFob'),
+        provision: sum(list, 'provision'), domestic: list[0].domestic, fob: list[0].fob,
+      }))
       .sort((a, b) => (a.code === NOT_APPLIED ? 1 : b.code === NOT_APPLIED ? -1 : b.provision - a.provision));
   }, [rows, countryFilter, search]);
 
@@ -210,18 +220,18 @@ export default function RoyaltiesPage() {
   const exportExcel = () => {
     const aoa: any[][] = [
       [`ROYALTIES ${selectedCompany} · ${dateEs(range.from)} – ${dateEs(range.to)} · ${cur}${cur !== localCur ? ` (1 ${localCur} = ${fxInput} EUR)` : ''}`],
-      ['Royalty Code', 'Bill-to Country/Region Code', 'No.', 'Description', 'Quantity', 'Turnover Net of Provision Sales', 'Price Per Unit', 'Provision Royalties', 'Royalty Rate'],
-      ...visible.map(r => [r.code, r.country, r.item, r.desc, r.qty, r.turnover, r.price, r.provision, r.rate]),
-      ['Total', '', '', '', totals.qty, totals.turnover, null, totals.provision, null],
+      ['Royalty Code', 'Bill-to Country/Region Code', 'No.', 'Description', 'Quantity', 'Turnover Net of Provision Sales', 'of which FOB', 'Price Per Unit', 'Provision Royalties', '% Domestic Royalty', '% Fob Royalty'],
+      ...visible.map(r => [r.code, r.country, r.item, r.desc, r.qty, r.turnover, r.turnoverFob, r.price, r.provision, r.domestic, r.fob]),
+      ['Total', '', '', '', totals.qty, totals.turnover, sum(visible, 'turnoverFob'), null, totals.provision, null, null],
     ];
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     for (let r = 2; r < aoa.length; r++) {
-      for (const c of [4, 5, 6, 7, 8]) {
+      for (const c of [4, 5, 6, 7, 8, 9, 10]) {
         const cell = ws[XLSX.utils.encode_cell({ r, c })];
-        if (cell && cell.t === 'n') cell.z = c === 4 ? '#,##0' : c === 8 ? '0.00%' : '#,##0.00';
+        if (cell && cell.t === 'n') cell.z = c === 4 ? '#,##0' : c >= 9 ? '0.00%' : '#,##0.00';
       }
     }
-    ws['!cols'] = [{ wch: 24 }, { wch: 10 }, { wch: 12 }, { wch: 50 }, { wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 16 }, { wch: 10 }];
+    ws['!cols'] = [{ wch: 24 }, { wch: 10 }, { wch: 12 }, { wch: 50 }, { wch: 12 }, { wch: 18 }, { wch: 14 }, { wch: 12 }, { wch: 16 }, { wch: 10 }, { wch: 10 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Royalties');
     XLSX.writeFile(wb, `Royalties_${selectedCompany}_${range.from}_${range.to}_${cur}.xlsx`.replace(/\s+/g, '_'));
@@ -364,6 +374,9 @@ export default function RoyaltiesPage() {
                       <th className="text-right px-4 py-2">Artículos</th>
                       <th className="text-right px-4 py-2">Cantidad</th>
                       <th className="text-right px-4 py-2">Turnover neto</th>
+                      <th className="text-right px-4 py-2">de ello FOB</th>
+                      <th className="text-right px-4 py-2">% Domestic</th>
+                      <th className="text-right px-4 py-2">% FOB</th>
                       <th className="text-right px-4 py-2">Provisión royalties</th>
                       <th className="text-right px-4 py-2">% efectivo</th>
                     </tr>
@@ -376,6 +389,9 @@ export default function RoyaltiesPage() {
                         <td className="px-4 py-2 text-right tabular-nums">{c.n}</td>
                         <td className="px-4 py-2 text-right tabular-nums">{qf.format(c.qty)}</td>
                         <td className="px-4 py-2 text-right tabular-nums">{money(c.turnover)}</td>
+                        <td className="px-4 py-2 text-right tabular-nums text-gray-600">{c.turnoverFob ? money(c.turnoverFob) : '—'}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{pctOrDash(c.domestic)}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{pctOrDash(c.fob)}</td>
                         <td className="px-4 py-2 text-right tabular-nums font-semibold">{money(c.provision)}</td>
                         <td className="px-4 py-2 text-right tabular-nums">{c.turnover ? pct(c.provision / c.turnover) : '—'}</td>
                       </tr>
@@ -432,7 +448,8 @@ export default function RoyaltiesPage() {
                         <td className="px-3 py-1.5 text-right tabular-nums">{money(r.turnover)}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums">{money(r.price)}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums font-semibold">{money(r.provision)}</td>
-                        <td className="px-3 py-1.5 text-right tabular-nums">{pct(r.rate)}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">{pctOrDash(r.domestic)}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">{pctOrDash(r.fob)}</td>
                       </tr>
                     ))}
                     {!visible.length && (
@@ -447,7 +464,7 @@ export default function RoyaltiesPage() {
                         <td className="px-3 py-2 text-right tabular-nums">{money(totals.turnover)}</td>
                         <td className="px-3 py-2" />
                         <td className="px-3 py-2 text-right tabular-nums">{money(totals.provision)}</td>
-                        <td className="px-3 py-2" />
+                        <td className="px-3 py-2" colSpan={2} />
                       </tr>
                     </tfoot>
                   )}
@@ -455,7 +472,7 @@ export default function RoyaltiesPage() {
               </div>
             </section>
             <p className="text-xs text-gray-500">
-              Fuente: página 60000 &quot;AIT Documents LM Components&quot; de Business Central ({data.source === 'bc' ? `servicio ${data.service}` : 'Excel cargado'}), sin líneas Main Item ni intercompañía. Royalty Code de la ficha de artículo y provisión = turnover × % Domestic Royalty de RoyaltiesCRZ (% FOB en envíos FOB), ambos de CRAZE GmbH. Precio por unidad = turnover ÷ cantidad; royalty rate = provisión ÷ turnover.
+              Fuente: página 60000 &quot;AIT Documents LM Components&quot; de Business Central ({data.source === 'bc' ? `servicio ${data.service}` : 'Excel cargado'}), sin líneas Main Item ni intercompañía. Royalty Code de la ficha de artículo y provisión = turnover × % Domestic Royalty de RoyaltiesCRZ (% FOB en envíos FOB), ambos de CRAZE GmbH. Precio por unidad = turnover ÷ cantidad; % efectivo = provisión ÷ turnover.
             </p>
           </>
         )}

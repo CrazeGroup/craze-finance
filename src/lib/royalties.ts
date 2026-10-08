@@ -25,6 +25,8 @@ export type RoyaltyRates = Record<string, { domestic: number; fob: number }>;
 export type RoyaltyRow = {
   code: string; country: string; item: string; desc: string;
   qty: number; turnover: number; price: number; provision: number; rate: number; lines: number;
+  turnoverFob: number;                          // parte del turnover con condición de envío FOB
+  domestic: number | null; fob: number | null;  // % del Royalty Code (null = sin % en la tabla)
 };
 
 // ---------- Intercompañía ----------
@@ -97,7 +99,12 @@ export function buildReport(
       provision = r ? l.turnover * (/^FOB$/i.test(l.ship) && r.fob ? r.fob : r.domestic) : 0;
     }
     const key = `${code}|${l.country}|${l.item}`;
-    const g = groups.get(key) || { code, country: l.country, item: l.item, desc: l.desc, qty: 0, turnover: 0, price: 0, provision: 0, rate: 0, lines: 0 };
+    const r = rates?.[code.toUpperCase()];
+    const g = groups.get(key) || {
+      code, country: l.country, item: l.item, desc: l.desc, qty: 0, turnover: 0, price: 0, provision: 0, rate: 0, lines: 0,
+      turnoverFob: 0, domestic: r ? r.domestic : null, fob: r ? (r.fob || r.domestic) : null,
+    };
+    if (/^FOB$/i.test(l.ship)) g.turnoverFob += l.turnover;
     g.qty += l.qty;
     g.turnover += l.turnover;
     g.provision += provision;
