@@ -12,6 +12,7 @@ type Row = {
 type Report = {
   from: string; to: string; company: string; rows: Row[];
   source: 'bc' | 'excel'; service?: string; bcError?: string | null; itemsError?: string | null;
+  currency: string; fx: { rate: number | null; date: string | null; error: string | null } | null;
   ratesSource?: 'bc' | 'excel' | 'default'; ratesInfo?: string | null; ratesBcError?: string | null;
   upload?: { fileName: string; uploadedAt: string; from: string; to: string };
   stats: { lines: number; ic: { lines: number; turnover: number; provision: number }; noItemCard: string[]; noRate: string[] };
@@ -118,6 +119,9 @@ export default function RoyaltiesPage() {
   const [hideNotApplied, setHideNotApplied] = useState(false);
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 } | null>(null);
   const [uploading, setUploading] = useState(false);
+  // Conversión a EUR (UK en GBP, AG en CHF): tipo de BC, editable
+  const [inEur, setInEur] = useState(false);
+  const [fxInput, setFxInput] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
   const uploadExcel = async (file: File) => {
@@ -153,7 +157,18 @@ export default function RoyaltiesPage() {
     return () => { cancelled = true; };
   }, [selectedCompany, range, reload]);
 
-  const rows = data?.rows || [];
+  useEffect(() => {
+    setFxInput(data?.fx?.rate ? String(data.fx.rate).replace('.', ',') : '');
+  }, [data?.fx?.rate]);
+  const localCur = data?.currency || 'EUR';
+  const fxRate = parseFloat(fxInput.replace(',', '.'));
+  const canConvert = localCur !== 'EUR' && fxRate > 0;
+  const factor = inEur && canConvert ? fxRate : 1;
+  const cur = inEur && canConvert ? 'EUR' : localCur;
+  const rows = useMemo(
+    () => (data?.rows || []).map(r => (factor === 1 ? r : { ...r, turnover: r.turnover * factor, provision: r.provision * factor, price: r.price * factor })),
+    [data, factor]
+  );
   const codes = useMemo(() => Array.from(new Set(rows.map(r => r.code))).sort(byCode), [rows]);
   const countries = useMemo(() => Array.from(new Set(rows.map(r => r.country))).sort(), [rows]);
 
@@ -193,7 +208,7 @@ export default function RoyaltiesPage() {
 
   const exportExcel = () => {
     const aoa: any[][] = [
-      [`ROYALTIES ${selectedCompany} · ${dateEs(range.from)} – ${dateEs(range.to)}`],
+      [`ROYALTIES ${selectedCompany} · ${dateEs(range.from)} – ${dateEs(range.to)} · ${cur}${cur !== localCur ? ` (1 ${localCur} = ${fxInput} EUR)` : ''}`],
       ['Royalty Code', 'Bill-to Country/Region Code', 'No.', 'Description', 'Quantity', 'Turnover Net of Provision Sales', 'Price Per Unit', 'Provision Royalties', 'Royalty Rate'],
       ...visible.map(r => [r.code, r.country, r.item, r.desc, r.qty, r.turnover, r.price, r.provision, r.rate]),
       ['Total', '', '', '', totals.qty, totals.turnover, null, totals.provision, null],
@@ -208,7 +223,7 @@ export default function RoyaltiesPage() {
     ws['!cols'] = [{ wch: 24 }, { wch: 10 }, { wch: 12 }, { wch: 50 }, { wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 16 }, { wch: 10 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Royalties');
-    XLSX.writeFile(wb, `Royalties_${selectedCompany}_${range.from}_${range.to}.xlsx`.replace(/\s+/g, '_'));
+    XLSX.writeFile(wb, `Royalties_${selectedCompany}_${range.from}_${range.to}_${cur}.xlsx`.replace(/\s+/g, '_'));
   };
 
   const presets = [
@@ -223,7 +238,7 @@ export default function RoyaltiesPage() {
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="mr-auto">
             <p className="font-bold text-gray-900 leading-tight text-lg">Royalties</p>
-            <p className="text-xs text-gray-500">{selectedCompany} · {dateEs(range.from)} – {dateEs(range.to)} · Royalty Code de la ficha de artículo (CRAZE GmbH) · sin Main Item ni intercompañía</p>
+            <p className="text-xs text-gray-500">{selectedCompany} · {dateEs(range.from)} – {dateEs(range.to)} · importes en {cur}{cur !== localCur ? ` (1 ${localCur} = ${fxInput} EUR)` : ''} · Royalty Code de la ficha de artículo (CRAZE GmbH) · sin Main Item ni intercompañía</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex bg-gray-100 rounded-lg p-1">
@@ -239,6 +254,26 @@ export default function RoyaltiesPage() {
             <span className="text-gray-400 text-sm">–</span>
             <input type="date" value={range.to} min={range.from} onChange={e => e.target.value && setRange(r => ({ ...r, to: e.target.value }))}
               className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-semibold bg-white" />
+            {localCur !== 'EUR' && (
+              <div className="flex items-center gap-2">
+                <div className="flex bg-gray-100 rounded-lg p-1">
+                  {[localCur, 'EUR'].map(c => (
+                    <button key={c} onClick={() => setInEur(c === 'EUR')} disabled={c === 'EUR' && !canConvert}
+                      title={c === 'EUR' && !canConvert ? 'Indica el tipo de cambio' : `Ver importes en ${c}`}
+                      className={`px-3 py-1.5 rounded-md text-xs font-semibold disabled:opacity-40 ${cur === c ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
+                      {c}
+                    </button>
+                  ))}
+                </div>
+                <label className="flex items-center gap-1 text-xs text-gray-500"
+                  title={data?.fx?.rate ? `Tipo de Currencies_Excel (CRAZE GmbH)${data.fx.date ? ' del ' + dateEs(data.fx.date) : ''}` : data?.fx?.error || ''}>
+                  1 {localCur} =
+                  <input value={fxInput} onChange={e => setFxInput(e.target.value)} inputMode="decimal" placeholder="tipo"
+                    className="w-20 border border-gray-300 rounded-md px-2 py-1 text-sm font-semibold text-gray-900 bg-white text-right" />
+                  EUR
+                </label>
+              </div>
+            )}
             <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={loading} title="Volver a leer de Business Central"
               className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">
               <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
@@ -302,11 +337,11 @@ export default function RoyaltiesPage() {
               </details>
             )}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <Kpi label="Provisión royalties" value={money(totals.provision)} sub={licensedTurnover ? `${pct(totals.provision / licensedTurnover)} sobre ventas con licencia` : undefined} />
-              <Kpi label="Turnover neto de provisión" value={money(totals.turnover)} sub={`Con licencia: ${money(licensedTurnover)}`} />
+              <Kpi label={`Provisión royalties (${cur})`} value={money(totals.provision)} sub={licensedTurnover ? `${pct(totals.provision / licensedTurnover)} sobre ventas con licencia` : undefined} />
+              <Kpi label={`Turnover neto de provisión (${cur})`} value={money(totals.turnover)} sub={`Con licencia: ${money(licensedTurnover)}`} />
               <Kpi label="Cantidad" value={qf.format(totals.qty)} sub={`${visible.length} líneas de artículo`} />
-              <Kpi label="Excluido intercompañía" value={money(data.stats.ic.turnover)}
-                sub={`${data.stats.ic.lines} líneas · provisión ${money(data.stats.ic.provision)}`} />
+              <Kpi label={`Excluido intercompañía (${cur})`} value={money(data.stats.ic.turnover * factor)}
+                sub={`${data.stats.ic.lines} líneas · provisión ${money(data.stats.ic.provision * factor)}`} />
             </div>
 
             <section className="bg-white rounded-xl border border-gray-200 overflow-hidden">

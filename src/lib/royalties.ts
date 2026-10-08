@@ -295,6 +295,29 @@ async function loadMasterData(ctx: BcContext | null, force: boolean) {
   return out;
 }
 
+// ---------- Divisa ----------
+
+// Divisa local de cada empresa (UK en GBP, Group AG en CHF; el resto en EUR)
+export function companyCurrency(company: string) {
+  return /\bUK\b/i.test(company) ? 'GBP' : /\bAG\b/i.test(company) ? 'CHF' : 'EUR';
+}
+
+// Tipo de cambio a EUR (EUR por 1 unidad de la divisa) de Currencies_Excel en CRAZE GmbH, como el BWA
+async function eurRate(ctx: BcContext | null, currency: string, force: boolean) {
+  try {
+    const gmbh = ctx && ctx.companyName.toLowerCase() === MASTER_COMPANY.toLowerCase() ? ctx : await getBcContext(MASTER_COMPANY);
+    return await cached(`royalties:fx:${currency}`, 6 * HOUR, async () => {
+      const rows = await bcFetchAll(odataUrl(`${gmbh.odataCompanyBase}/Currencies_Excel`, { $select: 'Code,ExchangeRateAmt,ExchangeRateDate' }), gmbh.token);
+      const row = rows.find((c: any) => c.Code === currency && c.ExchangeRateAmt);
+      if (!row) throw new Error(`No hay tipo de cambio para ${currency} en Currencies_Excel.`);
+      return { rate: num(row.ExchangeRateAmt), date: str(row.ExchangeRateDate).substring(0, 10), error: null as string | null };
+    }, force);
+  } catch (e: any) {
+    console.error('Royalties fx:', e);
+    return { rate: null, date: null, error: e.message as string };
+  }
+}
+
 // ---------- Excel subido ----------
 
 const UPLOAD_PREFIX = 'royalties:upload:';
@@ -327,7 +350,9 @@ async function loadUpload(company: string): Promise<{ meta: Omit<StoredUpload, '
 export async function royaltiesReport(ctx: BcContext | null, company: string, from: string, to: string, force = false) {
   let bcError: string | null = null;
   const master = await loadMasterData(ctx, force);
-  const masterInfo = { itemsError: master.itemsError, ratesSource: master.ratesSource, ratesInfo: master.ratesInfo, ratesBcError: master.ratesBcError };
+  const currency = companyCurrency(company);
+  const fx = currency === 'EUR' ? null : await eurRate(ctx, currency, force);
+  const masterInfo = { currency, fx, itemsError: master.itemsError, ratesSource: master.ratesSource, ratesInfo: master.ratesInfo, ratesBcError: master.ratesBcError };
   if (ctx) {
     try {
       // Se guardan las líneas (no el agregado) para aplicar los Royalty Codes de artículo vigentes
