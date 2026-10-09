@@ -27,7 +27,9 @@ const realDate = (d: any) => { const s = str(d).substring(0, 10); return s && !s
 
 // Usuarios de aprobación por nº de movimiento. La API custom no los trae siempre: se leen de la página de
 // movimientos de proveedor publicada en OData (la que se exporta a Excel: "Approval Users", "Pending Users"...).
-// Servicio fijable con el setting 'paymentProposalUsersService'.
+// Servicio fijable con el setting 'paymentProposalUsersService'; por defecto el de la página 29 publicado al usar
+// "Editar en Excel" (Vendor_Ledger_Entries_Excel).
+const DEFAULT_USERS_SERVICE = 'Vendor_Ledger_Entries_Excel';
 type Users = { approval: string[]; approved: string[]; pending: string[] | null; rejected: string[] };
 const findKey = (keys: string[], test: (k: string) => boolean) => keys.find(test);
 const isPendingKey = (k: string) => /pending/i.test(k) && /user/i.test(k);
@@ -47,16 +49,18 @@ async function odataUsers(ctx: BcContext, from: string, to: string, tried: strin
   let names: string[] = configured ? [configured] : [];
   if (!names.length) {
     const res = await fetch(root, { headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json' } });
-    if (!res.ok) { tried.push(`lista de servicios OData: error ${res.status}`); return null; }
-    const list: string[] = ((await res.json()).value || []).map((s: any) => s.name);
-    // Primero los servicios "…_Excel" (como Currencies_Excel o General_Ledger_Entries_Excel)
-    names = list.filter(n => /vendor.?ledger.?entr/i.test(n)).sort((a, b) => Number(!/excel/i.test(a)) - Number(!/excel/i.test(b)));
-    if (!names.length) tried.push('ningún servicio OData con "Vendor Ledger Entries" en el nombre');
+    if (res.ok) {
+      const list: string[] = ((await res.json()).value || []).map((s: any) => s.name);
+      // Primero los servicios "…_Excel" (como Currencies_Excel o General_Ledger_Entries_Excel)
+      names = list.filter(n => /vendor.?ledger.?entr/i.test(n)).sort((a, b) => Number(!/excel/i.test(a)) - Number(!/excel/i.test(b)));
+      if (!names.length) tried.push('la lista de servicios OData no incluye ninguno con "Vendor Ledger Entries" en el nombre');
+    } else tried.push(`lista de servicios OData: error ${res.status}`);
+    if (!names.includes(DEFAULT_USERS_SERVICE)) names.push(DEFAULT_USERS_SERVICE);
   }
   for (const name of names) {
     const base = `${ctx.odataCompanyBase}/${name}`;
     let sample: any[] = [];
-    try { sample = await bcFetchAll(odataUrl(base, { $top: '1' }), ctx.token); } catch (e: any) { tried.push(`${name}: ${e.message.substring(0, 120)}`); continue; }
+    try { sample = await bcFetchAll(odataUrl(base, { $top: '1' }), ctx.token); } catch (e: any) { tried.push(`${name}: ${e.message.substring(0, 300)}`); continue; }
     if (!sample.length) { tried.push(`${name}: sin filas`); continue; }
     const keys = Object.keys(sample[0]);
     const entryKey = findKey(keys, k => /^entry_?no$/i.test(k));
@@ -68,7 +72,13 @@ async function odataUsers(ctx: BcContext, from: string, to: string, tried: strin
     }
     const filter = [openKey && `${openKey} eq true`, dueKey && `${dueKey} ge ${from} and ${dueKey} le ${to}`].filter(Boolean).join(' and ');
     const select = [entryKey, ...keys.filter(k => isPendingKey(k) || isApprovalKey(k) || isApprovedKey(k) || isRejectedKey(k))].join(',');
-    const rows = await bcFetchAll(odataUrl(base, { $filter: filter || undefined, $select: select }), ctx.token);
+    let rows: any[];
+    try {
+      rows = await bcFetchAll(odataUrl(base, { $filter: filter || undefined, $select: select }), ctx.token);
+    } catch (e: any) {
+      tried.push(`${name} (filtro ${filter}, campos ${select}): ${e.message.substring(0, 300)}`);
+      continue;
+    }
     return { service: name, byEntry: new Map(rows.map(r => [num(r[entryKey]), usersFrom(r, keys)])) };
   }
   return null;

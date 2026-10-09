@@ -123,8 +123,8 @@ export default function PaymentProposalPage() {
             <ProposalTable title="Approved for Payment" subtitle={`% Payment Approval ≥ ${APPROVED_PCT}`} entries={approved} currencies={currencies} lcy={lcy} />
             {data.usersSource === 'none' && data.entries.length > 0 && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900">
-                Business Central no devuelve los Pending Users de los movimientos de proveedor (ni en la API ni en una página &quot;Vendor Ledger Entries&quot; publicada en OData),
-                así que Pending Approval no se puede agrupar por usuario. Publica en Servicios web la página de movimientos de proveedor que exportas a Excel.
+                No se han podido leer los Pending Users de Business Central, así que Pending Approval no se puede agrupar por usuario.
+                {data.usersTried.length > 0 && <ul className="mt-1 ml-4 list-disc font-mono text-xs break-words">{data.usersTried.map((t, i) => <li key={i}>{t}</li>)}</ul>}
                 <details className="mt-1 text-xs"><summary className="cursor-pointer">Campos que devuelve la API</summary><p className="font-mono break-words mt-1">{data.apiKeys.join(', ')}</p></details>
               </div>
             )}
