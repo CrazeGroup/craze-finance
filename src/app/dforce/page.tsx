@@ -1,13 +1,15 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import * as XLSX from 'xlsx';
 import { AlertCircle, CheckCircle2, Download, FileSpreadsheet, FileText, RefreshCw } from 'lucide-react';
 import { useCompany } from '@/contexts/CompanyContext';
+import { ACC_PROVISION, buildProvisions, journalLines, PROVISION_RATE } from '@/lib/dforceProvisions';
 
 type SalesLine = {
   documentType: 'Invoice' | 'Credit Memo'; lineNo: number; no: string; description: string; description2: string;
   quantity: number; unitPrice: number; unitCost: number | null; amount: number; returnReason: string; project: string; task: string;
+  appendix: string;
 };
 type PurchaseLine = {
   lineNo: number; no: string; description: string; description2: string; quantity: number; directUnitCost: number;
@@ -37,6 +39,18 @@ export default function DForcePage() {
   const [data, setData] = useState<Result | null>(null);
   // Nº de los documentos ya creados en BC (cabeceras) a los que se importan las líneas
   const [docNo, setDocNo] = useState({ invoice: '', credit: '', purchase: '' });
+  // Provisiones: coste unitario por artículo (de BC, editable) y fecha de registro (fin del periodo de la Gutschrift)
+  const [costOverride, setCostOverride] = useState<Record<string, string>>({});
+  const [postingDate, setPostingDate] = useState('');
+
+  const unitCosts = useMemo(() => {
+    const m: Record<string, number | null> = {};
+    [...(data?.invoice || []), ...(data?.credit || [])].forEach(l => { if (m[l.no] == null) m[l.no] = l.unitCost; });
+    Object.entries(costOverride).forEach(([k, v]) => { const n = parseFloat(v.replace(',', '.')); if (!isNaN(n)) m[k] = n; });
+    return m;
+  }, [data, costOverride]);
+  const provisions = useMemo(() => (data ? buildProvisions(data.invoice, data.credit, unitCosts) : []), [data, unitCosts]);
+  const journal = useMemo(() => journalLines(provisions, postingDate, data?.creditNo || ''), [provisions, postingDate, data]);
 
   const process = async () => {
     if (!pdf || !excel) return;
@@ -50,6 +64,10 @@ export default function DForcePage() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || `Error al procesar (${res.status})`);
       setData(json);
+      setCostOverride({});
+      // "01.08.2026 – 31.08.2026" → 2026-08-31
+      const end = String(json.period || '').match(/(\d{2})\.(\d{2})\.(\d{4})\s*$/);
+      setPostingDate(end ? `${end[3]}-${end[2]}-${end[1]}` : '');
     } catch (e: any) {
       setError(e.message);
       setData(null);
@@ -77,6 +95,9 @@ export default function DForcePage() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, sheet('Sales Line', '37', SALES_HEAD, [...data.invoice, ...data.credit].map(salesRow)), 'Sales Line');
     XLSX.utils.book_append_sheet(wb, sheet('Purchase Line', '39', PURCHASE_HEAD, data.purchase.map(purchaseRow)), '39 Purchase Line');
+    const jHead = ['Posting Date', 'Document No.', 'Account Type', 'Account No.', 'Description', 'Amount', 'Bal. Account Type', 'Bal. Account No.'];
+    const jRows = journal.map(j => [j.postingDate, j.documentNo, 'G/L Account', j.accountNo, j.description, j.amount, 'G/L Account', j.balAccountNo]);
+    XLSX.utils.book_append_sheet(wb, sheet('Gen. Journal Line', '81', jHead, jRows), 'Provisiones 3071 00');
     XLSX.writeFile(wb, `D-FORCE_${data.creditNo || 'Gutschrift'}.xlsx`);
   };
 
@@ -151,10 +172,125 @@ export default function DForcePage() {
             <SalesTable title="Sales Invoice" docNo={docNo.invoice} lines={data.invoice} customer={data.customerNo} />
             <SalesTable title="Sales Credit Memo" docNo={docNo.credit} lines={data.credit} customer={data.customerNo} />
             <PurchaseTable docNo={docNo.purchase} lines={data.purchase} vendor={data.vendorNo} />
+            <ProvisionsSection rows={provisions} journal={journal} costOverride={costOverride} setCostOverride={setCostOverride}
+              postingDate={postingDate} setPostingDate={setPostingDate} />
           </>
         )}
       </main>
     </div>
+  );
+}
+
+function ProvisionsSection({ rows, journal, costOverride, setCostOverride, postingDate, setPostingDate }: {
+  rows: ReturnType<typeof buildProvisions>; journal: ReturnType<typeof journalLines>;
+  costOverride: Record<string, string>; setCostOverride: (f: (o: Record<string, string>) => Record<string, string>) => void;
+  postingDate: string; setPostingDate: (d: string) => void;
+}) {
+  const t = (f: (r: typeof rows[number]) => number) => rows.reduce((s, r) => s + f(r), 0);
+  const created = t(r => r.salesProvision + r.inventoryProvision);
+  const released = t(r => r.salesRelease + r.inventoryRelease);
+  const missingCost = rows.filter(r => (r.delivered && r.soldQty) || r.returnedQty).filter(r => !r.unitCost);
+  const pct = `${PROVISION_RATE * 100}%`;
+  return (
+    <section className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="mr-auto">
+          <h2 className="text-sm font-bold text-gray-900">Provisiones de devoluciones ({ACC_PROVISION})</h2>
+          <p className="text-xs text-gray-500">
+            Factura: provisión de menos venta = {pct} del importe vendido (4300 00) y de más existencias = {pct} de las unidades × coste unitario (5881 00),
+            solo en los números entregados en el mes. Abono: las devoluciones cancelan ambas provisiones al 100 %.
+          </p>
+        </div>
+        <label className="text-xs text-gray-500 flex items-center gap-2">Fecha de registro
+          <input type="date" value={postingDate} onChange={e => setPostingDate(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1 text-sm font-semibold text-gray-900" />
+        </label>
+      </div>
+      {missingCost.length > 0 && (
+        <p className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-900">
+          Sin coste unitario (la provisión de existencias sale a 0 hasta que lo indiques): {missingCost.map(r => r.item).join(', ')}.
+        </p>
+      )}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-500">
+            <tr>
+              <th className={`${th} text-left`}>Número</th><th className={`${th} text-left`}>Artículo</th>
+              <th className={`${th} text-right`}>Uds vendidas</th><th className={`${th} text-right`}>Venta</th>
+              <th className={`${th} text-right`}>Prov. menos venta</th><th className={`${th} text-right`}>Coste unit.</th>
+              <th className={`${th} text-right`}>Prov. más existencias</th>
+              <th className={`${th} text-right`}>Uds devueltas</th><th className={`${th} text-right`}>Devolución</th>
+              <th className={`${th} text-right`}>Cancel. venta</th><th className={`${th} text-right`}>Cancel. existencias</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.item} className="border-t border-gray-100 text-gray-900">
+                <td className={`${td} font-semibold`}>{r.code}</td>
+                <td className={`${td} font-mono text-xs`}>{r.item}</td>
+                <td className={`${td} text-right tabular-nums`}>{r.soldQty ? qf.format(r.soldQty) : ''}</td>
+                <td className={`${td} text-right tabular-nums`}>{r.soldAmount ? money(r.soldAmount) : ''}</td>
+                <td className={`${td} text-right tabular-nums font-semibold`} title={!r.delivered && r.soldQty ? 'Solo diferencias de entrega: sin provisión' : ''}>
+                  {r.salesProvision ? money(r.salesProvision) : r.soldQty ? <span className="text-gray-400 text-xs">sin prov.</span> : ''}
+                </td>
+                <td className={`${td} text-right`}>
+                  <input value={costOverride[r.item] ?? (r.unitCost == null ? '' : String(r.unitCost).replace('.', ','))}
+                    onChange={e => setCostOverride(o => ({ ...o, [r.item]: e.target.value }))} inputMode="decimal"
+                    className={`w-20 border rounded px-1.5 py-0.5 text-right text-sm tabular-nums ${r.unitCost ? 'border-gray-300' : 'border-amber-400 bg-amber-50'}`} />
+                </td>
+                <td className={`${td} text-right tabular-nums font-semibold`}>{r.inventoryProvision ? money(r.inventoryProvision) : ''}</td>
+                <td className={`${td} text-right tabular-nums`}>{r.returnedQty ? qf.format(r.returnedQty) : ''}</td>
+                <td className={`${td} text-right tabular-nums`}>{r.returnedAmount ? money(r.returnedAmount) : ''}</td>
+                <td className={`${td} text-right tabular-nums text-red-700`}>{r.salesRelease ? money(r.salesRelease) : ''}</td>
+                <td className={`${td} text-right tabular-nums text-red-700`}>{r.inventoryRelease ? money(r.inventoryRelease) : ''}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot className="bg-gray-50 font-bold text-gray-900">
+            <tr className="border-t-2 border-gray-300">
+              <td className={td} colSpan={3}>Total</td>
+              <td className={`${td} text-right tabular-nums`}>{money(t(r => r.soldAmount))}</td>
+              <td className={`${td} text-right tabular-nums`}>{money(t(r => r.salesProvision))}</td>
+              <td />
+              <td className={`${td} text-right tabular-nums`}>{money(t(r => r.inventoryProvision))}</td>
+              <td />
+              <td className={`${td} text-right tabular-nums`}>{money(t(r => r.returnedAmount))}</td>
+              <td className={`${td} text-right tabular-nums`}>{money(t(r => r.salesRelease))}</td>
+              <td className={`${td} text-right tabular-nums`}>{money(t(r => r.inventoryRelease))}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <div className="px-4 py-3 border-t border-gray-200 space-y-2">
+        <p className="text-xs text-gray-600">
+          Provisiones nuevas {money(created)} · cancelaciones {money(released)} · movimiento neto contra {ACC_PROVISION}: <b>{money(-(created + released))}</b>
+        </p>
+        <details>
+          <summary className="cursor-pointer text-sm font-semibold text-gray-900">Asientos sugeridos ({journal.length} líneas de diario, contrapartida {ACC_PROVISION})</summary>
+          <div className="overflow-x-auto mt-2">
+            <table className="w-full text-sm">
+              <thead className="text-xs uppercase tracking-wider text-gray-500">
+                <tr>
+                  <th className={`${th} text-left`}>Fecha</th><th className={`${th} text-left`}>Nº documento</th><th className={`${th} text-left`}>Cuenta</th>
+                  <th className={`${th} text-left`}>Descripción</th><th className={`${th} text-right`}>Importe</th><th className={`${th} text-left`}>Contrapartida</th>
+                </tr>
+              </thead>
+              <tbody>
+                {journal.map((j, i) => (
+                  <tr key={i} className="border-t border-gray-100 text-gray-900">
+                    <td className={td}>{j.postingDate.split('-').reverse().join('/')}</td>
+                    <td className={`${td} font-mono text-xs`}>{j.documentNo}</td>
+                    <td className={`${td} font-mono text-xs`}>{j.accountNo}</td>
+                    <td className={td}>{j.description}</td>
+                    <td className={`${td} text-right tabular-nums ${j.amount < 0 ? 'text-red-700' : ''}`}>{money(j.amount)}</td>
+                    <td className={`${td} font-mono text-xs`}>{j.balAccountNo}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      </div>
+    </section>
   );
 }
 
