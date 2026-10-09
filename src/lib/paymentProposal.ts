@@ -1,4 +1,5 @@
 import { bcFetchAll, BcContext, odataUrl } from '@/lib/bcClient';
+import prisma from '@/lib/prisma';
 import { readSetting } from '@/lib/reporting/cache';
 import { companyCurrency } from '@/lib/royalties';
 import { VENDOR_INVOICE_TYPES } from '@/lib/documentTypes';
@@ -84,6 +85,27 @@ async function odataUsers(ctx: BcContext, from: string, to: string, tried: strin
   return null;
 }
 
+// Provisional, mientras BC no devuelve los usuarios: Excel de la página 29 subido en la app, por empresa.
+// Formato guardado: [Entry No., Pending Users, Approval Users, Approved Users, Rejected Users]
+const USERS_UPLOAD_PREFIX = 'payment-proposal:users-upload:';
+export type StoredUsersUpload = { fileName: string; uploadedAt: string; rows: [number, string, string, string, string][] };
+
+export async function saveUsersUpload(company: string, upload: StoredUsersUpload) {
+  const key = USERS_UPLOAD_PREFIX + company;
+  const config = JSON.stringify(upload);
+  await prisma.apiConfig.upsert({ where: { key }, update: { config }, create: { key, url: '', config } });
+}
+
+async function loadUsersUpload(company: string) {
+  const row = await prisma.apiConfig.findUnique({ where: { key: USERS_UPLOAD_PREFIX + company } });
+  if (!row?.config) return null;
+  const u = JSON.parse(row.config) as StoredUsersUpload;
+  const byEntry = new Map<number, Users>(u.rows.map(([entry, pending, approval, approved, rejected]) => [
+    entry, { pending: users(pending), approval: users(approval), approved: users(approved), rejected: users(rejected) },
+  ]));
+  return { fileName: u.fileName, uploadedAt: u.uploadedAt, byEntry };
+}
+
 export async function paymentProposal(ctx: BcContext, company: string, from: string, to: string) {
   const rows = await bcFetchAll(odataUrl(`${ctx.customApiBase}/vendorLedgerEntries`, {
     $filter: `open eq true and paymentMethodCode eq '${PAYMENT_METHOD}' and dueDate ge ${from} and dueDate le ${to}`,
@@ -104,7 +126,11 @@ export async function paymentProposal(ctx: BcContext, company: string, from: str
   else {
     const od = rows.length ? await odataUsers(ctx, from, to, usersTried).catch(e => { console.error('Payment proposal users:', e); usersTried.push(String(e.message)); return null; }) : null;
     if (od) { byEntry = od.byEntry; usersSource = `odata:${od.service}`; }
-    else if (apiKeys.some(isApprovalKey)) usersSource = 'derived';
+    else {
+      const up = await loadUsersUpload(company);
+      if (up) { byEntry = up.byEntry; usersSource = `excel:${up.fileName} (cargado el ${up.uploadedAt.substring(0, 10).split('-').reverse().join('/')})`; }
+      else if (apiKeys.some(isApprovalKey)) usersSource = 'derived';
+    }
   }
 
   const entries: ProposalEntry[] = rows

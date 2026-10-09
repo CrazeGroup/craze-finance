@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { ChevronDown, ChevronRight, Download, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, RefreshCw, Upload } from 'lucide-react';
 import { useCompany } from '@/contexts/CompanyContext';
 
 type Entry = {
@@ -24,6 +24,21 @@ const nf = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFra
 const money = (v: number | null | undefined) => (v == null ? '—' : nf.format(v));
 const sum = (list: Entry[], f: (e: Entry) => number | null) => list.reduce((s, e) => s + (f(e) || 0), 0);
 
+// Excel de la página 29 "Vendor Ledger Entries" de BC → [Entry No., Pending, Approval, Approved, Rejected Users]
+async function parseUsersExcel(file: File) {
+  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+  const rows = wb.SheetNames.map(n => XLSX.utils.sheet_to_json<any[]>(wb.Sheets[n], { header: 1, defval: null }))
+    .find(r => (r[0] || []).some((h: any) => String(h ?? '').trim() === 'Pending Users')) || [];
+  const header = (rows[0] || []).map((h: any) => String(h ?? '').trim());
+  const col = (name: string) => header.indexOf(name);
+  const C = { entry: col('Entry No.'), pending: col('Pending Users'), approval: col('Approval Users'), approved: col('Approved Users'), rejected: col('Rejected Users') };
+  if (C.entry < 0 || C.pending < 0) throw new Error('El Excel no tiene las columnas "Entry No." y "Pending Users" (exportación de la página Vendor Ledger Entries de BC).');
+  const s = (r: any[], i: number) => (i >= 0 && r[i] != null ? String(r[i]).trim() : '');
+  const out = rows.slice(1).filter(r => r && r[C.entry] != null)
+    .map(r => [Number(r[C.entry]), s(r, C.pending), s(r, C.approval), s(r, C.approved), s(r, C.rejected)]);
+  return { fileName: file.name, rows: out };
+}
+
 // Proveedor → movimientos, ordenado por nombre
 function byVendor(list: Entry[]) {
   const map = new Map<string, Entry[]>();
@@ -38,6 +53,24 @@ export default function PaymentProposalPage() {
   const [data, setData] = useState<Proposal | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const uploadUsers = async (file: File) => {
+    setUploading(true);
+    try {
+      const payload = await parseUsersExcel(file);
+      const res = await fetch('/api/payment-proposal/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || `Error al subir el Excel (${res.status})`);
+      setReload(n => n + 1);
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
 
   useEffect(() => {
     if (selectedCompany === 'ALL' || !range.from || !range.to || range.from > range.to) return;
@@ -97,6 +130,12 @@ export default function PaymentProposalPage() {
               className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">
               <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             </button>
+            <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e => e.target.files?.[0] && uploadUsers(e.target.files[0])} />
+            <button onClick={() => fileRef.current?.click()} disabled={uploading || selectedCompany === 'ALL'}
+              title='Provisional: Excel de la página Vendor Ledger Entries de BC con la columna "Pending Users"'
+              className="flex items-center gap-2 border border-gray-300 bg-white text-gray-700 text-sm font-semibold px-3 py-2 rounded-lg hover:text-gray-900 disabled:opacity-40">
+              <Upload size={16} className={uploading ? 'animate-pulse' : ''} /> {uploading ? 'Cargando…' : 'Cargar Pending Users'}
+            </button>
             <button onClick={exportExcel} disabled={loading || !entries.length}
               className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
               <Download size={16} /> Exportar Excel
@@ -121,6 +160,12 @@ export default function PaymentProposalPage() {
             </div>
 
             <ProposalTable title="Approved for Payment" subtitle={`% Payment Approval ≥ ${APPROVED_PCT}`} entries={approved} currencies={currencies} lcy={lcy} />
+            {data.usersSource.startsWith('excel:') && (
+              <div className={`rounded-xl px-4 py-3 text-sm border ${data.unmatched > 0 ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-white border-gray-200 text-gray-700'}`}>
+                Pending Users provisionales del Excel <b>{data.usersSource.substring(6)}</b>, no de BC en directo.
+                {data.unmatched > 0 && <> {data.unmatched} documentos no están en ese Excel y salen sin usuarios pendientes: vuelve a cargarlo actualizado.</>}
+              </div>
+            )}
             {data.usersSource === 'none' && data.entries.length > 0 && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900">
                 No se han podido leer los Pending Users de Business Central, así que Pending Approval no se puede agrupar por usuario.
@@ -132,8 +177,8 @@ export default function PaymentProposalPage() {
 
             <details className="text-xs text-gray-500" open={!data.usersSource.startsWith('odata:') || data.unmatched > 0}>
               <summary className="cursor-pointer">
-                Origen de Approval / Pending Users: {data.usersSource === 'api' ? 'API de BC' : data.usersSource.startsWith('odata:') ? `página ${data.usersSource.substring(6)} de BC` : data.usersSource === 'derived' ? 'calculado (aprobadores − aprobados)' : 'no disponible'}
-                {data.unmatched > 0 && ` · ${data.unmatched} documentos sin encontrar en esa página`}
+                Origen de Approval / Pending Users: {data.usersSource === 'api' ? 'API de BC' : data.usersSource.startsWith('odata:') ? `página ${data.usersSource.substring(6)} de BC` : data.usersSource.startsWith('excel:') ? `Excel ${data.usersSource.substring(6)}` : data.usersSource === 'derived' ? 'calculado (aprobadores − aprobados)' : 'no disponible'}
+                {data.unmatched > 0 && ` · ${data.unmatched} documentos sin encontrar ${data.usersSource.startsWith('excel:') ? 'en el Excel (vuelve a cargarlo actualizado)' : 'en esa página'}`}
               </summary>
               {data.usersTried.length > 0 && <ul className="mt-1 ml-4 list-disc font-mono break-words">{data.usersTried.map((t, i) => <li key={i}>{t}</li>)}</ul>}
             </details>
