@@ -173,7 +173,7 @@ export default function DForcePage() {
             <SalesTable title="Sales Credit Memo" docNo={docNo.credit} lines={data.credit} customer={data.customerNo} />
             <PurchaseTable docNo={docNo.purchase} lines={data.purchase} vendor={data.vendorNo} />
             <ProvisionsSection rows={provisions} journal={journal} costOverride={costOverride} setCostOverride={setCostOverride}
-              postingDate={postingDate} setPostingDate={setPostingDate} />
+              postingDate={postingDate} setPostingDate={setPostingDate} creditNo={data.creditNo} />
           </>
         )}
       </main>
@@ -181,12 +181,37 @@ export default function DForcePage() {
   );
 }
 
-function ProvisionsSection({ rows, journal, costOverride, setCostOverride, postingDate, setPostingDate }: {
+function ProvisionsSection({ rows, journal, costOverride, setCostOverride, postingDate, setPostingDate, creditNo }: {
   rows: ReturnType<typeof buildProvisions>; journal: ReturnType<typeof journalLines>;
   costOverride: Record<string, string>; setCostOverride: (f: (o: Record<string, string>) => Record<string, string>) => void;
-  postingDate: string; setPostingDate: (d: string) => void;
+  postingDate: string; setPostingDate: (d: string) => void; creditNo: string;
 }) {
   const t = (f: (r: typeof rows[number]) => number) => rows.reduce((s, r) => s + f(r), 0);
+
+  // Excel solo de provisiones: asientos (nº de asiento PROV./INV.PROV.<revista><MM>/<AA>) y resumen por número
+  const exportProvisions = () => {
+    const toDate = (d: string) => { const [y, m, dd] = d.split('-').map(Number); return y ? new Date(Date.UTC(y, m - 1, dd)) : d; };
+    const jHead = ['Posting Date', 'Document No.', 'Account Type', 'Account No.', 'Description', 'Amount', 'Bal. Account Type', 'Bal. Account No.'];
+    const ws1 = XLSX.utils.aoa_to_sheet([jHead, ...journal.map(j => [toDate(j.postingDate), j.documentNo, 'G/L Account', j.accountNo, j.description, j.amount, 'G/L Account', j.balAccountNo])], { cellDates: true });
+    const sHead = ['Nº asiento venta', 'Nº asiento existencias', 'Artículo', 'Uds vendidas', 'Venta', `Prov. menos venta (${PROVISION_RATE * 100}%)`, 'Coste unitario',
+      `Prov. más existencias (${PROVISION_RATE * 100}%)`, 'Uds devueltas', 'Devolución', 'Cancelación venta', 'Cancelación existencias'];
+    const ws2 = XLSX.utils.aoa_to_sheet([sHead, ...rows.map(r => [`PROV.${r.code}`, `INV.PROV.${r.code}`, r.item, r.soldQty, r2x(r.soldAmount), r.salesProvision, r.unitCost ?? '',
+      r.inventoryProvision, r.returnedQty, r2x(r.returnedAmount), r.salesRelease, r.inventoryRelease])]);
+    for (const [ws, numCols, from] of [[ws1, [5], 1], [ws2, [4, 5, 7, 9, 10, 11], 1]] as const) {
+      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+      for (let r = from; r <= range.e.r; r++) {
+        const d = ws[XLSX.utils.encode_cell({ r, c: 0 })];
+        if (d && d.t === 'd') d.z = 'dd/mm/yyyy';
+        for (const c of numCols) { const cell = ws[XLSX.utils.encode_cell({ r, c })]; if (cell && cell.t === 'n') cell.z = '#,##0.00'; }
+      }
+    }
+    ws1['!cols'] = [{ wch: 12 }, { wch: 20 }, { wch: 12 }, { wch: 11 }, { wch: 34 }, { wch: 14 }, { wch: 14 }, { wch: 14 }];
+    ws2['!cols'] = [{ wch: 18 }, { wch: 22 }, { wch: 20 }, ...Array(9).fill({ wch: 16 })];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws1, 'Asientos 3071 00');
+    XLSX.utils.book_append_sheet(wb, ws2, 'Resumen por número');
+    XLSX.writeFile(wb, `D-FORCE_Provisiones_${creditNo || 'Gutschrift'}_${postingDate}.xlsx`);
+  };
   const created = t(r => r.salesProvision + r.inventoryProvision);
   const released = t(r => r.salesRelease + r.inventoryRelease);
   const missingCost = rows.filter(r => (r.delivered && r.soldQty) || r.returnedQty).filter(r => !r.unitCost);
@@ -204,6 +229,10 @@ function ProvisionsSection({ rows, journal, costOverride, setCostOverride, posti
         <label className="text-xs text-gray-500 flex items-center gap-2">Fecha de registro
           <input type="date" value={postingDate} onChange={e => setPostingDate(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1 text-sm font-semibold text-gray-900" />
         </label>
+        <button onClick={exportProvisions} disabled={!journal.length}
+          className="flex items-center gap-2 border border-gray-300 bg-white text-gray-700 text-sm font-semibold px-3 py-1.5 rounded-lg hover:text-gray-900 disabled:opacity-40">
+          <Download size={14} /> Exportar provisiones
+        </button>
       </div>
       {missingCost.length > 0 && (
         <p className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-900">
@@ -214,7 +243,7 @@ function ProvisionsSection({ rows, journal, costOverride, setCostOverride, posti
         <table className="w-full text-sm">
           <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-500">
             <tr>
-              <th className={`${th} text-left`}>Número</th><th className={`${th} text-left`}>Artículo</th>
+              <th className={`${th} text-left`}>Nº asiento</th><th className={`${th} text-left`}>Artículo</th>
               <th className={`${th} text-right`}>Uds vendidas</th><th className={`${th} text-right`}>Venta</th>
               <th className={`${th} text-right`}>Prov. menos venta</th><th className={`${th} text-right`}>Coste unit.</th>
               <th className={`${th} text-right`}>Prov. más existencias</th>
@@ -225,7 +254,7 @@ function ProvisionsSection({ rows, journal, costOverride, setCostOverride, posti
           <tbody>
             {rows.map(r => (
               <tr key={r.item} className="border-t border-gray-100 text-gray-900">
-                <td className={`${td} font-semibold`}>{r.code}</td>
+                <td className={`${td} font-mono text-xs`}><span className="font-semibold">PROV.{r.code}</span><br /><span className="text-gray-500">INV.PROV.{r.code}</span></td>
                 <td className={`${td} font-mono text-xs`}>{r.item}</td>
                 <td className={`${td} text-right tabular-nums`}>{r.soldQty ? qf.format(r.soldQty) : ''}</td>
                 <td className={`${td} text-right tabular-nums`}>{r.soldAmount ? money(r.soldAmount) : ''}</td>
@@ -293,6 +322,8 @@ function ProvisionsSection({ rows, journal, costOverride, setCostOverride, posti
     </section>
   );
 }
+
+const r2x = (v: number) => Math.round(v * 100) / 100;
 
 function FilePick({ label, accept, icon, file, onChange }: { label: string; accept: string; icon: ReactNode; file: File | null; onChange: (f: File | null) => void }) {
   return (
