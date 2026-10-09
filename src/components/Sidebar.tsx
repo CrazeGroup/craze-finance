@@ -30,6 +30,8 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
     { href: '/reporting', label: 'Reporting', module: 'reporting' },
     { href: '/royalties', label: 'Royalties', module: 'royalties' },
     { href: '/payment-proposal', label: 'Payment Proposal', module: 'payment_proposal' },
+    // Solo para Craze Entertainment
+    ...(selectedCompany === 'Craze Entertainment' ? [{ href: '/dforce', label: 'D-FORCE', module: 'dforce' }] : []),
     { href: '/insurances', label: 'Seguros', module: 'seguros' },
     { href: '/contracts', label: 'Contratos', module: 'contratos' },
     ...(authEnabled ? [{ href: '/settings/users', label: 'Usuarios', module: 'admin' }] : []),
