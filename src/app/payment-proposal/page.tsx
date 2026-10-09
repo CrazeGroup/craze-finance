@@ -14,7 +14,7 @@ type Entry = {
 type Proposal = {
   company: string; from: string; to: string; lcy: string; entries: Entry[];
   fields: { currency: boolean; remainingLCY: boolean };
-  usersSource: string; apiKeys: string[];
+  usersSource: string; usersTried: string[]; unmatched: number; apiKeys: string[];
 };
 
 const APPROVED_PCT = 100;
@@ -130,6 +130,13 @@ export default function PaymentProposalPage() {
             )}
             <ProposalTable title="Pending Approval" subtitle={`% Payment Approval < ${APPROVED_PCT} · agrupado por Pending Users`} entries={pending} currencies={currencies} lcy={lcy} groupByPending />
 
+            <details className="text-xs text-gray-500" open={!data.usersSource.startsWith('odata:') || data.unmatched > 0}>
+              <summary className="cursor-pointer">
+                Origen de Approval / Pending Users: {data.usersSource === 'api' ? 'API de BC' : data.usersSource.startsWith('odata:') ? `página ${data.usersSource.substring(6)} de BC` : data.usersSource === 'derived' ? 'calculado (aprobadores − aprobados)' : 'no disponible'}
+                {data.unmatched > 0 && ` · ${data.unmatched} documentos sin encontrar en esa página`}
+              </summary>
+              {data.usersTried.length > 0 && <ul className="mt-1 ml-4 list-disc font-mono break-words">{data.usersTried.map((t, i) => <li key={i}>{t}</li>)}</ul>}
+            </details>
             <p className="text-xs text-gray-500">
               Fuente: Vendor Ledger Entries de Business Central en directo. Importes = Remaining Amount en la divisa del documento; la columna {lcy} usa Remaining Amt. (LCY).
               {data.usersSource.startsWith('odata:') && ` Approval / Pending Users de la página ${data.usersSource.substring(6)} de BC.`}

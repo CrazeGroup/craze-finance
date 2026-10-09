@@ -41,26 +41,31 @@ function usersFrom(r: any, keys: string[]): Users {
   return { approval: g(isApprovalKey), approved: g(isApprovedKey), pending: pendingKey ? users(r[pendingKey]) : null, rejected: g(isRejectedKey) };
 }
 
-async function odataUsers(ctx: BcContext, from: string, to: string): Promise<{ service: string; byEntry: Map<number, Users> } | null> {
+async function odataUsers(ctx: BcContext, from: string, to: string, tried: string[]): Promise<{ service: string; byEntry: Map<number, Users> } | null> {
   const root = ctx.odataCompanyBase.replace(/\/Company\(.*$/, '');
   const configured = await readSetting<string>('paymentProposalUsersService', '');
   let names: string[] = configured ? [configured] : [];
   if (!names.length) {
     const res = await fetch(root, { headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json' } });
-    if (!res.ok) return null;
+    if (!res.ok) { tried.push(`lista de servicios OData: error ${res.status}`); return null; }
     const list: string[] = ((await res.json()).value || []).map((s: any) => s.name);
     // Primero los servicios "…_Excel" (como Currencies_Excel o General_Ledger_Entries_Excel)
     names = list.filter(n => /vendor.?ledger.?entr/i.test(n)).sort((a, b) => Number(!/excel/i.test(a)) - Number(!/excel/i.test(b)));
+    if (!names.length) tried.push('ningún servicio OData con "Vendor Ledger Entries" en el nombre');
   }
   for (const name of names) {
     const base = `${ctx.odataCompanyBase}/${name}`;
-    const sample = await bcFetchAll(odataUrl(base, { $top: '1' }), ctx.token).catch(() => []);
-    if (!sample.length) continue;
+    let sample: any[] = [];
+    try { sample = await bcFetchAll(odataUrl(base, { $top: '1' }), ctx.token); } catch (e: any) { tried.push(`${name}: ${e.message.substring(0, 120)}`); continue; }
+    if (!sample.length) { tried.push(`${name}: sin filas`); continue; }
     const keys = Object.keys(sample[0]);
     const entryKey = findKey(keys, k => /^entry_?no$/i.test(k));
     const dueKey = findKey(keys, k => /^due_?date$/i.test(k));
     const openKey = findKey(keys, k => /^open$/i.test(k));
-    if (!entryKey || !findKey(keys, k => isPendingKey(k) || isApprovalKey(k))) continue;
+    if (!entryKey || !findKey(keys, k => isPendingKey(k) || isApprovalKey(k))) {
+      tried.push(`${name}: sin campos Entry No / Pending Users (campos: ${keys.filter(k => !k.startsWith('@')).join(', ')})`);
+      continue;
+    }
     const filter = [openKey && `${openKey} eq true`, dueKey && `${dueKey} ge ${from} and ${dueKey} le ${to}`].filter(Boolean).join(' and ');
     const select = [entryKey, ...keys.filter(k => isPendingKey(k) || isApprovalKey(k) || isApprovedKey(k) || isRejectedKey(k))].join(',');
     const rows = await bcFetchAll(odataUrl(base, { $filter: filter || undefined, $select: select }), ctx.token);
@@ -83,10 +88,11 @@ export async function paymentProposal(ctx: BcContext, company: string, from: str
   };
   // Usuarios: de la API si trae los pendientes; si no, de la página OData; si no, aprobadores − aprobados
   let usersSource = 'none';
+  const usersTried: string[] = [];
   let byEntry: Map<number, Users> | null = null;
   if (apiKeys.some(isPendingKey)) usersSource = 'api';
   else {
-    const od = rows.length ? await odataUsers(ctx, from, to).catch(e => { console.error('Payment proposal users:', e); return null; }) : null;
+    const od = rows.length ? await odataUsers(ctx, from, to, usersTried).catch(e => { console.error('Payment proposal users:', e); usersTried.push(String(e.message)); return null; }) : null;
     if (od) { byEntry = od.byEntry; usersSource = `odata:${od.service}`; }
     else if (apiKeys.some(isApprovalKey)) usersSource = 'derived';
   }
@@ -117,5 +123,7 @@ export async function paymentProposal(ctx: BcContext, company: string, from: str
     })
     .sort((a, b) => a.vendorName.localeCompare(b.vendorName) || a.dueDate.localeCompare(b.dueDate));
 
-  return { company, from, to, lcy, fields, usersSource, apiKeys, entries };
+  // Documentos cuyo nº de movimiento no aparece en la página OData (se quedan sin usuarios de ahí)
+  const unmatched = byEntry ? entries.filter(e => !byEntry!.has(e.entryNo)).length : 0;
+  return { company, from, to, lcy, fields, usersSource, usersTried, unmatched, apiKeys, entries };
 }
