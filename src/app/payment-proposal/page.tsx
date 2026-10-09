@@ -18,6 +18,7 @@ type Proposal = {
 };
 
 const APPROVED_PCT = 100;
+const RANGE_KEY = 'craze_payment_proposal_range';
 const iso = (d: Date) => d.toISOString().substring(0, 10);
 const dateEs = (d: string) => (d ? d.split('-').reverse().join('/') : '');
 const nf = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -48,7 +49,17 @@ function byVendor(list: Entry[]) {
 
 export default function PaymentProposalPage() {
   const { selectedCompany } = useCompany();
-  const [range, setRange] = useState(() => ({ from: `${new Date().getFullYear()}-01-01`, to: iso(new Date()) }));
+  // El rango de Due Date se guarda en el navegador: al cambiar de empresa la página se recarga y se mantiene
+  const [range, setRange] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(RANGE_KEY) || 'null');
+      if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved.from) && /^\d{4}-\d{2}-\d{2}$/.test(saved.to) && saved.from <= saved.to) return saved as { from: string; to: string };
+    } catch { /* sin almacenamiento */ }
+    return { from: `${new Date().getFullYear()}-01-01`, to: iso(new Date()) };
+  });
+  useEffect(() => {
+    try { localStorage.setItem(RANGE_KEY, JSON.stringify(range)); } catch { /* sin almacenamiento */ }
+  }, [range]);
   const [reload, setReload] = useState(0);
   const [data, setData] = useState<Proposal | null>(null);
   const [loading, setLoading] = useState(false);
