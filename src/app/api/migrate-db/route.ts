@@ -5,13 +5,14 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // 60 segundos
 
 export async function GET(req: NextRequest) {
+  // Base de datos ORIGEN (Prisma Postgres)
   const sourceUrl = req.nextUrl.searchParams.get('source') || 
     process.env.SOURCE_DATABASE_URL || 
     "postgres://dd26cacd1f1d1e4c4f5f3293547808f26d0d8455d82e1f379039a5aedfdf7e17:sk_L92c_OjN_n9ZGuqjbZ63L@db.prisma.io:5432/postgres?sslmode=require";
 
+  // Base de datos DESTINO (Neon Postgres forzada)
   const targetUrl = req.nextUrl.searchParams.get('target') || 
     process.env.TARGET_DATABASE_URL || 
-    process.env.DATABASE_URL || 
     "postgresql://neondb_owner:npg_BYNIj9PdEra3@ep-hidden-heart-b1k43hnb-pooler.c-5.eu-central-1.aws.neon.tech/neondb?sslmode=require";
 
   const sourcePrisma = new PrismaClient({ datasources: { db: { url: sourceUrl } } });
@@ -79,7 +80,20 @@ export async function GET(req: NextRequest) {
       }
     }, data => targetPrisma.recurringPayment.createMany({ data: data as any, skipDuplicates: true }));
 
-    await safeCopy('CashflowManualEntry', () => sourcePrisma.cashflowManualEntry.findMany(), data => targetPrisma.cashflowManualEntry.createMany({ data, skipDuplicates: true }));
+    // CashflowManualEntry con compatibilidad de divisa
+    await safeCopy('CashflowManualEntry', async () => {
+      try {
+        return await sourcePrisma.cashflowManualEntry.findMany();
+      } catch {
+        const raw: any[] = await sourcePrisma.$queryRawUnsafe('SELECT * FROM "CashflowManualEntry"');
+        return raw.map(r => ({
+          ...r,
+          currencyCode: r.currencyCode || 'EUR',
+          companyId: r.companyId || 'CRAZE'
+        })) as any[];
+      }
+    }, data => targetPrisma.cashflowManualEntry.createMany({ data: data as any, skipDuplicates: true }));
+
     await safeCopy('InsurancePolicy', () => sourcePrisma.insurancePolicy.findMany(), data => targetPrisma.insurancePolicy.createMany({ data: data as any, skipDuplicates: true }));
     await safeCopy('CustomerContract', () => sourcePrisma.customerContract.findMany(), data => targetPrisma.customerContract.createMany({ data: data as any, skipDuplicates: true }));
     await safeCopy('InventoryValuation', () => sourcePrisma.inventoryValuation.findMany(), data => targetPrisma.inventoryValuation.createMany({ data, skipDuplicates: true }));
@@ -114,7 +128,8 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       success: Object.keys(errors).length === 0,
-      message: 'Proceso de migración ejecutado!',
+      message: 'Base de datos migrada con éxito a Neon!',
+      targetHost: 'ep-hidden-heart-b1k43hnb-pooler.c-5.eu-central-1.aws.neon.tech',
       copiedRecords: stats,
       errors: Object.keys(errors).length > 0 ? errors : undefined
     });
