@@ -6,7 +6,7 @@ import { getDocumentProxy } from 'unpdf';
 // "D-FORCE" (tabla 37 Sales Line y tabla 39 Purchase Line):
 // - Sales Invoice: anexos LI, LA, LDI y LDA del PDF (entregas y diferencias de entrega), por canal ("Sparte").
 // - Sales Credit Memo: anexos RI y RA (devoluciones). Las devoluciones de Bahnhofsbuchhandel y del extranjero no
-//   vuelven al almacén: llevan Return Reason Code NON-REC y una línea de contrapartida en negativo al final.
+//   vuelven al almacén: llevan Return Reason Code NON-REC (BC genera solo la línea negativa de contrapartida).
 // - Purchase Invoice (proveedor D-FORCE): filas del Excel de comisiones (220), envíos (230), KVM (240) y
 //   cargos de valor (250), agrupadas por revista y número; el PDF no trae el número de los envíos.
 
@@ -196,9 +196,6 @@ export function buildDocuments(pdf: Awaited<ReturnType<typeof parsePdf>>, excel:
   if (pdfWithoutExcel) warnings.push(`${pdfWithoutExcel} líneas de venta del PDF no están en el Excel y no se incluyen (revisa que sean del mismo mes).`);
   if (excelOnly.length) warnings.push(`${excelOnly.length} filas de venta del Excel no se han encontrado en el PDF: se incluyen${excelOnly.some(x => /I$/.test(x.appendix!)) ? ', las de Inland sin canal (Description 2)' : ''}.`);
 
-  // Contrapartidas en negativo de las devoluciones no recuperables, al final del abono
-  const reversals = credit.filter(l => l.returnReason === NON_REC).map(l => ({ ...l, description2: '', quantity: -l.quantity, amount: -l.amount, task: '' }));
-  credit.push(...reversals);
   invoice.forEach((l, i) => { l.lineNo = (i + 1) * 10000; });
   credit.forEach((l, i) => { l.lineNo = (i + 1) * 10000; });
 
@@ -233,10 +230,10 @@ export function buildDocuments(pdf: Awaited<ReturnType<typeof parsePdf>>, excel:
   const pdfSales = r2(pdf.lines.reduce((s, l) => s + l.amount, 0));
   if (Math.abs(excelSales - pdfSales) > 0.05) warnings.push(`Las ventas y devoluciones del PDF (${pdfSales}) no cuadran con las del Excel (${excelSales}).`);
   if (excel.invoiceNo && pdf.creditNo && excel.invoiceNo !== pdf.creditNo) warnings.push(`El PDF (Gutschrift ${pdf.creditNo}) y el Excel (RechnungsNr ${excel.invoiceNo}) son de documentos distintos.`);
-  // El neto de la Gutschrift abona todas las devoluciones: se compara antes de las contrapartidas NON-REC
-  const returns = sum(credit.filter(l => l.description2));
+  // El neto de la Gutschrift abona todas las devoluciones
+  const returns = sum(credit);
   const totals = {
-    invoice: sum(invoice), returns, nonRecReversals: sum(reversals), creditMemo: sum(credit),
+    invoice: sum(invoice), returns, creditMemo: sum(credit),
     purchase: r2(purchase.reduce((s, l) => s + l.lineAmount, 0)), net: 0, pdfNet: pdf.netTotal,
   };
   totals.net = r2(totals.invoice - totals.returns - totals.purchase);

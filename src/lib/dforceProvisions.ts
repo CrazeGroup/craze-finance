@@ -37,7 +37,7 @@ export function magazineCode(item: string) {
   return code && yymm ? `${code}${yymm.slice(2, 4)}/${yymm.slice(0, 2)}` : item;
 }
 
-// invoice: líneas de la factura; credit: líneas del abono (solo las devoluciones, sin las contrapartidas NON-REC)
+// invoice: líneas de la factura; credit: líneas del abono (devoluciones)
 export function buildProvisions(invoice: Line[], credit: Line[], unitCost: Record<string, number | null>) {
   const rows = new Map<string, ProvisionRow>();
   const row = (item: string) => {
@@ -55,7 +55,7 @@ export function buildProvisions(invoice: Line[], credit: Line[], unitCost: Recor
     r.soldAmount += l.amount;
     if (l.appendix === 'LI' || l.appendix === 'LA') r.delivered = true;
   });
-  credit.filter(l => l.description2).forEach(l => { const r = row(l.no); r.returnedQty += l.quantity; r.returnedAmount += l.amount; });
+  credit.forEach(l => { const r = row(l.no); r.returnedQty += l.quantity; r.returnedAmount += l.amount; });
   for (const r of rows.values()) {
     const cost = r.unitCost ?? 0;
     r.salesProvision = r.delivered ? r2(r.soldAmount * PROVISION_RATE) : 0;

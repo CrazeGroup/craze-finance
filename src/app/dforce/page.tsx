@@ -17,7 +17,7 @@ type PurchaseLine = {
 };
 type Result = {
   creditNo: string; period: string; invoice: SalesLine[]; credit: SalesLine[]; purchase: PurchaseLine[]; warnings: string[];
-  totals: { invoice: number; returns: number; nonRecReversals: number; creditMemo: number; purchase: number; net: number; pdfNet: number | null };
+  totals: { invoice: number; returns: number; creditMemo: number; purchase: number; net: number; pdfNet: number | null };
   customerNo: string; vendorNo: string; location: string; files: { pdf: string; excel: string };
 };
 
@@ -152,7 +152,7 @@ export default function DForcePage() {
           <>
             <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
               <Kpi label="Sales Invoice" value={money(data.totals.invoice)} sub={`${data.invoice.length} líneas`} />
-              <Kpi label="Sales Credit Memo" value={money(data.totals.creditMemo)} sub={`Devoluciones ${money(data.totals.returns)} · contrapartidas NON-REC ${money(data.totals.nonRecReversals)}`} />
+              <Kpi label="Sales Credit Memo" value={money(data.totals.creditMemo)} sub={`${data.credit.length} líneas · ${data.credit.filter(l => l.returnReason).length} NON-REC (BC genera sus contrapartidas)`} />
               <Kpi label="Purchase Invoice" value={money(data.totals.purchase)} sub={`${data.purchase.length} líneas · proveedor ${data.vendorNo}`} />
               <Kpi label="Neto (factura − devoluciones − compra)" value={money(data.totals.net)} sub={data.totals.pdfNet != null ? `Gutschrift: ${money(data.totals.pdfNet)}` : 'Sin Summe Netto en el PDF'} />
               <div className={`rounded-xl border p-4 flex items-center gap-2 text-sm ${balanced && !data.warnings.length ? 'bg-green-50 border-green-200 text-green-800' : 'bg-amber-50 border-amber-200 text-amber-900'}`}>
