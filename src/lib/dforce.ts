@@ -17,6 +17,7 @@ export const LOCATION = 'D-FORCE';
 const SALES_VAT = '7% GOODS';
 const PURCHASE_VAT = '7% SERVICE';
 const NON_REC = 'NON-REC';
+const RETURN_TASK2 = '004.001';
 
 // Revistas de D-FORCE (Objekt / TitelNr) → artículo y proyecto de BC (sufijo _AAMM del número)
 export const TITLES: Record<string, { name: string; item: string; project: string; special?: boolean }> = {
@@ -63,7 +64,7 @@ const SALES_APPENDICES: Record<string, { doc: 'Invoice' | 'Credit Memo'; label: 
 export type SalesLine = {
   documentType: 'Invoice' | 'Credit Memo'; lineNo: number; no: string; description: string; description2: string;
   quantity: number; unitPrice: number; unitCost: number | null; amount: number; returnReason: string;
-  project: string; task: string; appendix: string; title: string; issue: string;
+  project: string; task: string; task2: string; appendix: string; title: string; issue: string;
 };
 export type PurchaseLine = {
   lineNo: number; no: string; description: string; description2: string; quantity: number; directUnitCost: number;
@@ -172,11 +173,12 @@ export function buildDocuments(pdf: Awaited<ReturnType<typeof parsePdf>>, excel:
     if (!map) { unknownTitles.add(title); return; }
     const base = { no: map.item, description: '', description2: sparte, unitPrice: price, unitCost: null, project: map.project, appendix, title, issue };
     if (SALES_APPENDICES[appendix].doc === 'Invoice') {
-      invoice.push({ ...base, documentType: 'Invoice', lineNo: 0, quantity: qty, amount, returnReason: '', task: '001.001' });
+      invoice.push({ ...base, documentType: 'Invoice', lineNo: 0, quantity: qty, amount, returnReason: '', task: '001.001', task2: '' });
     } else {
       // Devolución: en positivo; no recuperable (sin vuelta al almacén) si es de Bahnhofsbuchhandel o del extranjero
       const nonRec = appendix === 'RA' || /bahnhofsbuchhandel/i.test(sparte);
-      credit.push({ ...base, documentType: 'Credit Memo', lineNo: 0, quantity: -qty, amount: -amount, returnReason: nonRec ? NON_REC : '', task: '001.003' });
+      // Project Task No.2: 004.001 en las devoluciones que vuelven al almacén (sin Return Reason); vacío en NON-REC
+      credit.push({ ...base, documentType: 'Credit Memo', lineNo: 0, quantity: -qty, amount: -amount, returnReason: nonRec ? NON_REC : '', task: '001.003', task2: nonRec ? '' : RETURN_TASK2 });
     }
   };
   let pdfWithoutExcel = 0, pdfDuplicates = 0;

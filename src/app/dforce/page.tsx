@@ -9,7 +9,7 @@ import { ACC_PROVISION, buildProvisions, journalLines, PROVISION_RATE } from '@/
 type SalesLine = {
   documentType: 'Invoice' | 'Credit Memo'; lineNo: number; no: string; description: string; description2: string;
   quantity: number; unitPrice: number; unitCost: number | null; amount: number; returnReason: string; project: string; task: string;
-  appendix: string;
+  task2: string; appendix: string;
 };
 type PurchaseLine = {
   lineNo: number; no: string; description: string; description2: string; quantity: number; directUnitCost: number;
@@ -81,7 +81,7 @@ export default function DForcePage() {
     if (!data) return;
     const salesRow = (l: SalesLine) => [
       l.documentType, l.documentType === 'Invoice' ? docNo.invoice : docNo.credit, l.lineNo, data.customerNo, 'Item', l.no, data.location,
-      l.description, l.description2, l.quantity, l.unitPrice, l.unitCost ?? '', l.amount, '7% GOODS', l.returnReason, l.project, l.task, '',
+      l.description, l.description2, l.quantity, l.unitPrice, l.unitCost ?? '', l.amount, '7% GOODS', l.returnReason, l.project, l.task, l.task2,
     ];
     const purchaseRow = (l: PurchaseLine) => [
       'Invoice', docNo.purchase, l.lineNo, data.vendorNo, 'Item', l.no, '', l.description, l.description2, l.quantity, l.directUnitCost,
@@ -351,6 +351,7 @@ const th = 'px-3 py-2 whitespace-nowrap';
 const td = 'px-3 py-1.5 whitespace-nowrap';
 
 function SalesTable({ title, docNo, lines, customer }: { title: string; docNo: string; lines: SalesLine[]; customer: string }) {
+  const showTask2 = lines.some(l => l.documentType === 'Credit Memo');
   return (
     <section className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap items-baseline gap-x-3">
@@ -365,6 +366,7 @@ function SalesTable({ title, docNo, lines, customer }: { title: string; docNo: s
               <th className={`${th} text-left`}>Description 2</th><th className={`${th} text-right`}>Quantity</th><th className={`${th} text-right`}>Unit Price</th>
               <th className={`${th} text-right`}>Unit Cost (LCY)</th><th className={`${th} text-right`}>Amount</th><th className={`${th} text-left`}>Return Reason</th>
               <th className={`${th} text-left`}>Project No.</th><th className={`${th} text-left`}>Project Task No.</th>
+              {showTask2 && <th className={`${th} text-left`}>Project Task No.2</th>}
             </tr>
           </thead>
           <tbody>
@@ -381,6 +383,7 @@ function SalesTable({ title, docNo, lines, customer }: { title: string; docNo: s
                 <td className={td}>{l.returnReason}</td>
                 <td className={`${td} font-mono text-xs`}>{l.project}</td>
                 <td className={`${td} font-mono text-xs`}>{l.task}</td>
+                {showTask2 && <td className={`${td} font-mono text-xs`}>{l.task2}</td>}
               </tr>
             ))}
           </tbody>
@@ -390,7 +393,7 @@ function SalesTable({ title, docNo, lines, customer }: { title: string; docNo: s
               <td className={`${td} text-right tabular-nums`}>{qf.format(lines.reduce((s, l) => s + l.quantity, 0))}</td>
               <td colSpan={2} />
               <td className={`${td} text-right tabular-nums`}>{money(lines.reduce((s, l) => s + l.amount, 0))}</td>
-              <td colSpan={3} />
+              <td colSpan={showTask2 ? 4 : 3} />
             </tr>
           </tfoot>
         </table>
