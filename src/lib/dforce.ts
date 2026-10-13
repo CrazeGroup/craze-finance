@@ -33,6 +33,23 @@ const PURCHASE_TYPES: { vorgang: number; item: string; description: string; desc
   { vorgang: 250, item: 'AA-00006', description: 'LOGISTIC COSTS - Outgoing freights', description2: 'Wertmäßige Buchungen', task: '002.001' },
 ];
 
+const APPENDIX_TITLES: Record<string, string> = {
+  'Lieferungen Inland': 'LI', 'Lieferungen Ausland': 'LA', 'Lieferdifferenzen Inland': 'LDI', 'Lieferdifferenzen Ausland': 'LDA',
+  'Remissionen Inland': 'RI', 'Remissionen Ausland': 'RA',
+};
+
+// Clasificación por tipo de movimiento del Excel (Vorgang / Bezeichnung): manda sobre el anexo del PDF.
+// Lieferungen y Lieferdifferenzen → Sales Invoice; Remissionen → Sales Credit Memo; el resto → Purchase Invoice.
+const SALES_VORGANG: Record<number, string> = { 10: 'LI', 11: 'LA', 20: 'LDI', 21: 'LDA', 160: 'RI', 161: 'RA' };
+function salesAppendixOf(r: ExcelRow): string | null {
+  if (SALES_VORGANG[r.vorgang]) return SALES_VORGANG[r.vorgang];
+  const inland = /inland/i.test(r.label);
+  if (/^lieferdifferenzen/i.test(r.label)) return inland ? 'LDI' : 'LDA';
+  if (/^lieferungen/i.test(r.label)) return inland ? 'LI' : 'LA';
+  if (/^remissionen/i.test(r.label)) return inland ? 'RI' : 'RA';
+  return null;
+}
+
 // Anexos del PDF con líneas de venta
 const SALES_APPENDICES: Record<string, { doc: 'Invoice' | 'Credit Memo'; label: string }> = {
   LI: { doc: 'Invoice', label: 'Lieferungen Inland' },
@@ -93,8 +110,11 @@ export async function parsePdf(data: Uint8Array) {
   let appendix = '', title = '', creditNo = '', netTotal: number | null = null, period = '';
   rows.forEach((cells, i) => {
     const text = cells.join(' ');
-    const anlage = text.match(/^Anlage (\w+)$/);
+    // Anexo: cabecera "Anlage XX" (no las líneas "gemäß Anlage XX" del resumen) o el título del anexo
+    const anlage = !/gemäß/i.test(text) && text.match(/(?:^|\s)Anlage (LI|LA|LDI|LDA|RI|RA|PRF|VS|KVM|WM)\b/);
     if (anlage) { appendix = anlage[1]; title = ''; return; }
+    const byTitle = APPENDIX_TITLES[text.trim()];
+    if (byTitle) { appendix = byTitle; return; }
     if (cells[0] === 'Objekt:' && cells[1]) { title = cells[1].split(' ')[0]; return; }
     if (cells[0] === 'Gutschrift-Nr.' || /Gutschrift-Nr\./.test(text)) {
       const next = rows[i + 1]; const idx = cells.indexOf('Gutschrift-Nr.');
@@ -113,7 +133,7 @@ export async function parsePdf(data: Uint8Array) {
 
 // ---------- Excel ----------
 
-export type ExcelRow = { title: string; issue: string; vorgang: number; text: string; country: string; qty: number; price: number; amount: number };
+export type ExcelRow = { title: string; issue: string; vorgang: number; label: string; text: string; country: string; qty: number; price: number; amount: number };
 
 export function parseExcel(data: ArrayBuffer | Uint8Array) {
   const wb = XLSX.read(data, { type: 'array' });
@@ -126,7 +146,7 @@ export function parseExcel(data: ArrayBuffer | Uint8Array) {
   const num = (v: any) => (typeof v === 'number' ? v : parseFloat(String(v ?? '').replace(',', '.')) || 0);
   const out: ExcelRow[] = rows.slice(1).filter(r => r && r[C.vorgang] != null && r[C.title] != null).map(r => ({
     title: String(r[C.title]).trim(), issue: `${num(r[C.issue])}/${String(num(r[C.year])).slice(-2)}`,
-    vorgang: num(r[C.vorgang]), text: String(r[C.text] ?? '').trim(), country: String(r[C.country] ?? '').trim(),
+    vorgang: num(r[C.vorgang]), label: col('Bezeichnung') >= 0 ? String(r[col('Bezeichnung')] ?? '').trim() : '', text: String(r[C.text] ?? '').trim(), country: String(r[C.country] ?? '').trim(),
     qty: num(r[C.qty]), price: num(r[C.price]), amount: num(r[C.amount]),
   }));
   const invoiceNo = String(rows[1]?.[C.invoice] ?? '').trim();
@@ -139,22 +159,43 @@ export function buildDocuments(pdf: Awaited<ReturnType<typeof parsePdf>>, excel:
   const warnings: string[] = [];
   const unknownTitles = new Set<string>();
 
-  // Ventas, en el orden del PDF
+  // Ventas: cada fila de venta del Excel da una sola línea, en el documento que marca su tipo de movimiento.
+  // Del PDF se toma el canal (Sparte) y el orden, emparejando revista, número, cantidad e importe.
   const invoice: SalesLine[] = [];
   const credit: SalesLine[] = [];
-  for (const l of pdf.lines) {
-    const map = itemFor(l.title, l.issue);
-    if (!map) { unknownTitles.add(l.title); continue; }
-    const kind = SALES_APPENDICES[l.appendix];
-    const base = { no: map.item, description: '', description2: l.sparte, unitPrice: l.price, unitCost: null, project: map.project, appendix: l.appendix, title: l.title, issue: l.issue };
-    if (kind.doc === 'Invoice') {
-      invoice.push({ ...base, documentType: 'Invoice', lineNo: 0, quantity: l.qty, amount: l.amount, returnReason: '', task: '001.001' });
+  const salesRows = excel.rows.map(r => ({ r, appendix: salesAppendixOf(r), used: false })).filter(x => x.appendix);
+  const same = (a: number, b: number, tol: number) => Math.abs(a - b) <= tol;
+  const matches = (x: typeof salesRows[number], l: PdfLine) =>
+    x.r.title === l.title && yymm(x.r.issue) === yymm(l.issue) && same(x.r.qty, l.qty, 0.5) && same(x.r.amount, l.amount, 0.011);
+  const addLine = (appendix: string, title: string, issue: string, sparte: string, qty: number, price: number, amount: number) => {
+    const map = itemFor(title, issue);
+    if (!map) { unknownTitles.add(title); return; }
+    const base = { no: map.item, description: '', description2: sparte, unitPrice: price, unitCost: null, project: map.project, appendix, title, issue };
+    if (SALES_APPENDICES[appendix].doc === 'Invoice') {
+      invoice.push({ ...base, documentType: 'Invoice', lineNo: 0, quantity: qty, amount, returnReason: '', task: '001.001' });
     } else {
       // Devolución: en positivo; no recuperable (sin vuelta al almacén) si es de Bahnhofsbuchhandel o del extranjero
-      const nonRec = l.appendix === 'RA' || /bahnhofsbuchhandel/i.test(l.sparte);
-      credit.push({ ...base, documentType: 'Credit Memo', lineNo: 0, quantity: -l.qty, amount: -l.amount, returnReason: nonRec ? NON_REC : '', task: '001.003' });
+      const nonRec = appendix === 'RA' || /bahnhofsbuchhandel/i.test(sparte);
+      credit.push({ ...base, documentType: 'Credit Memo', lineNo: 0, quantity: -qty, amount: -amount, returnReason: nonRec ? NON_REC : '', task: '001.003' });
     }
+  };
+  let pdfWithoutExcel = 0, pdfDuplicates = 0;
+  for (const l of pdf.lines) {
+    const x = salesRows.find(x => !x.used && matches(x, l));
+    if (x) { x.used = true; addLine(x.appendix!, x.r.title, x.r.issue, l.sparte, x.r.qty, x.r.price, x.r.amount); continue; }
+    if (salesRows.some(x => matches(x, l))) { pdfDuplicates++; continue; }   // fila repetida en el PDF
+    pdfWithoutExcel++;
   }
+  // Filas del Excel sin línea en el PDF: canal deducido del país (extranjero) o vacío
+  const excelOnly = salesRows.filter(x => !x.used);
+  for (const x of excelOnly) {
+    const foreign = /A$/.test(x.appendix!) && x.r.country && x.r.country !== 'DE';
+    addLine(x.appendix!, x.r.title, x.r.issue, foreign ? `Grosso - Ausland ${x.r.country}` : '', x.r.qty, x.r.price, x.r.amount);
+  }
+  if (pdfDuplicates) warnings.push(`${pdfDuplicates} líneas del PDF estaban repetidas y se han incluido una sola vez.`);
+  if (pdfWithoutExcel) warnings.push(`${pdfWithoutExcel} líneas de venta del PDF no están en el Excel y no se incluyen (revisa que sean del mismo mes).`);
+  if (excelOnly.length) warnings.push(`${excelOnly.length} filas de venta del Excel no se han encontrado en el PDF: se incluyen${excelOnly.some(x => /I$/.test(x.appendix!)) ? ', las de Inland sin canal (Description 2)' : ''}.`);
+
   // Contrapartidas en negativo de las devoluciones no recuperables, al final del abono
   const reversals = credit.filter(l => l.returnReason === NON_REC).map(l => ({ ...l, description2: '', quantity: -l.quantity, amount: -l.amount, task: '' }));
   credit.push(...reversals);
