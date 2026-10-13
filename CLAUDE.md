@@ -64,8 +64,8 @@ Env vars: `DATABASE_URL`, `DIRECT_URL` (Postgres), `JWT_SECRET`, `GEMINI_API_KEY
 - Item description and unit cost are read from BC standard API `items` of Craze Entertainment.
 - Check: invoice − returns − purchase = the PDF's "Summe Netto".
 - Return provisions (`src/lib/dforceProvisions.ts`, computed client-side so unit costs can be edited), all against 3071 00 as in August 2026:
-  - Invoice: `PROV.<GAL|INKE|GALSP><MM>/<YY>` on 4300 00 = 80% of sales, and `INV.PROV.…` on 5881 00 = 80% of units × unit cost. Only issues delivered that month (LI/LA lines) are provisioned.
-  - Credit memo: the returns release both entries at 100%, with negative amounts.
+  - Invoice: `PROV.<GAL|INKE|GALSP><MM>/<YY>` on 4300 00 = 80% of sales, and `INV.PROV.…` on 5881 00 = −(80% of units × unit cost), with a negative journal amount. Only issues delivered that month (LI/LA lines) are provisioned.
+  - Credit memo: the returns release both entries at 100%: negative on 4300 00 and positive on 5881 00.
 - The page exports the "Output Format" config-package layout: sheets `Sales Line` (37) and `39 Purchase Line` with the document numbers typed on the page, plus a `Provisiones 3071 00` journal sheet.
 
 Path alias: `@/*` → `src/*`. `src/lib/prisma.ts` exports the singleton client. Use it instead of `new PrismaClient()`, except in standalone scripts.

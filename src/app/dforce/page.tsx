@@ -212,8 +212,8 @@ function ProvisionsSection({ rows, journal, costOverride, setCostOverride, posti
     XLSX.utils.book_append_sheet(wb, ws2, 'Resumen por número');
     XLSX.writeFile(wb, `D-FORCE_Provisiones_${creditNo || 'Gutschrift'}_${postingDate}.xlsx`);
   };
-  const created = t(r => r.salesProvision + r.inventoryProvision);
-  const released = t(r => r.salesRelease + r.inventoryRelease);
+  // Movimiento de la 3071 00 = contrapartida de todas las líneas de diario
+  const provisionNet = -journal.reduce((s, j) => s + j.amount, 0);
   const missingCost = rows.filter(r => (r.delivered && r.soldQty) || r.returnedQty).filter(r => !r.unitCost);
   const pct = `${PROVISION_RATE * 100}%`;
   return (
@@ -291,7 +291,7 @@ function ProvisionsSection({ rows, journal, costOverride, setCostOverride, posti
       </div>
       <div className="px-4 py-3 border-t border-gray-200 space-y-2">
         <p className="text-xs text-gray-600">
-          Provisiones nuevas {money(created)} · cancelaciones {money(released)} · movimiento neto contra {ACC_PROVISION}: <b>{money(-(created + released))}</b>
+          Ventas (4300 00): provisión {money(t(r => r.salesProvision))} · cancelación {money(t(r => r.salesRelease))} — Existencias (5881 00): provisión {money(-t(r => r.inventoryProvision))} · cancelación {money(-t(r => r.inventoryRelease))} — movimiento neto en {ACC_PROVISION}: <b>{money(provisionNet)}</b>
         </p>
         <details>
           <summary className="cursor-pointer text-sm font-semibold text-gray-900">Asientos sugeridos ({journal.length} líneas de diario, contrapartida {ACC_PROVISION})</summary>

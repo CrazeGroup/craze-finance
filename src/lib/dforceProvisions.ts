@@ -2,10 +2,10 @@
 // la página las recalcula al cambiar un coste unitario.
 // - Factura de venta: se espera que el 80 % de lo vendido se devuelva →
 //     PROV.<revista><MM>/<AA>      4300 00 (ventas) al debe   = 80 % del importe vendido
-//     INV.PROV.<revista><MM>/<AA>  5881 00 (existencias) al debe = 80 % de las unidades × coste unitario
+//     INV.PROV.<revista><MM>/<AA>  5881 00 (existencias) = −(80 % de las unidades × coste unitario)
 // - Abono de venta: las devoluciones reales deshacen esas provisiones (en negativo, al 100 %):
 //     PROV.…      4300 00 = − importe devuelto
-//     INV.PROV.…  5881 00 = − unidades devueltas × coste unitario
+//     INV.PROV.…  5881 00 = + unidades devueltas × coste unitario
 // Todas con contrapartida 3071 00, como los asientos de agosto de 2026. Solo se provisionan los números entregados
 // en el mes (anexos LI/LA, con sus diferencias de entrega); los que solo tienen diferencias de entrega no.
 
@@ -73,8 +73,9 @@ export function journalLines(rows: ProvisionRow[], postingDate: string, creditNo
     if (Math.abs(amount) >= 0.005) out.push({ postingDate, documentNo, accountNo, description, amount, balAccountNo: ACC_PROVISION });
   };
   for (const r of rows) add(`PROV.${r.code}`, ACC_SALES, r.salesProvision, `Provisions for returns ${PROVISION_RATE * 100}%`);
-  for (const r of rows) add(`INV.PROV.${r.code}`, ACC_INVENTORY, r.inventoryProvision, `Provisions for returns ${PROVISION_RATE * 100}%`);
+  // Existencias (5881 00) con el signo contrario: la provisión inicial en negativo y las cancelaciones en positivo
+  for (const r of rows) add(`INV.PROV.${r.code}`, ACC_INVENTORY, -r.inventoryProvision, `Provisions for returns ${PROVISION_RATE * 100}%`);
   for (const r of rows) add(`PROV.${r.code}`, ACC_SALES, r.salesRelease, `Returns D-FORCE ${creditNo}`.trim());
-  for (const r of rows) add(`INV.PROV.${r.code}`, ACC_INVENTORY, r.inventoryRelease, `Returns D-FORCE ${creditNo}`.trim());
+  for (const r of rows) add(`INV.PROV.${r.code}`, ACC_INVENTORY, -r.inventoryRelease, `Returns D-FORCE ${creditNo}`.trim());
   return out;
 }
