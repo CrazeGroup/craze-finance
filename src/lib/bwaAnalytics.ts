@@ -8,7 +8,8 @@ import { today } from '@/lib/reporting/period';
 // - Importes por mes: movimientos contables del año (servicio General_Ledger_Entries_Excel) de esas cuentas,
 //   con el signo invertido (ingresos en positivo), en la divisa local de la empresa.
 // - Grupos: cada línea Formula es un grupo con sus líneas componentes y una fila "Total".
-// - Desglose de cada línea: por cuenta contable, descripción y origen (proveedor/cliente) de los movimientos.
+// - Desglose de cada línea (solo la primera vez que aparece): por cuenta contable y origen (proveedor/cliente, con
+//   su nombre de BC); como máximo DETAIL_LIMIT filas por línea más una fila "Resto".
 
 export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 type Months = Record<string, number>;
@@ -18,6 +19,7 @@ export type BwaRow = { BwaGroup: string; Level: string; Code: string; Values: Mo
 const accountKey = (no: string) => String(no || '').replace(/\s+/g, '').toUpperCase();
 const emptyMonths = (): Months => Object.fromEntries(MONTHS.map(m => [m, 0]));
 const r2 = (v: number) => Math.round(v * 100) / 100;
+const DETAIL_LIMIT = 100;
 
 async function bwaDefinition(ctx: BcContext) {
   const [bwas, mapping] = await Promise.all([
@@ -38,13 +40,24 @@ export async function bwaAnalytics(ctx: BcContext, company: string, year: number
     const sample = await bcFetchAll(odataUrl(base, { $top: '1' }), ctx.token);
     const keys = Object.keys(sample[0] || {});
     const extra = ['Source_No', 'Source_Name', 'Source_Type'].filter(k => keys.includes(k));
-    const [entries, accounts] = await Promise.all([
+    const [entries, accounts, vendors, customers] = await Promise.all([
       bcFetchAll(odataUrl(base, {
         $filter: `Posting_Date ge ${year}-01-01 and Posting_Date le ${to}`,
         $select: ['Posting_Date', 'G_L_Account_No', 'Description', 'Amount', ...extra].join(','),
       }), ctx.token),
       bcFetchAll(odataUrl(`${ctx.customApiBase}/glAccounts`, { $select: 'no,name' }), ctx.token).catch(() => [] as any[]),
+      bcFetchAll(odataUrl(`${ctx.apiBase}/vendors`, { $select: 'number,displayName' }), ctx.token).catch(() => [] as any[]),
+      bcFetchAll(odataUrl(`${ctx.apiBase}/customers`, { $select: 'number,displayName' }), ctx.token).catch(() => [] as any[]),
     ]);
+    const vendorName = new Map(vendors.map((v: any) => [v.number, v.displayName]));
+    const customerName = new Map(customers.map((c: any) => [c.number, c.displayName]));
+    const sourceName = (e: any) => {
+      const no = String(e.Source_No || '').trim();
+      if (!no) return '';
+      const t = String(e.Source_Type || '');
+      const name = /vendor/i.test(t) ? vendorName.get(no) : /customer/i.test(t) ? customerName.get(no) : (vendorName.get(no) || customerName.get(no));
+      return name ? `${name} (${no})` : no;
+    };
     const accountName = new Map(accounts.map((a: any) => [accountKey(a.no), a.name]));
     const accountBwa = new Map<string, string>(def.mapping
       .filter((m: any) => m.incomeBalance === 'Income_x0020_Statement' && m.bwa)
@@ -62,11 +75,13 @@ export async function bwaAnalytics(ctx: BcContext, company: string, year: number
       const months = byCode.get(code) || emptyMonths();
       months[m] += v;
       byCode.set(code, months);
-      const vendor = String(e.Source_Name || e.Source_No || '').trim();
-      const desc = String(e.Description || '').trim();
-      const dk = `${e.G_L_Account_No}|${desc}|${vendor}`;
+      const vendor = sourceName(e);
+      const dk = `${e.G_L_Account_No}|${vendor}`;
       const dmap = details.get(code) || new Map<string, Detail>();
-      const d = dmap.get(dk) || { Item: `${e.G_L_Account_No} ${accountName.get(accountKey(e.G_L_Account_No)) || ''}`.trim(), Description: desc, Vendor: vendor, Values: emptyMonths(), Total: 0 };
+      const d = dmap.get(dk) || {
+        Item: String(e.G_L_Account_No), Description: accountName.get(accountKey(e.G_L_Account_No)) || String(e.Description || '').trim(),
+        Vendor: vendor || '(sin proveedor/cliente)', Values: emptyMonths(), Total: 0,
+      };
       d.Values[m] += v;
       d.Total += v;
       dmap.set(dk, d);
@@ -90,13 +105,25 @@ export async function bwaAnalytics(ctx: BcContext, company: string, year: number
       }
       return out;
     };
+    const detailed = new Set<string>();
     const row = (group: string, l: Line, level: string): BwaRow => {
       const v = values(l);
       const rounded = Object.fromEntries(MONTHS.map(m => [m, r2(v[m])]));
-      const det = l.formula ? [] : Array.from(details.get(l.code)?.values() || [])
-        .map(d => ({ ...d, Values: Object.fromEntries(MONTHS.map(m => [m, r2(d.Values[m])])), Total: r2(d.Total) }))
-        .filter(d => Math.abs(d.Total) >= 0.005 || MONTHS.some(m => Math.abs(d.Values[m]) >= 0.005))
-        .sort((a, b) => Math.abs(b.Total) - Math.abs(a.Total));
+      let det: Detail[] = [];
+      if (!l.formula && !detailed.has(l.code)) {
+        detailed.add(l.code);
+        const all = Array.from(details.get(l.code)?.values() || [])
+          .filter(d => Math.abs(d.Total) >= 0.005 || MONTHS.some(m => Math.abs(d.Values[m]) >= 0.005))
+          .sort((a, b) => Math.abs(b.Total) - Math.abs(a.Total));
+        det = all.slice(0, DETAIL_LIMIT);
+        const rest = all.slice(DETAIL_LIMIT);
+        if (rest.length) {
+          const r: Detail = { Item: '', Description: `Resto (${rest.length} combinaciones)`, Vendor: '', Values: emptyMonths(), Total: 0 };
+          rest.forEach(d => { MONTHS.forEach(m => { r.Values[m] += d.Values[m]; }); r.Total += d.Total; });
+          det.push(r);
+        }
+        det = det.map(d => ({ ...d, Values: Object.fromEntries(MONTHS.map(m => [m, r2(d.Values[m])])), Total: r2(d.Total) }));
+      }
       return { BwaGroup: group, Level: level, Code: l.code, Values: rounded, Total: r2(MONTHS.reduce((s, m) => s + v[m], 0)), IsPurchase: det.length > 0, Detail: det };
     };
 
