@@ -1,12 +1,13 @@
-import { bcFetchAll, BcContext, getBcContext, odataUrl } from '@/lib/bcClient';
+import { bcFetchAll, bcFetchByEntryRanges, BcContext, getBcContext, odataUrl } from '@/lib/bcClient';
 import { cached, HOUR } from '@/lib/reporting/cache';
 import { today } from '@/lib/reporting/period';
 
 // BWA Analytics en directo de BC para una empresa y un año (antes: 8 Excel subidos a mano):
 // - Líneas BWA (API custom "bwas"; las de tipo Formula suman otras líneas) y cuenta → línea ("mappingAccounts",
 //   solo cuentas de resultados), como el Reporting.
-// - Importes por mes: movimientos contables del año (servicio General_Ledger_Entries_Excel) de esas cuentas,
-//   con el signo invertido (ingresos en positivo), en la divisa local de la empresa.
+// - Importes por mes: movimientos contables del año de la empresa en glEntriesUnion (la misma fuente que la BWA
+//   del Reporting y el Power BI, también con sus movimientos de eliminación), con el signo invertido (ingresos en
+//   positivo), en la divisa local de la empresa.
 // - Grupos: cada línea Formula es un grupo con sus líneas componentes y una fila "Total".
 // - Desglose de cada línea (solo la primera vez que aparece): por cuenta contable y origen (proveedor/cliente, con
 //   su nombre de BC); como máximo DETAIL_LIMIT filas por línea más una fila "Resto".
@@ -36,19 +37,25 @@ export async function bwaAnalytics(ctx: BcContext, company: string, year: number
     let def = await bwaDefinition(ctx);
     if (!def.bwas.length || !def.mapping.length) def = await bwaDefinition(await getBcContext('CRAZE'));
 
-    const base = `${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`;
-    const sample = await bcFetchAll(odataUrl(base, { $top: '1' }), ctx.token);
+    // glEntriesUnion (todas las sociedades) se lee desde CRAZE, filtrando la empresa
+    const unionCtx = ctx.companyName.toLowerCase() === 'craze' ? ctx : await getBcContext('CRAZE');
+    const base = `${unionCtx.customApiBase}/glEntriesUnion`;
+    const sample = await bcFetchAll(odataUrl(base, { $top: '1' }), unionCtx.token);
     const keys = Object.keys(sample[0] || {});
-    const extra = ['Source_No', 'Source_Name', 'Source_Type'].filter(k => keys.includes(k));
-    const [entries, accounts, vendors, customers] = await Promise.all([
-      bcFetchAll(odataUrl(base, {
-        $filter: `Posting_Date ge ${year}-01-01 and Posting_Date le ${to}`,
-        $select: ['Posting_Date', 'G_L_Account_No', 'Description', 'Amount', ...extra].join(','),
-      }), ctx.token),
+    const extra = ['sourceNo', 'sourceType', 'description'].filter(k => keys.includes(k));
+    const local = /\b(UK|AG)\b/.test(company);   // UK y Group AG: importe en su divisa (amount), el resto amountLCY
+    const [unionRows, accounts, vendors, customers] = await Promise.all([
+      bcFetchByEntryRanges(base, unionCtx.token, 'entryNo',
+        ['company', 'gLAccountNo2', 'postingDate', 'amount', 'amountLCY', ...extra].join(','),
+        `company eq '${company.replace(/'/g, "''")}' and postingDate ge ${year}-01-01 and postingDate le ${to} and gLAccountNo2 ne ''`),
       bcFetchAll(odataUrl(`${ctx.customApiBase}/glAccounts`, { $select: 'no,name' }), ctx.token).catch(() => [] as any[]),
       bcFetchAll(odataUrl(`${ctx.apiBase}/vendors`, { $select: 'number,displayName' }), ctx.token).catch(() => [] as any[]),
       bcFetchAll(odataUrl(`${ctx.apiBase}/customers`, { $select: 'number,displayName' }), ctx.token).catch(() => [] as any[]),
     ]);
+    const entries = unionRows.map((e: any) => ({
+      Posting_Date: e.postingDate, G_L_Account_No: e.gLAccountNo2, Description: e.description,
+      Amount: local ? e.amount : e.amountLCY, Source_No: e.sourceNo, Source_Type: e.sourceType,
+    }));
     const vendorName = new Map(vendors.map((v: any) => [v.number, v.displayName]));
     const customerName = new Map(customers.map((c: any) => [c.number, c.displayName]));
     const sourceName = (e: any) => {
@@ -58,6 +65,8 @@ export async function bwaAnalytics(ctx: BcContext, company: string, year: number
       const name = /vendor/i.test(t) ? vendorName.get(no) : /customer/i.test(t) ? customerName.get(no) : (vendorName.get(no) || customerName.get(no));
       return name ? `${name} (${no})` : no;
     };
+    // Nombres de cuenta de la empresa y, si faltan, de CRAZE
+    if (!accounts.length && unionCtx !== ctx) accounts.push(...await bcFetchAll(odataUrl(`${unionCtx.customApiBase}/glAccounts`, { $select: 'no,name' }), unionCtx.token).catch(() => []));
     const accountName = new Map(accounts.map((a: any) => [accountKey(a.no), a.name]));
     const accountBwa = new Map<string, string>(def.mapping
       .filter((m: any) => m.incomeBalance === 'Income_x0020_Statement' && m.bwa)
@@ -147,6 +156,6 @@ export async function bwaAnalytics(ctx: BcContext, company: string, year: number
     const kpis = ['1020', '1080', '1300', '1380']
       .map(code => ({ code, description: lineByCode.get(code)?.description || code, total: total(code) }))
       .filter(k => k.total !== null);
-    return { year, company, rows: out, kpis, sourceFields: extra };
+    return { year, company, rows: out, kpis, sourceFields: extra, entries: entries.length };
   }, force);
 }
