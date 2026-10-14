@@ -2,81 +2,118 @@ import { bcFetchAll, BcContext, odataUrl } from '@/lib/bcClient';
 import { cached, HOUR } from './cache';
 import { cutoffDate, today } from './period';
 
-// Provisiones, igual que el Power BI "Provisions": todos los asientos contables (tabla 17, servicio
-// General_Ledger_Entries_Excel) con nº de documento PROV-*, en su lado de provisión: cuentas marcadas como
-// provisión en BC o cuentas 307x (Rückstellungen). La contrapartida no se suma (el documento quedaría a 0).
-// Por documento: original = importe del primer movimiento; abierto = suma de todos sus movimientos
-// hasta la fecha de cierre; consumido = original - abierto. Se listan los documentos con importe abierto.
-
-// Nº de cuenta sin espacios ("3071 13" = "307113")
-const accountKey = (no: string) => String(no || '').replace(/\s+/g, '').toUpperCase();
-export function isProvisionAccount(no: string, flagged: Set<string>) {
-  const k = accountKey(no);
-  return flagged.has(k) || /^307\d/.test(k);
-}
-export const PROVISION_DOC_PREFIX = 'PROV-';
+// Provisiones del reporting: asientos contables PROV-* (tabla 17, servicio General_Ledger_Entries_Excel).
+// Cada mes se registra un documento nuevo que re-estima la provisión ("RST Konditionen 2026", "RST Lizenzen 2026"…)
+// contra una cuenta de balance de provisión (3071 13 Konditionen, 3071 12 Lizenzen, 3071 08 KAM, 3072 01 Marketing,
+// 3072 02 Amazon Promotions…). Por eso lo abierto no es el saldo de cada documento sino el de esa cuenta:
+// - Serie de un documento = cuenta de balance (3xxx) de su primer movimiento en una cuenta de balance.
+// - Abierto de la serie = saldo de todos los movimientos PROV-* del año en esa cuenta hasta la fecha de corte,
+//   asignado al último documento de la serie; los anteriores quedan consumidos (abierto 0).
+// - Original de cada documento = su primer movimiento en la cuenta de la serie. En la tabla, la fila de cada serie
+//   (su último documento) lleva como original la dotación del año (suma de los originales de la serie) y
+//   consumido = dotación − abierto.
+// Importes con el signo de gasto (provisión dotada en positivo). P. ej. PROV-00049 (CRAZE, 30/09/2026):
+// abierto 472.987,87 = saldo de la 3071 13 de toda la serie RST Konditionen.
 
 type ProvType = 'konditions' | 'marketing' | 'royalties' | 'incentives' | 'other';
 
+export const PROVISION_DOC_PREFIX = 'PROV-';
+// Nº de cuenta sin espacios ("3071 13" = "307113")
+export const accountKey = (no: string) => String(no || '').replace(/\s+/g, '').toUpperCase();
+const isBalanceAccount = (no: string) => /^3\d/.test(accountKey(no));
+
 function provisionType(account: string, description: string): ProvType {
-  const a = account.toUpperCase();
+  const a = accountKey(account);
   const d = description.toUpperCase();
   if (a.includes('KONDITION') || a.startsWith('4769') || d.includes('KONDITION') || d.includes('CONDITION')) return 'konditions';
-  if (a.includes('ROYALT') || a.startsWith('6837') || d.includes('ROYALT')) return 'royalties';
-  if (a.startsWith('6020') || d.includes('KAM') || d.includes('INCENTIV')) return 'incentives';
-  if (a.includes('MARKETING') || a.startsWith('6600') || d.includes('MARKETING') || d.includes('PROMOTION')) return 'marketing';
+  if (a.includes('ROYALT') || a.startsWith('6837') || d.includes('ROYALT') || d.includes('LIZENZ')) return 'royalties';
+  if (a.startsWith('6020') || d.includes('KAM') || d.includes('INCENTIV') || d.includes('BONUS')) return 'incentives';
+  if (a.includes('MARKETING') || a.includes('AMZPROM') || a.startsWith('6600') || d.includes('MARKETING') || d.includes('PROMOTION')) return 'marketing';
   return 'other';
+}
+
+export type GlEntry = { Entry_No: number; Posting_Date: string; Document_No: string; G_L_Account_No: string; Description: string; Amount: number };
+export type ProvisionRow = {
+  doc: string; date: string; desc: string; account: string; series: string; t: ProvType; orig: number; cons: number; open: number; latest: boolean;
+};
+
+const r2 = (v: number) => Math.round(v * 100) / 100;
+
+// Filas por documento a partir de los movimientos PROV-* del año hasta la fecha de corte
+export function buildProvisionRows(entries: GlEntry[], flaggedAccounts: Set<string>, date: string, year: string): ProvisionRow[] {
+  const inScope = entries.filter(e =>
+    String(e.Document_No || '').toUpperCase().startsWith(PROVISION_DOC_PREFIX) && e.Posting_Date <= date && e.Posting_Date.startsWith(year));
+  const docs = new Map<string, GlEntry[]>();
+  for (const e of inScope) docs.set(e.Document_No, [...(docs.get(e.Document_No) || []), e]);
+
+  const rows: ProvisionRow[] = [];
+  for (const [doc, list] of docs) {
+    list.sort((a, b) => a.Entry_No - b.Entry_No);
+    const firstBalance = list.find(e => isBalanceAccount(e.G_L_Account_No));
+    if (!firstBalance) continue;   // sin cuenta de provisión (p. ej. traspasos entre cuentas de gasto)
+    const expense = list.find(e => flaggedAccounts.has(accountKey(e.G_L_Account_No))) || list.find(e => !isBalanceAccount(e.G_L_Account_No));
+    const date0 = list.reduce((m, e) => (e.Posting_Date < m ? e.Posting_Date : m), list[0].Posting_Date);
+    rows.push({
+      doc, date: date0, desc: firstBalance.Description || list[0].Description, account: firstBalance.G_L_Account_No,
+      series: accountKey(firstBalance.G_L_Account_No),
+      t: provisionType(expense?.G_L_Account_No || '', firstBalance.Description || ''),
+      orig: r2(-firstBalance.Amount), cons: 0, open: 0, latest: false,
+    });
+  }
+  // Saldo de cada cuenta de serie con todos los movimientos PROV-* del año
+  const seriesAccounts = new Set(rows.map(r => r.series));
+  const balance = new Map<string, number>();
+  for (const e of inScope) {
+    const k = accountKey(e.G_L_Account_No);
+    if (seriesAccounts.has(k)) balance.set(k, (balance.get(k) || 0) + e.Amount);
+  }
+  // El abierto de la serie va al último documento (fecha y nº más altos)
+  for (const series of seriesAccounts) {
+    const list = rows.filter(r => r.series === series).sort((a, b) => a.date.localeCompare(b.date) || a.doc.localeCompare(b.doc));
+    const last = list[list.length - 1];
+    last.open = r2(-(balance.get(series) || 0));
+    last.latest = true;
+  }
+  rows.forEach(r => { r.cons = r2(r.orig - r.open); });
+  return rows.sort((a, b) => a.date.localeCompare(b.date) || a.doc.localeCompare(b.doc));
+}
+
+export async function fetchProvisionData(ctx: BcContext, date: string) {
+  const [accounts, entries] = await Promise.all([
+    bcFetchAll(odataUrl(`${ctx.customApiBase}/glAccounts`, { $filter: 'provision eq true', $select: 'no,name' }), ctx.token),
+    bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
+      $filter: `startswith(Document_No,'${PROVISION_DOC_PREFIX}') and Posting_Date le ${date}`,
+      $select: 'Entry_No,Posting_Date,Document_No,G_L_Account_No,Description,Amount',
+    }), ctx.token),
+  ]);
+  return { accounts, entries: entries as GlEntry[], flagged: new Set<string>(accounts.map((a: any) => accountKey(a.no))) };
 }
 
 export async function provisionsReport(ctx: BcContext, company: string, month: string, force = false) {
   const date = cutoffDate(month);
   const year = date.substring(0, 4);
-  return cached(`prov2:${company}:${date}`, date < today() ? 12 * HOUR : 1 * HOUR, async () => {
-    const [accounts, entries] = await Promise.all([
-      bcFetchAll(odataUrl(`${ctx.customApiBase}/glAccounts`, { $filter: 'provision eq true', $select: 'no,name' }), ctx.token),
-      bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
-        $filter: `startswith(Document_No,'${PROVISION_DOC_PREFIX}') and Posting_Date le ${date}`,
-        $select: 'Entry_No,Posting_Date,Document_No,G_L_Account_No,Description,Amount',
-      }), ctx.token),
-    ]);
-    const provisionAccounts = new Set<string>(accounts.map((a: any) => accountKey(a.no)));
+  return cached(`prov3:${company}:${date}`, date < today() ? 12 * HOUR : 1 * HOUR, async () => {
+    const { entries, flagged } = await fetchProvisionData(ctx, date);
+    const all = buildProvisionRows(entries, flagged, date, year);
+    // Tabla: una fila por serie (su último documento) con la dotación del año; dotación del mes: documentos del mes
+    const rows = all.filter(r => r.latest && r.open !== 0).map(r => {
+      const orig = r2(all.filter(x => x.series === r.series).reduce((s, x) => s + x.orig, 0));
+      return { ...r, orig, cons: r2(orig - r.open) };
+    });
+    const thisMonth = all.filter(r => r.date.startsWith(date.substring(0, 7)));
 
-    const docs = new Map<string, any[]>();
-    for (const e of entries) {
-      if (!String(e.Document_No || '').toUpperCase().startsWith(PROVISION_DOC_PREFIX)) continue;
-      if (!isProvisionAccount(e.G_L_Account_No, provisionAccounts)) continue;
-      const list = docs.get(e.Document_No) || [];
-      list.push(e);
-      docs.set(e.Document_No, list);
-    }
-
-    const rows = Array.from(docs.entries()).map(([doc, list]) => {
-      list.sort((a, b) => a.Entry_No - b.Entry_No);
-      const first = list[0];
-      const open = Math.round(list.reduce((s, e) => s + e.Amount, 0) * 100) / 100;
-      return {
-        doc, date: first.Posting_Date, desc: first.Description, account: first.G_L_Account_No,
-        t: provisionType(first.G_L_Account_No, first.Description),
-        orig: first.Amount, cons: first.Amount - open, open,
-      };
-    })
-      // Año del informe y con importe abierto (mismo filtro que la tabla del Power BI)
-      .filter(r => r.date.startsWith(year) && r.open !== 0)
-      .sort((a, b) => a.date.localeCompare(b.date) || a.doc.localeCompare(b.doc));
-
-    const sumBy = (list: typeof rows) => ({
-      orig: list.reduce((s, r) => s + r.orig, 0),
-      cons: list.reduce((s, r) => s + r.cons, 0),
-      open: list.reduce((s, r) => s + r.open, 0),
+    const sumBy = (list: ProvisionRow[]) => ({
+      orig: r2(list.reduce((s, r) => s + r.orig, 0)),
+      cons: r2(list.reduce((s, r) => s + r.cons, 0)),
+      open: r2(list.reduce((s, r) => s + r.open, 0)),
     });
     const types: ProvType[] = ['konditions', 'marketing', 'royalties', 'incentives', 'other'];
-    const thisMonth = rows.filter(r => r.date.startsWith(date.substring(0, 7)));
 
     return {
       date, year,
       ...sumBy(rows), n: rows.length,
       byType: types.map(t => ({ t, ...sumBy(rows.filter(r => r.t === t)) })).filter(t => t.orig || t.open),
-      byMonth: Array.from(new Set(rows.map(r => r.date.substring(0, 7)))).sort().map(m => ({ month: m, ...sumBy(rows.filter(r => r.date.startsWith(m))) })),
+      byMonth: Array.from(new Set(all.map(r => r.date.substring(0, 7)))).sort().map(m => ({ month: m, ...sumBy(all.filter(r => r.date.startsWith(m))) })),
       month: sumBy(thisMonth),
       rows,
     };
