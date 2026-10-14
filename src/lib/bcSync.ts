@@ -1,5 +1,5 @@
 import prisma from '@/lib/prisma';
-import salespeopleMapData from '@/lib/salespeopleMap.json';
+import { salespeopleMap as loadSalespeople } from '@/lib/salespeople';
 import { ledgerKey, customerDocType, vendorDocType } from '@/lib/documentTypes';
 
 // Helper to get OAuth token via Entra ID for Business Central
@@ -137,10 +137,6 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
     purchaseInvoices: 0
   };
 
-  const salespeopleMap = new Map<string, string>(
-    Object.entries(salespeopleMapData)
-  );
-
   for (const companyName of targetCompanyNames) {
     console.log(`\n--- Sincronizando empresa: ${companyName} ---`);
     
@@ -154,6 +150,8 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
     const companyId = matchedCompany.id;
     const exactCompanyName = matchedCompany.name; // Keep exact casing from BC
     const escapedCompanyName = exactCompanyName.replace(/'/g, "''");
+    // Vendedores de BC (tabla Salesperson/Purchaser): código → nombre
+    const salespeopleMap = await loadSalespeople(exactCompanyName);
     const companySegment = `/companies(${companyId})`;
 
     // Ensure CashflowConfig exists for this company

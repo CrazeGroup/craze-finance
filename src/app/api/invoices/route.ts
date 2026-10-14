@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import prisma from '@/lib/prisma';
-import salespeopleMapData from '@/lib/salespeopleMap.json';
+import { salespeopleMap as loadSalespeople } from '@/lib/salespeople';
 import { CUSTOMER_INVOICE_TYPES } from '@/lib/documentTypes';
 
 export async function GET() {
@@ -26,7 +26,7 @@ export async function GET() {
       orderBy: { dueDate: 'asc' }
     });
 
-    const salespeopleMap = new Map<string, string>(Object.entries(salespeopleMapData));
+    const salespeopleMap = companyId === 'ALL' ? new Map<string, string>() : await loadSalespeople(companyId);
 
     const enrichedInvoices = openInvoices.map(invoice => {
       const isOverdue = invoice.dueDate < today;
