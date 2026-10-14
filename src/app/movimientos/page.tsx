@@ -20,7 +20,7 @@ export default function MovimientosPage() {
       if (Array.isArray(data)) {
         setEntries(data);
       } else {
-        alert('Error al cargar movimientos');
+        alert(data?.error ? `Error al cargar movimientos: ${data.error}` : 'Error al cargar movimientos');
       }
     } catch (e) {
       console.error(e);

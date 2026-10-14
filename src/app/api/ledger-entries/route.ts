@@ -1,103 +1,56 @@
 import { NextResponse } from 'next/server';
-import * as XLSX from 'xlsx';
+import { cookies } from 'next/headers';
+import { bcFetchAll, getBcContext, odataUrl } from '@/lib/bcClient';
 
-// Helper to handle Excel dates
-function excelToDate(excelDate: any): string | null {
-  if (!excelDate) return null;
-  if (typeof excelDate === 'number') {
-    // Excel dates are days since 1899-12-30
-    const d = new Date(Math.round((excelDate - 25569) * 86400 * 1000));
-    return d.toISOString();
-  }
-  return new Date(excelDate).toISOString();
-}
+export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
-const VALID_DOCUMENT_TYPES = [
-  'refund', 'reembolso',
-  'credit memo', 'abono',
-  'payment', 'pago',
-  '', 'empty', undefined, null
-];
+// Movimientos abiertos de cliente y proveedor que no son facturas (pagos, abonos, reembolsos y sin tipo),
+// en directo de BC (API custom custLedgerEntries / vendorLedgerEntries) para la empresa seleccionada.
+const VALID_DOCUMENT_TYPES = ['refund', 'credit memo', 'payment', ''];
 
-function isValidType(type: string | null | undefined): boolean {
-  if (!type) return true; // empty
-  const lower = String(type).trim().toLowerCase();
-  return VALID_DOCUMENT_TYPES.includes(lower);
-}
+const str = (v: any) => (v == null ? '' : String(v).trim());
+const num = (v: any) => (typeof v === 'number' ? v : parseFloat(v) || 0);
+const pick = (r: any, keys: string[]) => keys.map(k => r[k]).find(v => v !== undefined && v !== null && v !== '');
+const docType = (v: any) => str(v).replace(/_x0020_/g, ' ');
+const realDate = (d: any) => { const s = str(d).substring(0, 10); return s && !s.startsWith('0001') ? s : null; };
 
-import * as fs from 'fs';
-
-function isOpen(val: any): boolean {
-  if (val === true || val === 1) return true;
-  if (!val) return false;
-  const lower = String(val).trim().toLowerCase();
-  return lower === 'yes' || lower === 'sí' || lower === 'si' || lower === 'true' || lower === '1' || lower === 'verdadero' || lower === 'open';
+function mapEntry(type: 'Customer' | 'Vendor', r: any) {
+  const t = docType(r.documentType);
+  return {
+    type,
+    entryNo: num(r.entryNo),
+    entityNo: str(type === 'Customer' ? r.customerNo : r.vendorNo),
+    entityName: str(type === 'Customer' ? r.customerName : r.vendorName) || 'Unknown',
+    postingDate: realDate(r.postingDate),
+    dueDate: realDate(r.dueDate),
+    documentType: t || 'Empty',
+    documentNo: str(r.documentNo),
+    externalDocumentNo: str(pick(r, ['externalDocumentNo', 'documentNoReceived', 'yourReference'])),
+    currencyCode: str(r.currencyCode),
+    originalAmount: num(pick(r, ['originalAmount', 'amount'])),
+    remainingAmount: num(r.remainingAmount),
+    description: str(r.description),
+    paymentMethodCode: str(r.paymentMethodCode),
+  };
 }
 
 export async function GET() {
   try {
-    const entries: any[] = [];
+    const cookieStore = await cookies();
+    const company = cookieStore.get('craze_selected_company')?.value || 'CRAZE';
+    if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
+    const ctx = await getBcContext(company);
 
-    // 1. Process Customer Ledger Entries
-    try {
-      const cPath = 'C:/Users/danie/Downloads/Customer Ledger Entries (20).xlsx';
-      const cBuffer = fs.readFileSync(cPath);
-      const cWb = XLSX.read(cBuffer, { type: 'buffer' });
-      const cData = XLSX.utils.sheet_to_json(cWb.Sheets[cWb.SheetNames[0]]);
-
-      cData.forEach((row: any) => {
-        if (!isOpen(row['Open'])) return;
-        if (!isValidType(row['Document Type'])) return;
-
-        entries.push({
-          type: 'Customer',
-          entityNo: row['Customer No.'],
-          entityName: row['Customer Name'] || 'Unknown',
-          postingDate: excelToDate(row['Posting Date']),
-          documentType: row['Document Type'] || 'Empty',
-          documentNo: row['Document No.'],
-          externalDocumentNo: row['Document No. Received'] || '',
-          currencyCode: row['Currency Code'] || '',
-          originalAmount: parseFloat(row['Original Amount'] || 0),
-          remainingAmount: parseFloat(row['Remaining Amount'] || 0),
-          description: row['Description'] || '',
-          paymentMethodCode: row['Payment Method Code'] || row['Payment method'] || ''
-        });
-      });
-    } catch (e) {
-      console.error('Error reading Customer Ledger Entries:', e);
-    }
-
-    // 2. Process Vendor Ledger Entries
-    try {
-      const vPath = 'C:/Users/danie/Downloads/Vendor Ledger Entries.xlsx';
-      const vBuffer = fs.readFileSync(vPath);
-      const vWb = XLSX.read(vBuffer, { type: 'buffer' });
-      const vData = XLSX.utils.sheet_to_json(vWb.Sheets[vWb.SheetNames[0]]);
-
-      vData.forEach((row: any) => {
-        if (!isOpen(row['Open'])) return;
-        if (!isValidType(row['Document Type'])) return;
-
-        entries.push({
-          type: 'Vendor',
-          entityNo: row['Vendor No.'],
-          entityName: row['Vendor Name'] || 'Unknown',
-          postingDate: excelToDate(row['Posting Date']),
-          documentType: row['Document Type'] || 'Empty',
-          documentNo: row['Document No.'],
-          externalDocumentNo: row['External Document No.'] || '',
-          currencyCode: row['Currency Code'] || '',
-          originalAmount: parseFloat(row['Original Amount'] || 0),
-          remainingAmount: parseFloat(row['Remaining Amount'] || 0),
-          description: row['Description'] || '',
-          paymentMethodCode: row['Payment Method Code'] || row['Payment method'] || ''
-        });
-      });
-    } catch (e) {
-      console.error('Error reading Vendor Ledger Entries:', e);
-    }
-
+    const [customers, vendors] = await Promise.all([
+      bcFetchAll(odataUrl(`${ctx.customApiBase}/custLedgerEntries`, { $filter: 'open eq true' }), ctx.token),
+      bcFetchAll(odataUrl(`${ctx.customApiBase}/vendorLedgerEntries`, { $filter: 'open eq true' }), ctx.token),
+    ]);
+    const keep = (r: any) => VALID_DOCUMENT_TYPES.includes(docType(r.documentType).toLowerCase());
+    const entries = [
+      ...customers.filter(keep).map(r => mapEntry('Customer', r)),
+      ...vendors.filter(keep).map(r => mapEntry('Vendor', r)),
+    ].sort((a, b) => (a.postingDate || '').localeCompare(b.postingDate || ''));
     return NextResponse.json(entries);
   } catch (error: any) {
     console.error('Error fetching ledger entries:', error);
