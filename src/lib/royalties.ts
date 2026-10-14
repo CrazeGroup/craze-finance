@@ -175,7 +175,7 @@ async function serviceNames(url: string, token: string): Promise<string[]> {
 }
 
 // URL del conjunto de datos de la tabla 60000 para la empresa
-async function findService(ctx: BcContext): Promise<{ name: string; url: string }> {
+export async function findService(ctx: BcContext): Promise<{ name: string; url: string }> {
   const configured = await readSetting<string>('royaltiesService', '');
   if (configured) return { name: configured, url: `${ctx.odataCompanyBase}/${configured}` };
 

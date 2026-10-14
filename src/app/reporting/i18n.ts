@@ -83,6 +83,7 @@ const es = {
   cfChart: 'Saldo diario previsto vs límite', balanceL: 'Saldo previsto', limitL: 'Límite {limit}', cfTable: 'Entradas y salidas por bloque y mes', block: 'Bloque',
   cat_markant: 'Cobros Markant', cat_customers: 'Otros cobros clientes', cat_china: 'Pagos proveedores China', cat_paymentRuns: 'Payment runs (otros proveedores)',
   cat_customs: 'EUSt / Aduanas', cat_banks: 'Bancos (préstamos)', cat_otherOut: 'Otros pagos', netFlow: 'Flujo neto',
+  provisionTab: 'Provision', lmProvTitle: 'Provisión Conditions y Marketing por Customer Group', lmProvSource: 'LM Components (página 60000) · {from} a {to} · sin líneas Main Item · {cur}', dateFrom: 'Desde', dateTo: 'Hasta', customerGroup: 'Customer Group', turnover: 'Facturación', provConditions: 'Provision Conditions', provMarketing: 'Provision Marketing', provTotal: 'Total provisión', pctTurnover: '% s/ fact.', noData: 'Sin datos en el periodo.',
 };
 
 type Dict = typeof es;
@@ -167,6 +168,7 @@ const en: Dict = {
   cfChart: 'Forecast daily balance vs limit', balanceL: 'Forecast balance', limitL: 'Limit {limit}', cfTable: 'Inflows and outflows by block and month', block: 'Block',
   cat_markant: 'Markant collections', cat_customers: 'Other customer receipts', cat_china: 'China vendor payments', cat_paymentRuns: 'Payment runs (other vendors)',
   cat_customs: 'Import VAT / customs', cat_banks: 'Banks (loans)', cat_otherOut: 'Other payments', netFlow: 'Net flow',
+  provisionTab: 'Provision', lmProvTitle: 'Conditions and Marketing provision by Customer Group', lmProvSource: 'LM Components (page 60000) · {from} to {to} · excluding Main Item lines · {cur}', dateFrom: 'From', dateTo: 'To', customerGroup: 'Customer Group', turnover: 'Turnover', provConditions: 'Provision Conditions', provMarketing: 'Provision Marketing', provTotal: 'Total provision', pctTurnover: '% of turnover', noData: 'No data in the period.',
 };
 
 const de: Dict = {
@@ -249,6 +251,7 @@ const de: Dict = {
   cfChart: 'Geplanter Tagessaldo vs. Limit', balanceL: 'Geplanter Saldo', limitL: 'Limit {limit}', cfTable: 'Zu- und Abflüsse nach Block und Monat', block: 'Block',
   cat_markant: 'Eingänge Markant', cat_customers: 'Sonstige Kundeneingänge', cat_china: 'Zahlungen China-Lieferanten', cat_paymentRuns: 'Zahlläufe (sonstige Lieferanten)',
   cat_customs: 'EUSt / Zoll', cat_banks: 'Banken (Darlehen)', cat_otherOut: 'Sonstige Zahlungen', netFlow: 'Netto-Cashflow',
+  provisionTab: 'Rückstellung', lmProvTitle: 'Rückstellung Konditionen und Marketing nach Kundengruppe', lmProvSource: 'LM Components (Seite 60000) · {from} bis {to} · ohne Main-Item-Zeilen · {cur}', dateFrom: 'Von', dateTo: 'Bis', customerGroup: 'Kundengruppe', turnover: 'Umsatz', provConditions: 'Rückstellung Konditionen', provMarketing: 'Rückstellung Marketing', provTotal: 'Rückstellung gesamt', pctTurnover: '% v. Umsatz', noData: 'Keine Daten im Zeitraum.',
 };
 
 const DICTS: Record<Lang, Dict> = { es, en, de };
