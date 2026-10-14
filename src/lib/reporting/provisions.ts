@@ -2,10 +2,19 @@ import { bcFetchAll, BcContext, odataUrl } from '@/lib/bcClient';
 import { cached, HOUR } from './cache';
 import { cutoffDate, today } from './period';
 
-// Provisiones, igual que el Power BI "Provisions": asientos contables (tabla 17, servicio
-// General_Ledger_Entries_Excel) con nº de documento PROV-*, en cuentas marcadas como provisión.
+// Provisiones, igual que el Power BI "Provisions": todos los asientos contables (tabla 17, servicio
+// General_Ledger_Entries_Excel) con nº de documento PROV-*, en su lado de provisión: cuentas marcadas como
+// provisión en BC o cuentas 307x (Rückstellungen). La contrapartida no se suma (el documento quedaría a 0).
 // Por documento: original = importe del primer movimiento; abierto = suma de todos sus movimientos
 // hasta la fecha de cierre; consumido = original - abierto. Se listan los documentos con importe abierto.
+
+// Nº de cuenta sin espacios ("3071 13" = "307113")
+const accountKey = (no: string) => String(no || '').replace(/\s+/g, '').toUpperCase();
+export function isProvisionAccount(no: string, flagged: Set<string>) {
+  const k = accountKey(no);
+  return flagged.has(k) || /^307\d/.test(k);
+}
+export const PROVISION_DOC_PREFIX = 'PROV-';
 
 type ProvType = 'konditions' | 'marketing' | 'royalties' | 'incentives' | 'other';
 
@@ -22,19 +31,20 @@ function provisionType(account: string, description: string): ProvType {
 export async function provisionsReport(ctx: BcContext, company: string, month: string, force = false) {
   const date = cutoffDate(month);
   const year = date.substring(0, 4);
-  return cached(`prov:${company}:${date}`, date < today() ? 12 * HOUR : 1 * HOUR, async () => {
+  return cached(`prov2:${company}:${date}`, date < today() ? 12 * HOUR : 1 * HOUR, async () => {
     const [accounts, entries] = await Promise.all([
       bcFetchAll(odataUrl(`${ctx.customApiBase}/glAccounts`, { $filter: 'provision eq true', $select: 'no,name' }), ctx.token),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
-        $filter: `startswith(Document_No,'PROV') and Posting_Date le ${date}`,
+        $filter: `startswith(Document_No,'${PROVISION_DOC_PREFIX}') and Posting_Date le ${date}`,
         $select: 'Entry_No,Posting_Date,Document_No,G_L_Account_No,Description,Amount',
       }), ctx.token),
     ]);
-    const provisionAccounts = new Set(accounts.map((a: any) => a.no));
+    const provisionAccounts = new Set<string>(accounts.map((a: any) => accountKey(a.no)));
 
     const docs = new Map<string, any[]>();
     for (const e of entries) {
-      if (!provisionAccounts.has(e.G_L_Account_No)) continue;
+      if (!String(e.Document_No || '').toUpperCase().startsWith(PROVISION_DOC_PREFIX)) continue;
+      if (!isProvisionAccount(e.G_L_Account_No, provisionAccounts)) continue;
       const list = docs.get(e.Document_No) || [];
       list.push(e);
       docs.set(e.Document_No, list);

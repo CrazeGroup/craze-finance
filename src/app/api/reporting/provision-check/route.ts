@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { bcFetchAll, getBcContext, odataUrl } from '@/lib/bcClient';
 import { cutoffDate, isValidMonth } from '@/lib/reporting/period';
+import { isProvisionAccount } from '@/lib/reporting/provisions';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -27,11 +28,11 @@ export async function GET(req: Request) {
         $select: 'Entry_No,Posting_Date,Document_No,G_L_Account_No,Description,Amount',
       }), ctx.token),
     ]);
-    const provisionAccounts = new Set(accounts.map((a: any) => a.no));
+    const provisionAccounts = new Set<string>(accounts.map((a: any) => String(a.no).replace(/\s+/g, '').toUpperCase()));
     const r2 = (v: number) => Math.round(v * 100) / 100;
     const list = entries.sort((a: any, b: any) => a.Entry_No - b.Entry_No).map((e: any) => ({
       entryNo: e.Entry_No, date: e.Posting_Date, account: e.G_L_Account_No, description: e.Description, amount: e.Amount,
-      provisionAccount: provisionAccounts.has(e.G_L_Account_No), beforeCutoff: date ? e.Posting_Date <= date : true,
+      provisionAccount: isProvisionAccount(e.G_L_Account_No, provisionAccounts), beforeCutoff: date ? e.Posting_Date <= date : true,
     }));
     const byAccount: Record<string, { provisionAccount: boolean; total: number; totalToCutoff: number; n: number }> = {};
     for (const e of list) {
@@ -43,7 +44,7 @@ export async function GET(req: Request) {
     return NextResponse.json({
       company: ctx.companyName, doc, cutoff: date,
       reporting: {
-        note: 'Lo que suma el reporting: movimientos en cuentas de provisión hasta la fecha de corte',
+        note: 'Lo que suma el reporting: movimientos en cuentas de provisión (marcadas en BC o 307x) hasta la fecha de corte',
         original: used[0]?.amount ?? null, open: r2(used.reduce((s: number, e: any) => s + e.amount, 0)), entries: used.length,
       },
       byAccount,
