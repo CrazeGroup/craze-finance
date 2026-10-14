@@ -13,13 +13,17 @@ const FIELDS = {
   conditions: ['Provision_Conditions', 'provisionConditions'],
   marketing: ['Provision_Marketing', 'provisionMarketing'],
   turnover: ['Turnover_Sales_Provision', 'Net_Turnover', 'turnoverSalesProvision'],
+  customer: ['Bill_to_Customer_Name', 'Sell_to_Customer_Name'],
+  bonus: ['Provision_Bonus'],
+  partner: ['Provision_Accounting_Partner'],
+  skonto: ['Provision_Skonto'],
 } as const;
 type Key = keyof typeof FIELDS;
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
 export async function lmProvisionsByGroup(ctx: BcContext, company: string, from: string, to: string, force = false) {
-  return cached(`lmprov:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
+  return cached(`lmprov2:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
     const service = await findService(ctx);
     const sample = await bcFetchAll(odataUrl(service.url, { $top: '1' }), ctx.token);
     const keys = Object.keys(sample[0] || {});
@@ -33,7 +37,8 @@ export async function lmProvisionsByGroup(ctx: BcContext, company: string, from:
       ? await bcFetchAll(odataUrl(service.url, { $filter: `${F.date} ge ${from} and ${F.date} le ${to}`, $select: select }), ctx.token)
       : [];
 
-    const groups = new Map<string, { group: string; turnover: number; conditions: number; marketing: number; lines: number }>();
+    type G = { group: string; turnover: number; conditions: number; marketing: number; bonus: number; partner: number; skonto: number; lines: number; customers: Map<string, number> };
+    const groups = new Map<string, G>();
     const mainSkipped = { lines: 0, conditions: 0, marketing: 0 };
     for (const r of raw) {
       const conditions = num(r[F.conditions!]), marketing = num(r[F.marketing!]);
@@ -42,15 +47,23 @@ export async function lmProvisionsByGroup(ctx: BcContext, company: string, from:
         continue;
       }
       const group = str(r[F.group!]) || '(sin grupo)';
-      const g = groups.get(group) || { group, turnover: 0, conditions: 0, marketing: 0, lines: 0 };
-      g.turnover += F.turnover ? num(r[F.turnover]) : 0;
+      const g = groups.get(group) || { group, turnover: 0, conditions: 0, marketing: 0, bonus: 0, partner: 0, skonto: 0, lines: 0, customers: new Map() };
+      const turnover = F.turnover ? num(r[F.turnover]) : 0;
+      g.turnover += turnover;
+      for (const k of ['bonus', 'partner', 'skonto'] as const) if (F[k]) g[k] += num(r[F[k]!]);
+      const cust = F.customer ? str(r[F.customer]) : '';
+      if (cust) g.customers.set(cust, (g.customers.get(cust) || 0) + Math.abs(turnover) + 0.001);
       g.conditions += conditions;
       g.marketing += marketing;
       g.lines++;
       groups.set(group, g);
     }
     const rows = Array.from(groups.values())
-      .map(g => ({ ...g, turnover: r2(g.turnover), conditions: r2(g.conditions), marketing: r2(g.marketing), total: r2(g.conditions + g.marketing) }))
+      .map(({ customers, ...g }) => ({
+        ...g, bonus: r2(g.bonus), partner: r2(g.partner), skonto: r2(g.skonto),
+        // Cliente principal del grupo (mayor facturación) y nº de clientes, para reconocer el grupo
+        customer: Array.from(customers.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || '', customerCount: customers.size,
+        turnover: r2(g.turnover), conditions: r2(g.conditions), marketing: r2(g.marketing), total: r2(g.conditions + g.marketing) }))
       .filter(g => g.conditions || g.marketing || g.turnover)
       .sort((a, b) => b.total - a.total || a.group.localeCompare(b.group));
     const sum = (k: 'turnover' | 'conditions' | 'marketing' | 'total') => r2(rows.reduce((s, r) => s + r[k], 0));

@@ -80,13 +80,13 @@ function LmProvisionsSection({ fmt, month, company, reload }: { fmt: Fmt; month:
               <div className="overflow-x-auto">
                 <Table
                   cols={[
-                    { label: t('customerGroup'), nowrap: true }, { label: t('turnover'), align: 'right', mono: true },
+                    { label: t('customerGroup'), wide: true }, { label: t('turnover'), align: 'right', mono: true },
                     { label: t('provConditions'), align: 'right', mono: true }, { label: t('pctTurnover'), align: 'right', mono: true, hideMobile: true },
                     { label: t('provMarketing'), align: 'right', mono: true }, { label: t('pctTurnover'), align: 'right', mono: true, hideMobile: true },
                     { label: t('provTotal'), align: 'right', mono: true },
                   ]}
                   rows={d.rows.map((r: any) => [
-                    `${r.group} (${num(r.lines)})`, money(r.turnover),
+                    <span title={`${num(r.lines)} líneas · ${r.customerCount} clientes`}><span className="font-mono">{r.group}</span>{r.customer && <span className="text-gray-500"> · {r.customer}{r.customerCount > 1 ? ` +${r.customerCount - 1}` : ''}</span>}</span>, money(r.turnover),
                     money(r.conditions), pct(share(r.conditions, r.turnover)),
                     money(r.marketing), pct(share(r.marketing, r.turnover)),
                     money(r.total),

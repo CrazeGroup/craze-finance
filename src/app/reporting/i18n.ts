@@ -70,7 +70,7 @@ const es = {
   kpiProvOrig: 'Provisión original', nEntries: '{n} asientos', kpiConsumed: 'Consumido', consumedSub: '{p} de lo provisionado',
   kpiOpen: 'Abierto', openSub: '{p} sin consumir', kpiMonthProv: 'Dotación {month}', monthOpenSub: 'Abierto del mes: {v}',
   byProvType: 'Por tipo de provisión', typeSummary: 'Resumen por tipo', original: 'Original', pctConsumed: '% consumo', provDetail: 'Detalle por documento', description: 'Descripción',
-  pt_konditions: 'Konditions', pt_marketing: 'Marketing', pt_royalties: 'Royalties', pt_incentives: 'Incentivos', pt_other: 'Otros',
+  pt_konditions: 'Konditions', pt_marketing: 'Marketing', pt_amazon: 'Amazon Promotion', pt_royalties: 'Royalties', pt_incentives: 'Incentivos', pt_other: 'Otros',
 
   bwaTitle: 'BWA · cuenta de resultados', bwaSource: 'Business Central · BWA (glEntriesUnion + mapping de cuentas) · GBP {gbp} · CHF {chf}',
   consolidated: 'Consolidado · todas las sociedades', ytdTo: '(acumulado a {month})', periodYtd: 'Enero – {month} (acumulado)', periodMonth: '{month} (mes)',
@@ -155,7 +155,7 @@ const en: Dict = {
   kpiProvOrig: 'Original provision', nEntries: '{n} entries', kpiConsumed: 'Used', consumedSub: '{p} of provisioned',
   kpiOpen: 'Open', openSub: '{p} unused', kpiMonthProv: 'Booked in {month}', monthOpenSub: 'Open from the month: {v}',
   byProvType: 'By provision type', typeSummary: 'Summary by type', original: 'Original', pctConsumed: '% used', provDetail: 'Detail by document', description: 'Description',
-  pt_konditions: 'Conditions', pt_marketing: 'Marketing', pt_royalties: 'Royalties', pt_incentives: 'Incentives', pt_other: 'Other',
+  pt_konditions: 'Conditions', pt_marketing: 'Marketing', pt_amazon: 'Amazon Promotion', pt_royalties: 'Royalties', pt_incentives: 'Incentives', pt_other: 'Other',
 
   bwaTitle: 'BWA · income statement', bwaSource: 'Business Central · BWA (glEntriesUnion + account mapping) · GBP {gbp} · CHF {chf}',
   consolidated: 'Consolidated · all entities', ytdTo: '(year to {month})', periodYtd: 'January – {month} (YTD)', periodMonth: '{month} (month)',
@@ -238,7 +238,7 @@ const de: Dict = {
   kpiProvOrig: 'Gebildete Rückstellung', nEntries: '{n} Buchungen', kpiConsumed: 'Verbraucht', consumedSub: '{p} der Rückstellung',
   kpiOpen: 'Offen', openSub: '{p} nicht verbraucht', kpiMonthProv: 'Zuführung {month}', monthOpenSub: 'Davon offen: {v}',
   byProvType: 'Nach Art der Rückstellung', typeSummary: 'Übersicht nach Art', original: 'Gebildet', pctConsumed: '% Verbrauch', provDetail: 'Details nach Beleg', description: 'Beschreibung',
-  pt_konditions: 'Konditionen', pt_marketing: 'Marketing', pt_royalties: 'Lizenzen', pt_incentives: 'Incentives', pt_other: 'Sonstige',
+  pt_konditions: 'Konditionen', pt_marketing: 'Marketing', pt_amazon: 'Amazon Promotion', pt_royalties: 'Lizenzen', pt_incentives: 'Incentives', pt_other: 'Sonstige',
 
   bwaTitle: 'BWA · Gewinn- und Verlustrechnung', bwaSource: 'Business Central · BWA (glEntriesUnion + Kontenzuordnung) · GBP {gbp} · CHF {chf}',
   consolidated: 'Konsolidiert · alle Gesellschaften', ytdTo: '(kumuliert bis {month})', periodYtd: 'Januar – {month} (kumuliert)', periodMonth: '{month} (Monat)',

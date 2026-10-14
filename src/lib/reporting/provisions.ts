@@ -15,7 +15,7 @@ import { cutoffDate, today } from './period';
 // Importes con el signo de gasto (provisión dotada en positivo). P. ej. PROV-00049 (CRAZE, 30/09/2026):
 // abierto 472.987,87 = saldo de la 3071 13 de toda la serie RST Konditionen.
 
-type ProvType = 'konditions' | 'marketing' | 'royalties' | 'incentives' | 'other';
+type ProvType = 'konditions' | 'marketing' | 'amazon' | 'royalties' | 'incentives' | 'other';
 
 export const PROVISION_DOC_PREFIX = 'PROV-';
 // Nº de cuenta sin espacios ("3071 13" = "307113")
@@ -28,7 +28,9 @@ function provisionType(account: string, description: string): ProvType {
   if (a.includes('KONDITION') || a.startsWith('4769') || d.includes('KONDITION') || d.includes('CONDITION')) return 'konditions';
   if (a.includes('ROYALT') || a.startsWith('6837') || d.includes('ROYALT') || d.includes('LIZENZ')) return 'royalties';
   if (a.startsWith('6020') || d.includes('KAM') || d.includes('INCENTIV') || d.includes('BONUS')) return 'incentives';
-  if (a.includes('MARKETING') || a.includes('AMZPROM') || a.startsWith('6600') || d.includes('MARKETING') || d.includes('PROMOTION')) return 'marketing';
+  // Amazon Promotions (3072 02) va aparte de Marketing
+  if (a.includes('AMZPROM') || a.startsWith('307202') || (d.includes('AMAZON') && !d.includes('EXCL'))) return 'amazon';
+  if (a.includes('MARKETING') || a.startsWith('6600') || d.includes('MARKETING') || d.includes('PROMOTION')) return 'marketing';
   return 'other';
 }
 
@@ -56,7 +58,7 @@ export function buildProvisionRows(entries: GlEntry[], flaggedAccounts: Set<stri
     rows.push({
       doc, date: date0, desc: firstBalance.Description || list[0].Description, account: firstBalance.G_L_Account_No,
       series: accountKey(firstBalance.G_L_Account_No),
-      t: provisionType(expense?.G_L_Account_No || '', firstBalance.Description || ''),
+      t: accountKey(firstBalance.G_L_Account_No) === '307202' ? 'amazon' : provisionType(expense?.G_L_Account_No || '', firstBalance.Description || ''),
       orig: r2(-firstBalance.Amount), cons: 0, open: 0, latest: false,
     });
   }
@@ -92,7 +94,7 @@ export async function fetchProvisionData(ctx: BcContext, date: string) {
 export async function provisionsReport(ctx: BcContext, company: string, month: string, force = false) {
   const date = cutoffDate(month);
   const year = date.substring(0, 4);
-  return cached(`prov3:${company}:${date}`, date < today() ? 12 * HOUR : 1 * HOUR, async () => {
+  return cached(`prov4:${company}:${date}`, date < today() ? 12 * HOUR : 1 * HOUR, async () => {
     const { entries, flagged } = await fetchProvisionData(ctx, date);
     const all = buildProvisionRows(entries, flagged, date, year);
     // Tabla: una fila por serie (su último documento) con la dotación del año; dotación del mes: documentos del mes
@@ -107,7 +109,7 @@ export async function provisionsReport(ctx: BcContext, company: string, month: s
       cons: r2(list.reduce((s, r) => s + r.cons, 0)),
       open: r2(list.reduce((s, r) => s + r.open, 0)),
     });
-    const types: ProvType[] = ['konditions', 'marketing', 'royalties', 'incentives', 'other'];
+    const types: ProvType[] = ['konditions', 'marketing', 'amazon', 'royalties', 'incentives', 'other'];
 
     return {
       date, year,
