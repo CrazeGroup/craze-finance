@@ -71,9 +71,10 @@ function LmProvisionsSection({ fmt, month, company, reload }: { fmt: Fmt; month:
         : !d.rows.length ? <p className="text-sm text-gray-500">{t('noData')}</p>
         : (
           <>
-            <Grid cols={3}>
+            <Grid cols={4}>
               <Kpi label={t('provConditions')} value={money(d.total.conditions)} sub={`${pct(share(d.total.conditions, d.total.turnover))} · ${t('turnover')} ${money(d.total.turnover)}`} />
               <Kpi label={t('provMarketing')} value={money(d.total.marketing)} sub={pct(share(d.total.marketing, d.total.turnover))} />
+              <Kpi label={t('pt_amazon')} value={money(d.total.amazon)} sub={pct(share(d.total.amazon, d.total.turnover))} />
               <Kpi highlight tone="main" label={t('provTotal')} value={money(d.total.total)} sub={pct(share(d.total.total, d.total.turnover))} />
             </Grid>
             <Card>
@@ -83,16 +84,17 @@ function LmProvisionsSection({ fmt, month, company, reload }: { fmt: Fmt; month:
                     { label: t('customerGroup'), wide: true }, { label: t('turnover'), align: 'right', mono: true },
                     { label: t('provConditions'), align: 'right', mono: true }, { label: t('pctTurnover'), align: 'right', mono: true, hideMobile: true },
                     { label: t('provMarketing'), align: 'right', mono: true }, { label: t('pctTurnover'), align: 'right', mono: true, hideMobile: true },
+                    { label: t('pt_amazon'), align: 'right', mono: true },
                     { label: t('provTotal'), align: 'right', mono: true },
                   ]}
                   rows={d.rows.map((r: any) => [
                     <span title={`${num(r.lines)} líneas · ${r.customerCount} clientes`}><span className="font-mono">{r.group}</span>{r.customer && <span className="text-gray-500"> · {r.customer}{r.customerCount > 1 ? ` +${r.customerCount - 1}` : ''}</span>}</span>, money(r.turnover),
                     money(r.conditions), pct(share(r.conditions, r.turnover)),
                     money(r.marketing), pct(share(r.marketing, r.turnover)),
-                    money(r.total),
+                    money(r.amazon), money(r.total),
                   ])}
                   total={[t('total'), money(d.total.turnover), money(d.total.conditions), pct(share(d.total.conditions, d.total.turnover)),
-                    money(d.total.marketing), pct(share(d.total.marketing, d.total.turnover)), money(d.total.total)]}
+                    money(d.total.marketing), pct(share(d.total.marketing, d.total.turnover)), money(d.total.amazon), money(d.total.total)]}
                 />
               </div>
             </Card>
