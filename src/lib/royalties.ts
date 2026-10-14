@@ -267,7 +267,8 @@ async function royaltyRates(ctx: BcContext): Promise<RoyaltyRates> {
   const rows = await bcFetchAll(`${ctx.odataCompanyBase}/${service}`, ctx.token);
   if (!rows.length) throw new Error(`El servicio ${service} de ${ctx.companyName} no devuelve ningún Royalty Code.`);
   const keys = Object.keys(rows[0]);
-  const codeKey = keys.find(k => /^code$/i.test(k));
+  // Código de la licencia: Code o License_No según cómo esté publicada la página 80007
+  const codeKey = keys.find(k => /^code$/i.test(k)) || keys.find(k => /^licen[cs]e_?no$/i.test(k)) || keys.find(k => /^no$/i.test(k));
   const domKey = keys.find(k => /domestic/i.test(k) && !/total/i.test(k));
   const fobKey = keys.find(k => /fob/i.test(k) && !/total/i.test(k));
   if (!codeKey || !domKey) throw new Error(`El servicio ${service} no tiene los campos Code / % Domestic Royalty (campos: ${keys.join(', ')}).`);
