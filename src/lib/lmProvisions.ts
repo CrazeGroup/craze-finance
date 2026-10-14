@@ -23,7 +23,7 @@ export async function lmProvisionsByGroup(ctx: BcContext, company: string, from:
     const service = await findService(ctx);
     const sample = await bcFetchAll(odataUrl(service.url, { $top: '1' }), ctx.token);
     const keys = Object.keys(sample[0] || {});
-    const F = Object.fromEntries((Object.keys(FIELDS) as Key[]).map(k => [k, FIELDS[k].find(c => keys.includes(c)) || null])) as Record<Key, string | null>;
+    const F = Object.fromEntries((Object.keys(FIELDS) as Key[]).map(k => [k, keys.find(key => (FIELDS[k] as readonly string[]).some(c => c.toLowerCase() === key.toLowerCase())) || null])) as Record<Key, string | null>;
     const missing = (['date', 'group', 'conditions', 'marketing'] as Key[]).filter(k => !F[k]);
     if (sample.length && missing.length) {
       throw new Error(`El servicio "${service.name}" no tiene los campos ${missing.join(', ')}. Campos: ${keys.join(', ')}`);
