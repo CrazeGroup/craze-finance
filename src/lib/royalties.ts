@@ -209,7 +209,7 @@ async function bcLines(ctx: BcContext, from: string, to: string): Promise<{ serv
   const missing = REQUIRED.filter(f => !F[f]);
   if (missing.length) {
     throw new RoyaltiesSetupError(
-      `El servicio "${service.name}" no tiene los campos esperados (${missing.join(', ')}).`,
+      `El servicio "${service.name}" no tiene los campos esperados (${missing.join(', ')}). Campos del servicio: ${keys.join(', ')}`,
       { service: service.name, availableFields: keys }
     );
   }
