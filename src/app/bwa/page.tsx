@@ -1,16 +1,13 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  ChevronRight, Search, Download, Filter, TrendingUp, 
-  DollarSign, Package, BarChart3, PieChart, Layers, 
-  ArrowUpRight, ArrowDownRight, Upload, FileSpreadsheet, Trash2, CheckCircle
-} from 'lucide-react';
+import { useCompany } from '@/contexts/CompanyContext';
+import { ChevronRight, Search, Download, Filter, TrendingUp, DollarSign, Package, BarChart3, PieChart, Layers, ArrowUpRight, ArrowDownRight, Upload, FileSpreadsheet, Trash2, CheckCircle, RefreshCw } from 'lucide-react';
 
-const formatCurrency = (val: number) => {
+const formatCurrency = (val: number, currency = 'EUR') => {
   return new Intl.NumberFormat('de-DE', { 
     style: 'currency', 
-    currency: 'EUR',
+    currency,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   }).format(val || 0);
@@ -19,134 +16,38 @@ const formatCurrency = (val: number) => {
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 export default function BWAPage() {
-  const [reports, setReports] = useState<any[]>([]);
-  const [selectedReportId, setSelectedReportId] = useState<number | null>(null);
+  const { selectedCompany } = useCompany();
+  const [year, setYear] = useState<number>(new Date().getFullYear());
   const [bwaData, setBwaData] = useState<any[]>([]);
-  
+  const [kpis, setKpis] = useState<{ code: string; description: string; total: number }[]>([]);
+  const [currency, setCurrency] = useState('EUR');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reload, setReload] = useState({ n: 0, force: false });
+
   const [expandedLevels, setExpandedLevels] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState("");
-  
-  // Upload State
-  const [isUploading, setIsUploading] = useState(false);
-  const [showUploadForm, setShowUploadForm] = useState(false);
-  
-  const [files, setFiles] = useState<{
-    bwaStructure: File | null;
-    purchases: File | null;
-    postingSetup: File | null;
-    glMapping: File | null;
-    items: File | null;
-    chart: File | null;
-    cmHeaders: File | null;
-    cmLines: File | null;
-  }>({
-    bwaStructure: null,
-    purchases: null,
-    postingSetup: null,
-    glMapping: null,
-    items: null,
-    chart: null,
-    cmHeaders: null,
-    cmLines: null
-  });
+  const fmt = (v: number) => formatCurrency(v, currency);
 
+  // BWA del año en directo de BC (líneas BWA, mapeo de cuentas y movimientos contables de la empresa)
   useEffect(() => {
-    fetchReports();
-  }, []);
-
-  useEffect(() => {
-    if (selectedReportId) {
-      loadReport(selectedReportId);
-    } else {
-      setBwaData([]);
-    }
-  }, [selectedReportId]);
-
-  const fetchReports = async () => {
-    try {
-      const res = await fetch('/api/bwa');
-      const data = await res.json();
-      setReports(data);
-      if (data.length > 0 && !selectedReportId) {
-        setSelectedReportId(data[0].id);
-      } else if (data.length === 0) {
-        setShowUploadForm(true);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const loadReport = async (id: number) => {
-    try {
-      const res = await fetch(`/api/bwa/${id}`);
-      const data = await res.json();
-      if (data && data.data) {
-        setBwaData(JSON.parse(data.data));
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleDelete = async (id: number) => {
-    if (!confirm('¿Seguro que quieres borrar este reporte BWA?')) return;
-    try {
-      await fetch(`/api/bwa/${id}`, { method: 'DELETE' });
-      if (selectedReportId === id) {
-        setSelectedReportId(null);
-        setBwaData([]);
-      }
-      fetchReports();
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleUpload = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!files.bwaStructure || !files.purchases) {
-      alert("Faltan archivos obligatorios (BWA Structure y Purchase Lines)");
-      return;
-    }
-
-    setIsUploading(true);
-    const formData = new FormData();
-    Object.entries(files).forEach(([key, file]) => {
-      if (file) formData.append(key, file);
-    });
-
-    try {
-      const res = await fetch('/api/bwa', {
-        method: 'POST',
-        body: formData
-      });
-      
-      if (res.ok) {
-        const newReport = await res.json();
-        setShowUploadForm(false);
-        setFiles({
-          bwaStructure: null,
-          purchases: null,
-          postingSetup: null,
-          glMapping: null,
-          items: null,
-          chart: null,
-          cmHeaders: null,
-          cmLines: null
-        });
-        await fetchReports();
-        setSelectedReportId(newReport.id);
-      } else {
-        const err = await res.json();
-        alert("Error: " + err.error);
-      }
-    } catch (error) {
-      alert("Error de conexión");
-    } finally {
-      setIsUploading(false);
-    }
-  };
+    if (selectedCompany === 'ALL') return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetch(`/api/bwa/live?year=${year}${reload.force ? '&force=1' : ''}`)
+      .then(async res => {
+        const json = await res.json();
+        if (cancelled) return;
+        if (!res.ok) { setError(json.error || 'Error al leer la BWA de BC'); setBwaData([]); return; }
+        setBwaData(json.rows);
+        setKpis(json.kpis || []);
+        setCurrency(json.currency || 'EUR');
+      })
+      .catch(e => { if (!cancelled) setError(e.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedCompany, year, reload]);
 
   const toggleLevel = (levelId: string) => {
     const newSet = new Set(expandedLevels);
@@ -223,18 +124,11 @@ export default function BWAPage() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `BWA_Export_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute("download", `BWA_${selectedCompany}_${year}.csv`.replace(/\s+/g, '_'));
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
-
-  const stats = useMemo(() => {
-    const salesTotal = bwaData.find((d: any) => d.Level === "Total" && d.BwaGroup === "SALES REVENUES")?.Total || 0;
-    const cogsTotal = bwaData.find((d: any) => d.Level === "Total" && d.BwaGroup === "Cost of Goods Sold (COGS)")?.Total || 0;
-    const margin = salesTotal - cogsTotal;
-    return { salesTotal, cogsTotal, margin };
-  }, [bwaData]);
 
   const groups = useMemo(() => {
     const map = new Map();
@@ -245,29 +139,6 @@ export default function BWAPage() {
     return Array.from(map.entries());
   }, [filteredData]);
 
-  const renderFileUploader = (key: keyof typeof files, label: string, optional: boolean = false) => (
-    <div className="relative border-2 border-dashed border-gray-300 rounded-xl p-4 flex flex-col items-center justify-center bg-gray-50/50 hover:bg-gray-100 transition-colors cursor-pointer group h-32">
-      <input
-        type="file"
-        accept=".xlsx,.xls"
-        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-        onChange={(e) => setFiles(prev => ({ ...prev, [key]: e.target.files?.[0] || null }))}
-      />
-      {files[key] ? (
-        <>
-          <CheckCircle className="text-emerald-500 mb-2" size={32} />
-          <span className="text-sm font-semibold text-gray-900 text-center px-2 truncate w-full">{files[key]?.name}</span>
-        </>
-      ) : (
-        <>
-          <FileSpreadsheet className="text-gray-400 group-hover:text-indigo-500 transition-colors mb-2" size={32} />
-          <span className="text-sm font-semibold text-gray-700 text-center px-2">{label}</span>
-          {optional && <span className="text-xs text-gray-400 mt-1">(Opcional)</span>}
-        </>
-      )}
-    </div>
-  );
-
   return (
     <div className="min-h-screen bg-slate-50 p-8 pb-32">
       <header className="flex flex-wrap justify-between items-end mb-8 gap-4">
@@ -276,132 +147,42 @@ export default function BWAPage() {
             <BarChart3 className="text-indigo-600" size={36} /> 
             BWA Analytics Pro
           </h1>
-          <p className="text-gray-700 font-semibold mt-2">Advanced Financial Control & Article-Level Purchase Analysis</p>
+          <p className="text-gray-700 font-semibold mt-2">Cuenta de resultados (BWA) por mes, en directo de Business Central · desglose por cuenta, concepto y proveedor/cliente</p>
         </div>
-        <div className="flex gap-4">
-          <button 
-            onClick={() => setShowUploadForm(!showUploadForm)}
-            className="flex items-center gap-2 bg-black hover:bg-gray-800 text-white px-4 py-2 rounded-lg transition-all shadow-lg"
-          >
-            <Upload size={18} />
-            {showUploadForm ? 'Cerrar Subida' : 'Subir Nuevos Excels'}
+        <div className="flex items-center gap-3">
+          <select value={year} onChange={e => setYear(Number(e.target.value))}
+            className="bg-white border border-gray-300 text-gray-900 text-sm rounded-lg p-2 font-semibold">
+            {Array.from({ length: 4 }, (_, i) => new Date().getFullYear() - i).map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={loading}
+            className="flex items-center gap-2 bg-black hover:bg-gray-800 text-white px-4 py-2 rounded-lg transition-all shadow-lg disabled:opacity-50">
+            <RefreshCw size={18} className={loading ? 'animate-spin' : ''} /> {loading ? 'Leyendo BC…' : 'Actualizar desde BC'}
           </button>
         </div>
       </header>
 
-      {showUploadForm && (
-        <div className="mb-8 bg-white p-6 rounded-2xl border border-gray-200 shadow-xl">
-          <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-            <Upload size={20} className="text-indigo-600" /> Sube tus documentos de Business Central
-          </h2>
-          <form onSubmit={handleUpload}>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              {renderFileUploader('bwaStructure', 'data (16).xlsx')}
-              {renderFileUploader('purchases', 'Purchase Invoice Lines')}
-              {renderFileUploader('postingSetup', 'General Posting Setup')}
-              {renderFileUploader('glMapping', 'G/L Accounts Mapping')}
-              {renderFileUploader('items', 'Items')}
-              {renderFileUploader('chart', 'Chart of Accounts')}
-              {renderFileUploader('cmHeaders', 'Credit Memos Headers', true)}
-              {renderFileUploader('cmLines', 'Credit Memo Lines', true)}
-            </div>
-            <div className="flex justify-end">
-              <button 
-                type="submit"
-                disabled={isUploading}
-                className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-indigo-200 disabled:opacity-50 flex items-center gap-2"
-              >
-                {isUploading ? <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-white"></div> : <BarChart3 size={18} />}
-                {isUploading ? 'Procesando BWA...' : 'Generar BWA Analytics'}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Select Report */}
-      {reports.length > 0 && (
-        <div className="mb-8 flex items-center gap-4 bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-          <span className="font-semibold text-gray-700">Ver reporte de:</span>
-          <select 
-            value={selectedReportId || ''} 
-            onChange={(e) => setSelectedReportId(Number(e.target.value))}
-            className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block p-2 outline-none font-medium"
-          >
-            {reports.map((r: any) => (
-              <option key={r.id} value={r.id}>
-                Generado el {new Date(r.date).toLocaleString()}
-              </option>
-            ))}
-          </select>
-          
-          {selectedReportId && (
-            <button 
-              onClick={() => handleDelete(selectedReportId)}
-              className="ml-auto text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-lg transition-colors flex items-center gap-1 text-sm font-bold"
-            >
-              <Trash2 size={16} /> Borrar Reporte
-            </button>
-          )}
-        </div>
-      )}
+      {selectedCompany === 'ALL' && <p className="text-sm text-gray-600 mb-6">Selecciona una empresa concreta en el menú lateral.</p>}
+      {error && <p className="mb-6 bg-white border border-red-200 rounded-xl p-4 text-sm text-red-700">{error}</p>}
+      {loading && !bwaData.length && <p className="mb-6 text-sm text-gray-500">Leyendo la BWA {year} de Business Central…</p>}
 
       {bwaData.length > 0 && (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-xl relative overflow-hidden group hover:-translate-y-1 transition-transform">
-              <div className="flex justify-between items-start mb-4">
-                <h3 className="text-gray-500 font-bold text-sm tracking-wider uppercase">Revenue</h3>
-                <div className="p-2 bg-emerald-100 text-emerald-600 rounded-lg group-hover:scale-110 transition-transform">
-                  <DollarSign size={24} />
+            {kpis.map((k, i) => {
+              const base = kpis[0]?.total || 0;
+              const Icon = [DollarSign, Package, TrendingUp, PieChart][i] || BarChart3;
+              return (
+                <div key={k.code} className="bg-white rounded-2xl p-6 border border-gray-100 shadow-xl relative overflow-hidden">
+                  <div className="flex justify-between items-start mb-4">
+                    <h3 className="text-gray-500 font-bold text-sm tracking-wider uppercase">{k.code} {k.description}</h3>
+                    <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg"><Icon size={24} /></div>
+                  </div>
+                  <div className="text-3xl font-black text-gray-900 mb-2">{fmt(k.total)}</div>
+                  {i > 0 && base ? <div className="text-sm font-bold text-gray-500">{(k.total / base * 100).toFixed(1)}% sobre {kpis[0].description}</div> : <div className="text-sm font-bold text-gray-500">Acumulado {year}</div>}
                 </div>
-              </div>
-              <div className="text-3xl font-black text-gray-900 mb-2">{formatCurrency(stats.salesTotal)}</div>
-              <div className="text-sm font-bold text-emerald-600 flex items-center gap-1">
-                <ArrowUpRight size={16} /> +12.5% vs LY
-              </div>
-            </div>
-
-            <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-xl relative overflow-hidden group hover:-translate-y-1 transition-transform">
-              <div className="flex justify-between items-start mb-4">
-                <h3 className="text-gray-500 font-bold text-sm tracking-wider uppercase">Direct Costs</h3>
-                <div className="p-2 bg-red-100 text-red-600 rounded-lg group-hover:scale-110 transition-transform">
-                  <Package size={24} />
-                </div>
-              </div>
-              <div className="text-3xl font-black text-gray-900 mb-2">{formatCurrency(stats.cogsTotal)}</div>
-              <div className="text-sm font-bold text-red-500 flex items-center gap-1">
-                <ArrowDownRight size={16} /> +4.2% vs Budget
-              </div>
-            </div>
-
-            <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-xl relative overflow-hidden group hover:-translate-y-1 transition-transform">
-              <div className="flex justify-between items-start mb-4">
-                <h3 className="text-gray-500 font-bold text-sm tracking-wider uppercase">Gross Profit</h3>
-                <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg group-hover:scale-110 transition-transform">
-                  <TrendingUp size={24} />
-                </div>
-              </div>
-              <div className="text-3xl font-black text-gray-900 mb-2">{formatCurrency(stats.margin)}</div>
-              <div className="text-sm font-bold text-emerald-600 flex items-center gap-1">
-                <ArrowUpRight size={16} /> +8.1% vs LY
-              </div>
-            </div>
-
-            <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-xl relative overflow-hidden group hover:-translate-y-1 transition-transform">
-              <div className="flex justify-between items-start mb-4">
-                <h3 className="text-gray-500 font-bold text-sm tracking-wider uppercase">Margin Ratio</h3>
-                <div className="p-2 bg-blue-100 text-blue-600 rounded-lg group-hover:scale-110 transition-transform">
-                  <PieChart size={24} />
-                </div>
-              </div>
-              <div className="text-3xl font-black text-gray-900 mb-2">{(stats.margin / stats.salesTotal * 100).toFixed(2)}%</div>
-              <div className="text-sm font-bold text-gray-500 flex items-center gap-1">
-                Operational efficiency stable
-              </div>
-            </div>
+              );
+            })}
           </div>
-
           <div className="bg-white border border-gray-200 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-md">
             <div className="p-6 border-b border-gray-100 flex flex-wrap justify-between items-center bg-gray-50/50 gap-4">
               <div className="flex items-center gap-3">
@@ -473,11 +254,11 @@ export default function BWAPage() {
                               </td>
                               {months.map(m => (
                                 <td key={m} className={`p-4 text-right font-medium ${level.Level === 'Total' ? 'text-gray-900 font-bold bg-gray-50/50' : 'text-gray-600'}`}>
-                                  {formatCurrency(level.Values[m])}
+                                  {fmt(level.Values[m])}
                                 </td>
                               ))}
                               <td className={`p-4 text-right font-black ${level.Level === 'Total' ? 'text-indigo-700 bg-indigo-50' : 'text-gray-900 bg-gray-50/50'}`}>
-                                {formatCurrency(level.Total)}
+                                {fmt(level.Total)}
                               </td>
                             </tr>
                             {isExpanded && hasDetail && (
@@ -502,10 +283,10 @@ export default function BWAPage() {
                                             <td className="py-2 text-gray-600 truncate max-w-[150px] font-medium" title={d.Vendor}>{d.Vendor}</td>
                                             {months.map(m => (
                                               <td key={m} className="py-2 text-right text-gray-600 font-medium">
-                                                {d.Values[m] !== 0 ? formatCurrency(d.Values[m]) : '-'}
+                                                {d.Values[m] !== 0 ? fmt(d.Values[m]) : '-'}
                                               </td>
                                             ))}
-                                            <td className="py-2 text-right text-indigo-900 font-bold">{formatCurrency(d.Total)}</td>
+                                            <td className="py-2 text-right text-indigo-900 font-bold">{fmt(d.Total)}</td>
                                           </tr>
                                         ))}
                                       </tbody>
