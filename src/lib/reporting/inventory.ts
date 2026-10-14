@@ -59,7 +59,7 @@ export async function fetchSnapshots(ctx: BcContext, dates: string[]): Promise<R
 }
 
 // Instantáneas en caché: las fechas pasadas 24 h, la de hoy 2 h
-async function snapshotsAt(ctx: BcContext, company: string, dates: string[], force: boolean) {
+export async function snapshotsAt(ctx: BcContext, company: string, dates: string[], force: boolean) {
   const t = today();
   const out: Record<string, InvSnapshot> = {};
   let fetched: Record<string, InvSnapshot> | null = null;
