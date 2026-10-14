@@ -8,12 +8,10 @@ import { Lang, LANGS, makeT } from './i18n';
 import { KeyPoints } from './ui';
 import OperationalView, { Loaded } from './OperationalView';
 import ManagementView from './ManagementView';
-import ProvisionView from './ProvisionView';
 
 const SECTIONS = ['inventory', 'purchases', 'receivables', 'payables', 'provisions', 'bwa', 'cashflow'] as const;
 type SectionKey = typeof SECTIONS[number];
-type SummaryView = 'operational' | 'management';
-type View = SummaryView | 'provision';
+type View = 'operational' | 'management';
 
 const monthKey = (d: Date) => d.toISOString().substring(0, 7);
 const shift = (ym: string, n: number) => { const [y, m] = ym.split('-').map(Number); return monthKey(new Date(Date.UTC(y, m - 1 + n, 1))); };
@@ -23,7 +21,7 @@ const store = {
 };
 
 // Cifras compactas que se envían a la IA para redactar los puntos clave de cada vista
-function summaryInput(view: SummaryView, d: Record<SectionKey, any>) {
+function summaryInput(view: View, d: Record<SectionKey, any>) {
   if (view === 'operational') {
     const inv = d.inventory, pur = d.purchases, ar = d.receivables;
     return {
@@ -54,7 +52,7 @@ function summaryInput(view: SummaryView, d: Record<SectionKey, any>) {
 }
 
 type SummaryState = { points: string[] | null; loading: boolean; error: string | null; waiting: boolean };
-const VIEW_SECTIONS: Record<SummaryView, SectionKey[]> = {
+const VIEW_SECTIONS: Record<View, SectionKey[]> = {
   operational: ['inventory', 'purchases', 'receivables'],
   management: ['receivables', 'payables', 'provisions', 'bwa', 'cashflow'],
 };
@@ -69,13 +67,13 @@ export default function ReportingPage() {
   const [sections, setSections] = useState<Record<SectionKey, Loaded>>(
     () => Object.fromEntries(SECTIONS.map(s => [s, { data: null, loading: true, error: null }])) as Record<SectionKey, Loaded>
   );
-  const [summaries, setSummaries] = useState<Record<SummaryView, SummaryState>>({
+  const [summaries, setSummaries] = useState<Record<View, SummaryState>>({
     operational: { points: null, loading: false, error: null, waiting: true },
     management: { points: null, loading: false, error: null, waiting: true },
   });
-  const [summaryForce, setSummaryForce] = useState<Record<SummaryView, number>>({ operational: 0, management: 0 });
+  const [summaryForce, setSummaryForce] = useState<Record<View, number>>({ operational: 0, management: 0 });
   // Nº de petición por vista: se descartan respuestas de peticiones anteriores (otro mes o idioma)
-  const summaryReq = useRef<Record<SummaryView, number>>({ operational: 0, management: 0 });
+  const summaryReq = useRef<Record<View, number>>({ operational: 0, management: 0 });
 
   const fmt = useMemo(() => makeT(lang), [lang]);
   const { t } = fmt;
@@ -84,7 +82,7 @@ export default function ReportingPage() {
     const l = store.get('crz-lang') as Lang | null;
     if (l && LANGS.includes(l)) setLang(l);
     const v = store.get('crz-view') as View | null;
-    if (v === 'operational' || v === 'management' || v === 'provision') setView(v);
+    if (v === 'operational' || v === 'management') setView(v);
   }, []);
 
   // Carga de todos los bloques (en paralelo; los pesados quedan en caché en el servidor)
@@ -105,9 +103,9 @@ export default function ReportingPage() {
   }, [month, reload, selectedCompany]);
 
   // Puntos clave de cada vista, cuando sus bloques han cargado
-  const viewReady = useCallback((v: SummaryView) => VIEW_SECTIONS[v].every(s => !sections[s].loading), [sections]);
+  const viewReady = useCallback((v: View) => VIEW_SECTIONS[v].every(s => !sections[s].loading), [sections]);
   useEffect(() => {
-    for (const v of ['operational', 'management'] as SummaryView[]) {
+    for (const v of ['operational', 'management'] as View[]) {
       if (!viewReady(v)) { setSummaries(prev => ({ ...prev, [v]: { points: null, loading: false, error: null, waiting: true } })); continue; }
       const data = summaryInput(v, Object.fromEntries(SECTIONS.map(s => [s, sections[s].data])) as Record<SectionKey, any>);
       const req = ++summaryReq.current[v];
@@ -159,8 +157,6 @@ export default function ReportingPage() {
     </div>
   );
 
-  const provision = <ProvisionView fmt={fmt} month={month} company={company} prov={sections.provisions} reload={reload} />;
-
   return (
     <div className="rpt-root min-h-screen bg-[#F3F4F7] pb-24">
       <header className="rpt-header sticky top-0 z-20 bg-white border-b border-gray-200">
@@ -174,9 +170,9 @@ export default function ReportingPage() {
           </div>
           <div className="rpt-noprint flex flex-wrap items-center gap-3">
             <div className="flex bg-gray-100 rounded-lg p-1">
-              {(['operational', 'management', 'provision'] as View[]).map(v => (
+              {(['operational', 'management'] as View[]).map(v => (
                 <button key={v} onClick={() => changeView(v)} className={`px-4 py-1.5 rounded-md text-sm font-semibold ${view === v ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
-                  {t(v === 'operational' ? 'operational' : v === 'management' ? 'management' : 'provisionTab')}
+                  {t(v === 'operational' ? 'operational' : 'management')}
                 </button>
               ))}
             </div>
@@ -207,7 +203,7 @@ export default function ReportingPage() {
             <div className="rpt-pagebreak" />
             {management}
           </>
-        ) : view === 'operational' ? operational : view === 'management' ? management : provision}
+        ) : view === 'operational' ? operational : management}
         <p className="text-xs text-gray-500 border-t border-gray-200 pt-4">{t('footer')}</p>
       </main>
     </div>
