@@ -2,17 +2,15 @@ import prisma from '@/lib/prisma';
 import { bcFetchAll, BcContext, getBcContext, odataUrl } from '@/lib/bcClient';
 import { cached, HOUR, readSetting } from '@/lib/reporting/cache';
 import { today } from '@/lib/reporting/period';
-import { DEFAULT_ROYALTY_RATES } from '@/lib/royaltyRates';
 
 // Royalties: líneas de la tabla 60000 "AIT Document LM Components" (página 60000 "AIT Documents LM Components").
-// Se leen de BC (servicio web OData de la página) o, mientras no esté disponible, de la última exportación
-// a Excel de esa página subida en la app. Sin líneas "Main Item" ni ventas intercompañía, agrupado por
+// Se leen de BC (servicio web OData de la página, AIT_60000_LMComponents). Sin líneas "Main Item" ni ventas intercompañía, agrupado por
 // Royalty Code × país de facturación × artículo. El Royalty Code de la LM no se usa: se toma siempre de la ficha
 // del artículo (tabla 27) en CRAZE GmbH, que es donde está bien mantenido (en otras empresas, como UK, no siempre).
 // La provisión tampoco se toma de la LM: se recalcula con el % de cada Royalty Code de la tabla 80007 RoyaltiesCRZ
 // de CRAZE GmbH (Turnover × % Domestic Royalty; % FOB Royalty en ventas con condición de envío FOB).
 
-// Línea normalizada (BC o Excel). Las líneas Main Item no se guardan.
+// Línea normalizada de la LM de BC. Las líneas Main Item no se guardan.
 export type LmLine = {
   date: string; code: string; country: string; item: string; desc: string;
   qty: number; turnover: number; provision: number;
@@ -278,26 +276,12 @@ async function royaltyRates(ctx: BcContext): Promise<RoyaltyRates> {
   }]));
 }
 
-// Excel de la página 80007 "Royalties" subido en la app (para cuando RoyaltiesCRZ no se puede leer de BC)
-const RATES_UPLOAD_KEY = 'royalties:rates-upload';
-export type StoredRates = { fileName: string; uploadedAt: string; rates: RoyaltyRates };
-
-export async function saveRatesUpload(upload: StoredRates) {
-  const config = JSON.stringify(upload);
-  await prisma.apiConfig.upsert({ where: { key: RATES_UPLOAD_KEY }, update: { config }, create: { key: RATES_UPLOAD_KEY, url: '', config } });
-}
-
-async function loadRatesUpload(): Promise<StoredRates | null> {
-  const row = await prisma.apiConfig.findUnique({ where: { key: RATES_UPLOAD_KEY } });
-  return row?.config ? JSON.parse(row.config) as StoredRates : null;
-}
-
 // Datos maestros de CRAZE GmbH: Royalty Code por artículo y % por Royalty Code.
-// % de royalty: RoyaltiesCRZ de BC → Excel de royalties subido → tabla fija de royaltyRates.ts
+// % de royalty: RoyaltiesCRZ de BC; si no se puede leer, se mantiene la provisión que trae la LM de BC
 async function loadMasterData(ctx: BcContext | null, force: boolean) {
   const out = {
     itemCodes: null as Record<string, string> | null, itemsError: null as string | null,
-    rates: null as RoyaltyRates | null, ratesSource: 'bc' as 'bc' | 'excel' | 'default', ratesInfo: null as string | null, ratesBcError: null as string | null,
+    rates: null as RoyaltyRates | null, ratesSource: 'bc' as 'bc' | 'lm', ratesBcError: null as string | null,
   };
   let gmbh: BcContext | null = null;
   try {
@@ -316,18 +300,7 @@ async function loadMasterData(ctx: BcContext | null, force: boolean) {
     if (rates.status === 'fulfilled') out.rates = rates.value;
     else { out.ratesBcError = rates.reason?.message || String(rates.reason); console.error('Royalties rates:', rates.reason); }
   }
-  if (!out.rates) {
-    const uploaded = await loadRatesUpload();
-    if (uploaded) {
-      out.rates = uploaded.rates;
-      out.ratesSource = 'excel';
-      out.ratesInfo = `${uploaded.fileName} (cargado el ${uploaded.uploadedAt.substring(0, 10).split('-').reverse().join('/')})`;
-    } else {
-      out.rates = DEFAULT_ROYALTY_RATES;
-      out.ratesSource = 'default';
-      out.ratesInfo = 'tabla Royalties de CRAZE GmbH del 08/10/2026';
-    }
-  }
+  if (!out.rates) out.ratesSource = 'lm';
   return out;
 }
 
@@ -360,66 +333,19 @@ async function eurRate(ctx: BcContext | null, currency: string, force: boolean) 
   }
 }
 
-// ---------- Excel subido ----------
-
-const UPLOAD_PREFIX = 'royalties:upload:';
-// Formato guardado: descripciones por artículo aparte para que quepa en el límite de Vercel
-export type StoredUpload = {
-  fileName: string; uploadedAt: string; from: string; to: string;
-  desc: Record<string, string>;
-  // [fecha, código, país, artículo, cantidad, turnover, provisión, nº cliente, cliente, dimensión, grupo IVA, cond. envío]
-  lines: [string, string, string, string, number, number, number, string, string, string, string, string?][];
-};
-
-export async function saveUpload(company: string, upload: StoredUpload) {
-  const config = JSON.stringify(upload);
-  const key = UPLOAD_PREFIX + company;
-  await prisma.apiConfig.upsert({ where: { key }, update: { config }, create: { key, url: '', config } });
-}
-
-async function loadUpload(company: string): Promise<{ meta: Omit<StoredUpload, 'lines' | 'desc'> & { hasShipment: boolean }; lines: LmLine[] } | null> {
-  const row = await prisma.apiConfig.findUnique({ where: { key: UPLOAD_PREFIX + company } });
-  if (!row?.config) return null;
-  const u = JSON.parse(row.config) as StoredUpload;
-  const lines = u.lines.map(([date, code, country, item, qty, turnover, provision, custNo, custName, dim, vatBus, ship]) => ({
-    date, code, country, item, desc: u.desc[item] || '', qty, turnover, provision, custNo, custName, dim, vatBus, ship: ship || '',
-  }));
-  // Los Excel subidos antes de guardar la condición de envío no distinguen las ventas FOB
-  const hasShipment = u.lines.some(l => l[11] !== undefined);
-  return { meta: { fileName: u.fileName, uploadedAt: u.uploadedAt, from: u.from, to: u.to, hasShipment }, lines };
-}
-
 // ---------- Informe ----------
 
 export async function royaltiesReport(ctx: BcContext | null, company: string, from: string, to: string, force = false, trackDates = false) {
-  let bcError: string | null = null;
   const master = await loadMasterData(ctx, force);
   const currency = companyCurrency(company);
   const fx = currency === 'EUR' ? null : await eurRate(ctx, currency, force);
-  const masterInfo = { currency, fx, itemsError: master.itemsError, ratesSource: master.ratesSource, ratesInfo: master.ratesInfo, ratesBcError: master.ratesBcError };
-  if (ctx) {
-    try {
-      // Se guardan las líneas (no el agregado) para aplicar los Royalty Codes de artículo vigentes
-      const fromBc = await cached(`royalties:lines:${company}:${from}:${to}`, to < today() ? 12 * HOUR : 1 * HOUR, () => bcLines(ctx, from, to), force);
-      return {
-        from, to, company, source: 'bc' as const, service: fromBc.service, ...masterInfo,
-        ...buildReport(fromBc.lines, from, to, await intergroupCustomers(company), master.itemCodes, master.rates, excludedCodesFor(company), trackDates),
-      };
-    } catch (e: any) {
-      bcError = e.message;
-      if (!(e instanceof RoyaltiesSetupError)) console.error('Royalties BC:', e);
-    }
-  }
-  const upload = await loadUpload(company);
-  if (!upload) {
-    throw new RoyaltiesSetupError(
-      `${bcError ? bcError + ' ' : ''}Mientras tanto, puedes cargar la exportación a Excel de la página "Documents LM Components".`,
-      {}
-    );
-  }
+  const masterInfo = { currency, fx, itemsError: master.itemsError, ratesSource: master.ratesSource, ratesBcError: master.ratesBcError };
+  if (!ctx) throw new RoyaltiesSetupError('No se ha podido conectar con Business Central.', {});
+  // Se guardan las líneas (no el agregado) para aplicar los Royalty Codes de artículo vigentes
+  const fromBc = await cached(`royalties:lines:${company}:${from}:${to}`, to < today() ? 12 * HOUR : 1 * HOUR, () => bcLines(ctx, from, to), force);
   return {
-    from, to, company, source: 'excel' as const, upload: upload.meta, bcError, ...masterInfo,
-    ...buildReport(upload.lines, from, to, await intergroupCustomers(company), master.itemCodes, master.rates, excludedCodesFor(company), trackDates),
+    from, to, company, source: 'bc' as const, service: fromBc.service, ...masterInfo,
+    ...buildReport(fromBc.lines, from, to, await intergroupCustomers(company), master.itemCodes, master.rates, excludedCodesFor(company), trackDates),
   };
 }
 
@@ -429,7 +355,7 @@ export async function royaltiesReport(ctx: BcContext | null, company: string, fr
 export const GROUP_COMPANIES = ['CRAZE', 'Craze Iberia SL', 'Craze UK', 'CRAZE Group AG', 'Craze Entertainment'];
 
 // Provisión de royalties por licencia y empresa, en la divisa de cada empresa (la conversión a EUR la hace
-// la página con el tipo de Currencies_Excel, editable). Cada empresa sale de BC o de su último Excel LM.
+// la página con el tipo de Currencies_Excel, editable). Cada empresa sale de BC.
 export async function groupRoyaltiesReport(from: string, to: string, force = false, trackDates = false) {
   const one = async (company: string) => {
     const currency = companyCurrency(company);
@@ -446,13 +372,13 @@ export async function groupRoyaltiesReport(from: string, to: string, force = fal
       });
       return {
         company, currency, fx: r.fx?.rate ?? null, fxDate: r.fx?.date ?? null, byCode, byCodeCountry, dated: r.dated, error: null as string | null,
-        source: r.source, upload: r.source === 'excel' ? r.upload : undefined,
+        source: r.source,
       };
     } catch (e: any) {
       return {
         company, currency, fx: null, fxDate: null, byCode: {} as Record<string, number>,
         byCodeCountry: {} as Record<string, Record<string, number>>, dated: {} as Record<string, Record<string, Record<string, number>>>,
-        error: e.message as string, source: null, upload: undefined,
+        error: e.message as string, source: null,
       };
     }
   };

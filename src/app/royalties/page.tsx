@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { AlertCircle, ArrowDown, ArrowUp, Download, FileSpreadsheet, RefreshCw, Search, Upload } from 'lucide-react';
+import { AlertCircle, ArrowDown, ArrowUp, Download, RefreshCw, Search } from 'lucide-react';
 import { useCompany } from '@/contexts/CompanyContext';
 
 type Row = {
@@ -12,10 +12,9 @@ type Row = {
 };
 type Report = {
   from: string; to: string; company: string; rows: Row[];
-  source: 'bc' | 'excel'; service?: string; bcError?: string | null; itemsError?: string | null;
+  source: 'bc'; service?: string; itemsError?: string | null;
   currency: string; fx: { rate: number | null; date: string | null; error: string | null } | null;
-  ratesSource?: 'bc' | 'excel' | 'default'; ratesInfo?: string | null; ratesBcError?: string | null;
-  upload?: { fileName: string; uploadedAt: string; from: string; to: string; hasShipment: boolean };
+  ratesSource?: 'bc' | 'lm'; ratesBcError?: string | null;
   stats: { lines: number; ic: { lines: number; turnover: number; provision: number }; noItemCard: string[]; noRate: string[];
     excluded: { codes: string[]; lines: number; turnover: number } };
 };
@@ -52,64 +51,6 @@ const COLUMNS: { key: SortKey; label: string; num?: boolean }[] = [
   { key: 'fob', label: '% FOB', num: true },
 ];
 
-// Lee la exportación a Excel de la página 60000 "Documents LM Components" y deja solo lo necesario
-// (sin líneas Main Item), con las descripciones por artículo aparte para que el envío sea pequeño
-async function parseLmExcel(file: File) {
-  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-  // La hoja de datos (puede haber otras, p. ej. una tabla dinámica añadida)
-  const sheet = wb.SheetNames.map(n => XLSX.utils.sheet_to_json<any[]>(wb.Sheets[n], { header: 1, defval: null }))
-    .find(r => (r[0] || []).some((h: any) => String(h ?? '').trim() === 'Royalty Code'));
-  const rows = sheet || [];
-  const header = (rows[0] || []).map((h: any) => String(h ?? '').trim());
-  const col = (name: string) => header.indexOf(name);
-  const C = {
-    date: col('Posting Date'), code: col('Royalty Code'), country: col('Bill-to Country/Region Code'), item: col('No.'),
-    desc: col('Description'), qty: col('Quantity'), turnover: col('Turnover Net of Provision Sales'), provision: col('Provision Royalties'),
-    main: col('Main Item'), custNo: col('Bill-to Customer No.'), custName: col('Bill-to Customer Name'),
-    dim: col('Customer Dimension Name'), vatBus: col('VAT Bus. Posting Group'), ship: col('Shipment Method Code'),
-  };
-  const missing = Object.entries(C).filter(([k, i]) => i < 0 && !['dim', 'vatBus', 'ship'].includes(k)).map(([k]) => k);
-  if (missing.length) throw new Error(`El Excel no parece una exportación de "Documents LM Components" (faltan columnas: ${missing.join(', ')}).`);
-
-  const toIso = (v: any): string => {
-    if (typeof v === 'number') { const d = XLSX.SSF.parse_date_code(v); return `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}`; }
-    const t = String(v ?? '').trim();
-    const m = t.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})/);
-    return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : t.substring(0, 10);
-  };
-  const s = (v: any) => (v == null ? '' : String(v).trim());
-  const n = (v: any) => (typeof v === 'number' ? v : parseFloat(v) || 0);
-  const isMain = (v: any) => v === true || v === 1 || v === '1' || v === 'true' || v === 'Sí' || v === 'Yes';
-
-  const desc: Record<string, string> = {};
-  const lines: any[][] = [];
-  for (const r of rows.slice(1)) {
-    if (!r || r[C.item] == null || isMain(r[C.main])) continue;
-    const item = s(r[C.item]);
-    if (!desc[item]) desc[item] = s(r[C.desc]);
-    lines.push([toIso(r[C.date]), s(r[C.code]), s(r[C.country]), item, n(r[C.qty]), n(r[C.turnover]), n(r[C.provision]),
-      s(r[C.custNo]), s(r[C.custName]), C.dim >= 0 ? s(r[C.dim]) : '', C.vatBus >= 0 ? s(r[C.vatBus]) : '', C.ship >= 0 ? s(r[C.ship]) : '']);
-  }
-  const dates = lines.map(l => l[0] as string).filter(Boolean).sort();
-  return { fileName: file.name, from: dates[0] || '', to: dates[dates.length - 1] || '', desc, lines };
-}
-
-// Excel de la página 80007 "Royalties" de BC: % de royalty por Royalty Code (null si no es ese Excel)
-async function parseRatesExcel(file: File) {
-  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-  const rows = XLSX.utils.sheet_to_json<any[]>(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: null });
-  const header = (rows[0] || []).map((h: any) => String(h ?? '').trim());
-  const code = header.indexOf('Code'), dom = header.indexOf('% Domestic Royalty'), fob = header.indexOf('% Fob Royalty');
-  if (code < 0 || dom < 0) return null;
-  const n = (v: any) => (typeof v === 'number' ? v : parseFloat(String(v ?? '').replace(',', '.')) || 0);
-  const rates: Record<string, { domestic: number; fob: number }> = {};
-  for (const r of rows.slice(1)) {
-    const c = String(r?.[code] ?? '').trim().toUpperCase();
-    if (c) rates[c] = { domestic: n(r[dom]) / 100, fob: n(r[fob >= 0 ? fob : dom]) / 100 };
-  }
-  return { kind: 'rates', fileName: file.name, rates };
-}
-
 const sum = (rows: Row[], k: 'qty' | 'turnover' | 'turnoverFob' | 'provision') => rows.reduce((s, r) => s + r[k], 0);
 
 export default function RoyaltiesPage() {
@@ -125,27 +66,9 @@ export default function RoyaltiesPage() {
   const [search, setSearch] = useState('');
   const [hideNotApplied, setHideNotApplied] = useState(false);
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 } | null>(null);
-  const [uploading, setUploading] = useState(false);
   // Conversión a EUR (UK en GBP, AG en CHF): tipo de BC, editable
   const [inEur, setInEur] = useState(false);
   const [fxInput, setFxInput] = useState('');
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  const uploadExcel = async (file: File) => {
-    setUploading(true);
-    try {
-      const payload = (await parseRatesExcel(file)) || (await parseLmExcel(file));
-      const res = await fetch('/api/royalties/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error || `Error al subir el Excel (${res.status})`);
-      setReload(r => ({ n: r.n + 1, force: false }));
-    } catch (e: any) {
-      alert(e.message);
-    } finally {
-      setUploading(false);
-      if (fileRef.current) fileRef.current.value = '';
-    }
-  };
 
   useEffect(() => {
     if (selectedCompany === 'ALL' || !range.from || !range.to || range.from > range.to) return;
@@ -289,11 +212,6 @@ export default function RoyaltiesPage() {
               className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">
               <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             </button>
-            <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e => e.target.files?.[0] && uploadExcel(e.target.files[0])} />
-            <button onClick={() => fileRef.current?.click()} disabled={uploading || selectedCompany === 'ALL'} title='Cargar la exportación a Excel de "Documents LM Components" (líneas de la empresa) o de "Royalties" (% por Royalty Code)'
-              className="flex items-center gap-2 border border-gray-300 bg-white text-gray-700 text-sm font-semibold px-3 py-2 rounded-lg hover:text-gray-900 disabled:opacity-40">
-              <Upload size={16} className={uploading ? 'animate-pulse' : ''} /> {uploading ? 'Cargando…' : 'Cargar Excel'}
-            </button>
             <button onClick={exportExcel} disabled={loading || !visible.length}
               className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
               <Download size={16} /> Exportar Excel
@@ -312,24 +230,10 @@ export default function RoyaltiesPage() {
           <p className="text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Leyendo líneas de royalties de Business Central…</p>
         ) : data && (
           <>
-            {data.source === 'excel' && data.upload && (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900 flex items-start gap-2">
-                <FileSpreadsheet size={16} className="mt-0.5 shrink-0" />
-                <div>
-                  Datos del Excel <b>{data.upload.fileName}</b> (cargado el {new Date(data.upload.uploadedAt).toLocaleString('es-ES')}, líneas del {dateEs(data.upload.from)} al {dateEs(data.upload.to)}), no de Business Central en directo.
-                  {(range.from < data.upload.from || range.to > data.upload.to) && <> El periodo elegido sale del rango del Excel: las fechas fuera de él no tienen datos.</>}
-                  {!data.upload.hasShipment && (
-                    <b className="block mt-1">Este Excel se cargó sin la condición de envío: las ventas FOB se están calculando con el % Domestic. Vuelve a cargarlo para aplicar el % FOB.</b>
-                  )}
-                  {data.bcError && <span className="block text-xs text-amber-700 mt-1">BC: {data.bcError}</span>}
-                </div>
-              </div>
-            )}
-            {data.ratesSource && data.ratesSource !== 'bc' && (
-              <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700">
-                % de royalty tomados de {data.ratesSource === 'excel' ? <>el Excel <b>{data.ratesInfo}</b></> : <>la <b>{data.ratesInfo}</b></>}, no de RoyaltiesCRZ en directo.
-                Para actualizarlos, carga con &quot;Cargar Excel&quot; la exportación de la página Royalties de CRAZE GmbH.
-                {data.ratesBcError && <span className="block text-xs text-gray-500 mt-1">BC: {data.ratesBcError}</span>}
+            {data.ratesSource === 'lm' && (
+              <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-800">
+                No se han podido leer los % de royalty de RoyaltiesCRZ (CRAZE GmbH): la provisión mostrada es la que calcula la LM de BC, sin recalcular.
+                {data.ratesBcError && <span className="block text-xs mt-1">{data.ratesBcError}</span>}
               </div>
             )}
             {data.stats.excluded.codes.length > 0 && (
@@ -473,7 +377,7 @@ export default function RoyaltiesPage() {
               </div>
             </section>
             <p className="text-xs text-gray-500">
-              Fuente: página 60000 &quot;AIT Documents LM Components&quot; de Business Central ({data.source === 'bc' ? `servicio ${data.service}` : 'Excel cargado'}), sin líneas Main Item ni intercompañía. Royalty Code de la ficha de artículo y provisión = turnover × % Domestic Royalty de RoyaltiesCRZ (% FOB en envíos FOB), ambos de CRAZE GmbH. Precio por unidad = turnover ÷ cantidad; % efectivo = provisión ÷ turnover.
+              Fuente: página 60000 &quot;AIT Documents LM Components&quot; de Business Central (servicio {data.service}), sin líneas Main Item ni intercompañía. Royalty Code de la ficha de artículo y provisión = turnover × % Domestic Royalty de RoyaltiesCRZ (% FOB en envíos FOB), ambos de CRAZE GmbH. Precio por unidad = turnover ÷ cantidad; % efectivo = provisión ÷ turnover.
             </p>
           </>
         )}
@@ -487,7 +391,7 @@ export default function RoyaltiesPage() {
 type GroupCompany = {
   company: string; currency: string; fx: number | null; fxDate: string | null; byCode: Record<string, number>;
   byCodeCountry: Record<string, Record<string, number>>;
-  error: string | null; source: 'bc' | 'excel' | null; upload?: { fileName: string; uploadedAt: string; from: string; to: string };
+  error: string | null; source: 'bc' | null;
 };
 const SHORT: Record<string, string> = { 'CRAZE': 'CRAZE GmbH', 'Craze Iberia SL': 'Iberia', 'Craze UK': 'UK', 'CRAZE Group AG': 'Group AG', 'Craze Entertainment': 'Entertainment' };
 
@@ -523,7 +427,7 @@ function GroupSummary({ range, reload }: { range: { from: string; to: string }; 
   }, [range, reload]);
 
   const rate = (cur: string) => (cur === 'EUR' ? 1 : parseFloat((fx[cur] || '').replace(',', '.')) || 0);
-  // Solo las empresas con datos (BC o Excel cargado)
+  // Solo las empresas con datos en BC
   const cols = (companies || []).filter(c => !c.error && Object.keys(c.byCode).length > 0);
   const omitted = (companies || []).filter(c => !cols.includes(c)).map(c => SHORT[c.company] || c.company);
   const currencies = Array.from(new Set(cols.map(c => c.currency).filter(c => c !== 'EUR')));
@@ -591,9 +495,8 @@ function GroupSummary({ range, reload }: { range: { from: string; to: string }; 
                 {cols.map(c => (
                   <th key={c.company} className="text-right px-4 py-2 align-bottom">
                     {SHORT[c.company] || c.company}
-                    <span className="block normal-case tracking-normal font-normal text-gray-400"
-                      title={c.upload ? `${c.upload.fileName}: ${dateEs(c.upload.from)} – ${dateEs(c.upload.to)}` : ''}>
-                      {`${c.source === 'bc' ? 'BC' : 'Excel'}${c.currency !== 'EUR' ? ` · ${c.currency}→EUR` : ''}`}
+                    <span className="block normal-case tracking-normal font-normal text-gray-400">
+                      {c.currency !== 'EUR' ? `${c.currency}→EUR` : 'EUR'}
                     </span>
                   </th>
                 ))}
@@ -627,12 +530,9 @@ function GroupSummary({ range, reload }: { range: { from: string; to: string }; 
       {omitted.length > 0 && companies && (
         <p className="px-4 py-2 border-t border-gray-100 text-xs text-gray-500">Sin datos para el periodo (no se muestran): {omitted.join(', ')}.</p>
       )}
-      {(missingFx.length > 0 || cols.some(c => c.upload && (range.from < c.upload.from || range.to > c.upload.to))) && (
+      {missingFx.length > 0 && (
         <div className="px-4 py-2 border-t border-gray-100 text-xs text-amber-800 bg-amber-50 space-y-0.5">
           {missingFx.length > 0 && <p>Falta el tipo de cambio de {missingFx.join(', ')}: esas empresas suman 0 hasta que lo indiques.</p>}
-          {cols.filter(c => c.upload && (range.from < c.upload.from || range.to > c.upload.to)).map(c => (
-            <p key={c.company}>{SHORT[c.company] || c.company}: su Excel cubre del {dateEs(c.upload!.from)} al {dateEs(c.upload!.to)}, no todo el periodo elegido.</p>
-          ))}
         </div>
       )}
     </section>
@@ -728,7 +628,6 @@ function MgContractCard({ contract: c, companies, to, rate, fxReady }: {
   const outside = Object.keys(byCountryDate).filter(country => !c.guarantees.some(g => countsCountry(g, country))).map(k => [k, countryTotal(k)] as const);
   const outsideTotal = outside.reduce((s, [, v]) => s + v, 0);
   const missingFx = Array.from(new Set(withData.map(x => x.currency))).filter(cur => cur !== 'EUR' && !fxReady(cur));
-  const lateData = withData.filter(x => x.upload && x.upload.from > c.start);
 
   return (
     <div className="px-4 py-4 space-y-3">
@@ -828,16 +727,13 @@ function MgContractCard({ contract: c, companies, to, rate, fxReady }: {
           })}
         </div>
       )}
-      {(c.notes || outsideTotal !== 0 || missingFx.length > 0 || lateData.length > 0) && (
+      {(c.notes || outsideTotal !== 0 || missingFx.length > 0) && (
         <div className="text-xs text-gray-500 space-y-0.5">
           {c.notes && <p>{c.notes}</p>}
           {outsideTotal !== 0 && (
             <p>Provisión fuera de los territorios con garantía (no consume MG): {money(outsideTotal)} ({outside.map(([k, v]) => `${k || 'sin país'} ${money(v)}`).join(', ')}).</p>
           )}
           {missingFx.length > 0 && <p className="text-amber-800">Falta el tipo de cambio de {missingFx.join(', ')}: esas empresas no suman.</p>}
-          {lateData.map(x => (
-            <p key={x.company} className="text-amber-800">{SHORT[x.company] || x.company}: su Excel empieza el {dateEs(x.upload!.from)}; faltan los royalties desde el {dateEs(c.start)}.</p>
-          ))}
         </div>
       )}
     </div>
