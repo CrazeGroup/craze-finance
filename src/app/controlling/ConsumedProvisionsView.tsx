@@ -11,11 +11,15 @@ import { Card, ErrorBox, Grid, Kpi, Loading, Section, Table } from '../reporting
 type Movement = { date: string; account: string; amount: number; source: string; description: string; balAccount: string };
 type Doc = { documentNo: string; type: string; vendorNo: string; vendorName: string; externalDocNo: string; firstDate: string; initialAccounts: string[]; reclassified: boolean; movements: Movement[]; amount: number };
 type Concept = { key: string; label: string; account: string; provision: number; lm: number; consumed: number | null; pending: number | null; docs: Doc[] };
-type LmGroup = { code: string; name: string; conditions: number; kam: number; royalties: number; marketing: number; amazon: number; total: number };
+type GroupDoc = { concept: string; documentNo: string; type: string; date: string; vendorNo: string; vendorName: string; externalDocNo: string; amount: number };
+type LmGroup = {
+  code: string; name: string; conditions: number; kam: number; royalties: number; marketing: number; amazon: number; total: number;
+  consumed: Record<string, number>; consumedTotal: number; docs: GroupDoc[];
+};
 type Data = { concepts: Concept[]; byMonth: any[]; lmByGroup: LmGroup[]; lmLines: number; excludedJournal: number; glEntries: number };
 
 const iso = (d: Date) => d.toISOString().substring(0, 10);
-const LM_COLS: [keyof Omit<LmGroup, 'code' | 'name' | 'total'>, string][] = [
+const LM_COLS: ['conditions' | 'kam' | 'royalties' | 'marketing' | 'amazon', string][] = [
   ['conditions', 'Conditions'], ['kam', 'KAM'], ['royalties', 'Royalties'], ['marketing', 'Marketing (sin Amazon)'], ['amazon', 'Amazon Promotion'],
 ];
 // Pendiente (provisionado − consumido), en rojo si se ha consumido más de lo provisionado
@@ -67,8 +71,15 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
       Consumido: c.consumed, Pendiente: c.pending, '% consumido': c.consumed !== null && c.provision ? c.consumed / c.provision : null, Documentos: c.docs.length,
     }))), 'Resumen');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.lmByGroup.map(g => ({
-      'Customer Group': g.code, 'Customer Group Name': g.name, ...Object.fromEntries(LM_COLS.map(([k, label]) => [label, g[k]])), Total: g.total,
+      'Customer Group': g.code, 'Customer Group Name': g.name,
+      ...Object.fromEntries(LM_COLS.flatMap(([k, label]) => [[`${label} calc.`, g[k]], ...(k !== 'kam' ? [[`${label} cons.`, g.consumed[k] || 0]] : [])])),
+      'Total calc.': g.total, 'Total cons.': g.consumedTotal, Pendiente: g.total - g.consumedTotal,
     }))), 'LM por Customer Group');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.lmByGroup.flatMap(g => g.docs.map(x => ({
+      'Customer Group': g.code, 'Customer Group Name': g.name, Concepto: LM_COLS.find(([k]) => k === x.concept)?.[1] || x.concept,
+      'Document No.': x.documentNo, Tipo: x.type === 'Invoice' ? 'Factura' : 'Abono', Fecha: x.date, 'Vendor No.': x.vendorNo, Proveedor: x.vendorName,
+      'Nº doc. proveedor': x.externalDocNo, Importe: x.amount,
+    })))), 'Facturas por Customer Group');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.byMonth.map(m => Object.fromEntries([['Mes', m.month], ...d.concepts.flatMap(c => {
       const v = m[c.key];
       const name = c.label.replace('Provision ', '');
@@ -286,17 +297,69 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
               </table>
             </div>
 
-            <Card title="Calculado por la LM por Customer Group" sub="Documents LM Components (60000, sin Main Item) · Marketing sin las ventas a Amazon; Amazon Promotion = Marketing de las ventas a Amazon">
+            <Card title="Calculado por la LM y consumido por Customer Group" sub="Calculado: Documents LM Components (60000, sin Main Item). Consumido: facturas y abonos de compra de proveedores que son clientes del grupo (por CIF o nombre) en las cuentas PROV-*. Pincha un grupo para ver sus documentos.">
               <div className="overflow-x-auto">
-                <Table
-                  cols={[
-                    { label: 'Customer Group', mono: true }, { label: 'Customer Group Name', wide: true },
-                    ...LM_COLS.map(([, label]) => ({ label, align: 'right' as const, mono: true })), { label: 'Total', align: 'right', mono: true },
-                  ]}
-                  rows={d.lmByGroup.map(g => [g.code, g.name || '–', ...LM_COLS.map(([k]) => num(g[k], 2)), <strong key="t">{num(g.total, 2)}</strong>])}
-                  total={['Total', '', ...LM_COLS.map(([k]) => num(d.lmByGroup.reduce((t, g) => t + g[k], 0), 2)), num(d.lmByGroup.reduce((t, g) => t + g.total, 0), 2)]}
-                />
+                <table className="w-full text-[12px]">
+                  <thead>
+                    <tr className="border-b border-gray-200 text-left">
+                      <th className={th} /><th className={th}>Customer Group</th><th className={th}>Customer Group Name</th>
+                      {LM_COLS.map(([k, label]) => (
+                        <Fragment key={k}>
+                          <th className={`${th} text-right`}>{label} calc.</th>
+                          {k !== 'kam' && <th className={`${th} text-right`}>cons.</th>}
+                        </Fragment>
+                      ))}
+                      <th className={`${th} text-right`}>Total calc.</th><th className={`${th} text-right`}>Total cons.</th><th className={`${th} text-right`}>Pendiente</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {d.lmByGroup.map(g => {
+                      const gk = `group|${g.code}`;
+                      return (
+                        <Fragment key={g.code}>
+                          <tr className={`border-b border-gray-100 ${g.docs.length ? 'hover:bg-gray-50 cursor-pointer' : ''}`} onClick={() => g.docs.length && toggle(gk)}>
+                            <td className={td}>{g.docs.length ? (open[gk] ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : null}</td>
+                            <td className={`${td} font-mono`}>{g.code}</td>
+                            <td className="py-1.5 px-2 min-w-[160px] font-medium text-gray-900">{g.name || '–'}</td>
+                            {LM_COLS.map(([k]) => (
+                              <Fragment key={k}>
+                                <td className={`${td} text-right font-mono`}>{num(g[k], 2)}</td>
+                                {k !== 'kam' && <td className={`${td} text-right font-mono text-gray-600`}>{g.consumed[k] ? num(g.consumed[k], 2) : '–'}</td>}
+                              </Fragment>
+                            ))}
+                            <td className={`${td} text-right font-mono font-semibold`}>{num(g.total, 2)}</td>
+                            <td className={`${td} text-right font-mono font-semibold`}>{num(g.consumedTotal, 2)}</td>
+                            <td className={`${td} text-right font-mono font-semibold`}><Pending v={g.total - g.consumedTotal} /></td>
+                          </tr>
+                          {open[gk] && (
+                            <tr className="bg-gray-50/70">
+                              <td />
+                              <td colSpan={2 + LM_COLS.length * 2 - 1 + 3} className="py-2 pr-2">
+                                <Table cols={[{ label: 'Concepto' }, { label: 'Document No.', mono: true }, { label: 'Tipo' }, { label: 'Fecha', mono: true }, { label: 'Proveedor', wide: true }, { label: 'Nº doc. proveedor' }, { label: 'Importe', align: 'right', mono: true }]}
+                                  rows={g.docs.map(x => [LM_COLS.find(([k]) => k === x.concept)?.[1] || x.concept, x.documentNo, x.type === 'Invoice' ? 'Factura' : 'Abono', date(x.date), `${x.vendorName || ''} ${x.vendorNo}`.trim(), x.externalDocNo || '–', num(x.amount, 2)])}
+                                  total={['Total', '', '', '', '', '', num(g.consumedTotal, 2)]} />
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                    <tr className="border-t border-gray-300 font-semibold">
+                      <td /><td className={td}>Total</td><td />
+                      {LM_COLS.map(([k]) => (
+                        <Fragment key={k}>
+                          <td className={`${td} text-right font-mono`}>{num(d.lmByGroup.reduce((t, g) => t + g[k], 0), 2)}</td>
+                          {k !== 'kam' && <td className={`${td} text-right font-mono`}>{num(d.lmByGroup.reduce((t, g) => t + (g.consumed[k] || 0), 0), 2)}</td>}
+                        </Fragment>
+                      ))}
+                      <td className={`${td} text-right font-mono`}>{num(d.lmByGroup.reduce((t, g) => t + g.total, 0), 2)}</td>
+                      <td className={`${td} text-right font-mono`}>{num(d.lmByGroup.reduce((t, g) => t + g.consumedTotal, 0), 2)}</td>
+                      <td className={`${td} text-right font-mono`}><Pending v={d.lmByGroup.reduce((t, g) => t + g.total - g.consumedTotal, 0)} /></td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
+              <p className="text-xs text-gray-500 mt-2">Solo cuentan las facturas y abonos de proveedores que se han podido emparejar con un Customer Group; los asientos (Skonto, traspasos…) y los proveedores sin cliente equivalente no salen aquí.</p>
             </Card>
 
             <Card title="Por mes" sub="Provisionado (G/L), consumido en las cuentas PROV-* y pendiente (provisionado − consumido) por fecha de registro">

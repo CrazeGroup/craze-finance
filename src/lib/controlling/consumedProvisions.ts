@@ -39,6 +39,11 @@ const PROVISION_ACCOUNTS: [string, Key][] = [['660031', 'amazon'], ['6600', 'mar
 const SERIES_ACCOUNT: Record<Key, string> = { conditions: '307113', kam: '307108', royalties: '307112', marketing: '307201', amazon: '307202' };
 const conceptOf = (account: string) => { const a = account.replace(/\s+/g, ''); return PROVISION_ACCOUNTS.find(([p]) => a.startsWith(p))?.[1] || null; };
 const PURCHASE_CODES = /^(PURCHASES|PUR-DEFER)$/i;
+const normVat = (v: string) => v.toUpperCase().replace(/[^A-Z0-9]/g, '');
+// Nombre sin forma jurídica ni signos, para emparejar proveedor y cliente ("Müller Handels GmbH & Co. KG" → "muller")
+const normName = (v: string) => v.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .replace(/\b(gmbh|co|kg|ag|se|sarl|s a r l|sa|sl|s l|ltd|limited|bv|nv|spa|srl|sp z o o|ohg|ug|inc|llc|niederlassung|deutschland|zentral|zentrale|handels|stiftung)\b/g, ' ')
+  .replace(/[^a-z0-9]+/g, ' ').trim();
 const isAmazon = (r: any) => /amazon/i.test(`${str(r.Sell_to_Customer_Name)} ${str(r.Bill_to_Customer_Name)}`);
 
 async function generated(ctx: BcContext, from: string, to: string) {
@@ -49,15 +54,15 @@ async function generated(ctx: BcContext, from: string, to: string) {
   const F = {
     date: k('Posting_date'), main: k('Main_Item_CRZ') || k('Main_Item'), sales: k('Total_Provision_Sales'), kam: k('Total_Provision_Bonus'),
     royalties: k('Total_Provision_Royalties'), marketing: k('Provision_Marketing'), sell: k('Sell_to_Customer_Name'), bill: k('Bill_to_Customer_Name'),
-    group: k('Customer_Group_Code'),
+    group: k('Customer_Group_Code'), vat: k('VAT_Registration_No'), billVat: k('Bill_to_VAT_Registration_No'), dim: k('Customer_Dimension_Name'),
   };
-  const missing = Object.entries(F).filter(([, v]) => !v).map(([n]) => n);
+  const missing = Object.entries(F).filter(([n, v]) => !v && !['vat', 'billVat', 'dim'].includes(n)).map(([n]) => n);
   if (sample.length && missing.length) throw new Error(`El servicio "${service.name}" no tiene los campos ${missing.join(', ')}.`);
-  if (!sample.length) return { conditions: 0, kam: 0, royalties: 0, marketing: 0, amazon: 0, lines: 0, byMonth: {} as Record<string, Record<Key, number>>, byGroup: {} as Record<string, Record<Key, number>> };
+  if (!sample.length) return { conditions: 0, kam: 0, royalties: 0, marketing: 0, amazon: 0, lines: 0, byMonth: {} as Record<string, Record<Key, number>>, byGroup: {} as Record<string, Record<Key, number>>, groupIds: {} as Record<string, { vats: Set<string>; names: Set<string> }> };
   const rows = await bcFetchAll(odataUrl(service.url, {
-    $filter: `${F.date} ge ${from} and ${F.date} le ${to}`, $select: Object.values(F).join(','),
+    $filter: `${F.date} ge ${from} and ${F.date} le ${to}`, $select: Object.values(F).filter(Boolean).join(','),
   }), ctx.token);
-  const out = { conditions: 0, kam: 0, royalties: 0, marketing: 0, amazon: 0, lines: 0, byMonth: {} as Record<string, Record<Key, number>>, byGroup: {} as Record<string, Record<Key, number>> };
+  const out = { conditions: 0, kam: 0, royalties: 0, marketing: 0, amazon: 0, lines: 0, byMonth: {} as Record<string, Record<Key, number>>, byGroup: {} as Record<string, Record<Key, number>>, groupIds: {} as Record<string, { vats: Set<string>; names: Set<string> }> };
   for (const r0 of rows) {
     const r = { ...r0, Sell_to_Customer_Name: r0[F.sell!], Bill_to_Customer_Name: r0[F.bill!] };
     if (r0[F.main!] === true) continue;
@@ -68,6 +73,10 @@ async function generated(ctx: BcContext, from: string, to: string) {
     const m = str(r0[F.date!]).substring(0, 7);
     const bm = (out.byMonth[m] ||= { conditions: 0, kam: 0, royalties: 0, marketing: 0, amazon: 0 });
     const bg = (out.byGroup[str(r0[F.group!])] ||= { conditions: 0, kam: 0, royalties: 0, marketing: 0, amazon: 0 });
+    // Identificadores de los clientes del grupo (CIF y nombres) para encontrar sus facturas como proveedor
+    const ids = (out.groupIds[str(r0[F.group!])] ||= { vats: new Set(), names: new Set() });
+    for (const f of [F.vat, F.billVat]) if (f && str(r0[f])) ids.vats.add(normVat(str(r0[f])));
+    for (const f of [F.sell, F.bill, F.dim]) if (f && str(r0[f])) ids.names.add(normName(str(r0[f])));
     for (const key of Object.keys(v) as Key[]) { out[key] += v[key]; bm[key] += v[key]; bg[key] += v[key]; }
     out.lines++;
   }
@@ -75,14 +84,14 @@ async function generated(ctx: BcContext, from: string, to: string) {
 }
 
 export async function consumedProvisionsReport(ctx: BcContext, company: string, from: string, to: string, force = false) {
-  return cached(`ctrl:consumedProv6:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
+  return cached(`ctrl:consumedProv7:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
     const [gen, entries, vendors, provEntries, customerGroups] = await Promise.all([
       generated(ctx, from, to),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
         $filter: `Posting_Date ge ${from} and Posting_Date le ${to} and (${ACCOUNTS.map(a => `G_L_Account_No eq '${a}'`).join(' or ')})`,
         $select: 'Entry_No,Posting_Date,Document_Type,Document_No,G_L_Account_No,Description,Amount,Source_Type,Source_No,Source_Code,External_Document_No,Bal_Account_No',
       }), ctx.token),
-      bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Vendor_Card_Excel`, { $select: 'No,Name' }), ctx.token).catch(() => [] as any[]),
+      bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Vendor_Card_Excel`, { $select: 'No,Name,VAT_Registration_No' }), ctx.token).catch(() => [] as any[]),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
         $filter: `startswith(Document_No,'PROV') and Posting_Date ge ${from} and Posting_Date le ${to}`,
         $select: 'Entry_No,Posting_Date,Document_No,G_L_Account_No,Description,Amount,Source_Code,Bal_Account_No',
@@ -214,6 +223,47 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
       total: r2(Object.values(v).reduce((t, x) => t + x, 0)),
     })).filter(g => CONCEPTS.some(c => Math.abs(g[c.key]) >= 0.005))
       .sort((a, b) => b.total - a.total);
-    return { company, from, to, lmLines: gen.lines, concepts, byMonth, lmByGroup, excludedJournal, glEntries: entries.length };
+    // Facturas y abonos de compra de cada Customer Group: proveedor emparejado con los clientes del grupo en la LM,
+    // por CIF y, si no, por nombre (exacto o primera palabra, cuando solo encaja en un grupo)
+    const vendorVat = new Map(vendors.map((v: any) => [str(v.No), normVat(str(v.VAT_Registration_No))]));
+    const groupOfVendor = new Map<string, string>();
+    const byVat = new Map<string, string>(), byNameExact = new Map<string, string>(), byFirst = new Map<string, Set<string>>();
+    for (const [code, ids] of Object.entries(gen.groupIds)) {
+      ids.vats.forEach(v => { if (v) byVat.set(v, code); });
+      ids.names.forEach(n => {
+        if (!n) return;
+        byNameExact.set(n, code);
+        const first = n.split(' ')[0];
+        if (first.length >= 3) byFirst.set(first, (byFirst.get(first) || new Set<string>()).add(code));
+      });
+    }
+    const matchGroup = (vendorNo: string) => {
+      if (groupOfVendor.has(vendorNo)) return groupOfVendor.get(vendorNo)!;
+      const vat = vendorVat.get(vendorNo) || '';
+      const name = normName(vendorName.get(vendorNo) || '');
+      const first = byFirst.get(name.split(' ')[0]);
+      const g = (vat && byVat.get(vat)) || byNameExact.get(name) || (first && first.size === 1 ? Array.from(first)[0] : '') || '';
+      groupOfVendor.set(vendorNo, g);
+      return g;
+    };
+    type GroupDoc = { concept: Key; documentNo: string; type: string; date: string; vendorNo: string; vendorName: string; externalDocNo: string; amount: number };
+    const groupDocs = new Map<string, GroupDoc[]>();
+    for (const c of concepts) {
+      for (const x of c.docs) {
+        if (!x.vendorNo || (x.type !== 'Invoice' && x.type !== 'Credit Memo')) continue;
+        const g = matchGroup(x.vendorNo);
+        if (!g) continue;
+        groupDocs.set(g, [...(groupDocs.get(g) || []), {
+          concept: c.key as Key, documentNo: x.documentNo, type: x.type, date: x.firstDate, vendorNo: x.vendorNo, vendorName: x.vendorName, externalDocNo: x.externalDocNo, amount: x.amount,
+        }]);
+      }
+    }
+    const withConsumed = lmByGroup.map(g => {
+      const docs = groupDocs.get(g.code === '(sin grupo)' ? '' : g.code) || [];
+      const consumed = Object.fromEntries(CONCEPTS.map(c => [c.key, r2(docs.filter(x => x.concept === c.key).reduce((t, x) => t + x.amount, 0))])) as Record<Key, number>;
+      return { ...g, consumed, consumedTotal: r2(Object.values(consumed).reduce((t, x) => t + x, 0)), docs: docs.sort((a, b) => a.date.localeCompare(b.date)) };
+    });
+
+    return { company, from, to, lmLines: gen.lines, concepts, byMonth, lmByGroup: withConsumed, excludedJournal, glEntries: entries.length };
   }, force);
 }
