@@ -11,6 +11,7 @@ import { today } from '@/lib/reporting/period';
 // - Documento: cabecera (fechas, nº factura proveedor) y línea (coste unitario, grupo IVA, código de periodificación);
 //   cuenta contable histórica = movimientos contables (tabla 17) de compra del documento con el mismo grupo contable
 //   producto que la línea.
+// - Se excluyen los artículos de tipo Inventario (ficha v2 items, type = Inventory).
 // - Se descartan los pares artículo/proveedor con neto 0 (p. ej. una factura y su abono).
 
 const str = (v: any) => (v == null ? '' : String(v).trim());
@@ -64,7 +65,7 @@ export async function probeSources(ctx: BcContext, from: string, to: string) {
 }
 
 export async function purchaseItemsReport(ctx: BcContext, company: string, from: string, to: string, force = false) {
-  return cached(`ctrl:purchItems:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
+  return cached(`ctrl:purchItems2:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
     const warnings: string[] = [];
     const cm = await creditMemoServices(ctx);
     const dateFilter = (f: string) => `${f} ge ${from} and ${f} le ${to}`;
@@ -81,7 +82,7 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
         $select: 'No,Name,Country_Region_Code,Payment_Method_Code,Payment_Terms_Code,Gen_Bus_Posting_Group',
       }), ctx.token),
       // Ficha de artículo por la API v2 (la página Item_Card_Excel tarda más de 30 s)
-      bcFetchAll(odataUrl(`${ctx.apiBase}/items`, { $select: 'number,displayName,generalProductPostingGroupCode' }), ctx.token),
+      bcFetchAll(odataUrl(`${ctx.apiBase}/items`, { $select: 'number,displayName,generalProductPostingGroupCode,type' }), ctx.token),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Posting_Setup_Excel`, {
         $select: 'Gen_Bus_Posting_Group,Gen_Prod_Posting_Group,Purch_Account,Purch_Credit_Memo_Account',
       }), ctx.token),
@@ -108,7 +109,9 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
     }
 
     const vendorBy = new Map(vendors.map(v => [str(v.No), v]));
-    const itemBy = new Map(items.map(i => [str(i.number), { Description: i.displayName, Gen_Prod_Posting_Group: i.generalProductPostingGroupCode }]));
+    const itemBy = new Map(items.map(i => [str(i.number), { Description: i.displayName, Gen_Prod_Posting_Group: i.generalProductPostingGroupCode, type: str(i.type) }]));
+    // Artículos de tipo Inventario (mercancía) fuera: solo servicios y no inventariables
+    const isInventory = (no: string) => itemBy.get(no)?.type === 'Inventory';
     const invHeaderBy = new Map(invHeaders.map(h => [str(h.No), h]));
     const cmHeaderBy = new Map(cmHeaders.map(h => [str(h.No), h]));
     const setupByProd = new Map<string, { bus: string; purch: string; crMemo: string }[]>();
@@ -135,7 +138,7 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
     type Line = Doc & { item: string; desc: string; vendor: string };
     const lines: Line[] = [];
     for (const l of invLines) {
-      if (str(l.type) !== 'Item' || !str(l.no)) continue;
+      if (str(l.type) !== 'Item' || !str(l.no) || isInventory(str(l.no))) continue;
       const h = invHeaderBy.get(str(l.documentNo));
       lines.push({
         kind: 'Factura', item: str(l.no), desc: str(l.description), vendor: str(l.buyFromVendorNo) || str(h?.Buy_from_Vendor_No),
@@ -147,7 +150,7 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
       });
     }
     for (const l of cmLines) {
-      if (str(l.Type) !== 'Item' || !str(l.No)) continue;
+      if (str(l.Type) !== 'Item' || !str(l.No) || isInventory(str(l.No))) continue;
       const h = cmHeaderBy.get(str(l.Document_No));
       if (!h) continue;
       const amount = num(l.Line_Amount ?? l.Amount) - num(l.Invoice_Discount_Amount ?? l.Inv_Discount_Amount);
