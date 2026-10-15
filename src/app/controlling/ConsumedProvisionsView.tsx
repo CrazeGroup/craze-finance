@@ -40,18 +40,80 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
   const [state, setState] = useState<{ data: Data | null; loading: boolean; error: string | null }>({ data: null, loading: true, error: null });
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [sort, setSort] = useState<Record<string, { key: SortKey; dir: 1 | -1 }>>({});
-  const sortBy = (concept: string, key: SortKey) => setSort(s => {
-    const cur = s[concept];
-    return { ...s, [concept]: { key, dir: cur?.key === key ? (cur.dir === 1 ? -1 : 1) : key === 'amount' ? -1 : 1 } };
+  const sortBy = (gk: string, key: SortKey) => setSort(s => {
+    const cur = s[gk];
+    return { ...s, [gk]: { key, dir: cur?.key === key ? (cur.dir === 1 ? -1 : 1) : key === 'amount' ? -1 : 1 } };
   });
-  const sorted = (c: Concept) => {
-    const st = sort[c.key];
-    if (!st) return c.docs;
-    return [...c.docs].sort((a, b) => {
+  const sorted = (gk: string, docs: Doc[]) => {
+    const st = sort[gk];
+    if (!st) return docs;
+    return [...docs].sort((a, b) => {
       const va = sortValue(a, st.key), vb = sortValue(b, st.key);
       return (va < vb ? -1 : va > vb ? 1 : 0) * st.dir;
     });
   };
+  const sum = (docs: Doc[]) => docs.reduce((t, x) => t + x.amount, 0);
+  // Subniveles de una provisión: facturas y abonos de compra (con un nivel para cada uno) y asientos
+  type Group = { id: string; label: string; docs: Doc[]; children?: Group[] };
+  const groupsOf = (c: Concept): Group[] => {
+    const inv = c.docs.filter(x => x.type === 'Invoice'), cm = c.docs.filter(x => x.type === 'Credit Memo');
+    const other = c.docs.filter(x => x.type !== 'Invoice' && x.type !== 'Credit Memo');
+    return [
+      { id: 'purchase', label: 'Facturas y abonos de compra', docs: [...inv, ...cm], children: [
+        { id: 'invoices', label: 'Facturas', docs: inv }, { id: 'creditMemos', label: 'Abonos', docs: cm },
+      ] },
+      { id: 'entries', label: 'Asientos (diario, traspasos y refacturación)', docs: other },
+    ].filter(g => g.docs.length);
+  };
+
+  // Tabla de documentos (ordenable) de un grupo: gk = concepto|grupo
+  const docsTable = (gk: string, docs: Doc[], account: string) => (
+    <table className="w-full text-[12px] bg-white rounded-lg border border-gray-200">
+      <thead>
+        <tr className="border-b border-gray-200 text-left">
+          <th className={th} />
+          {DOC_COLS.map(col => (
+            <th key={col.key} className={`${th} ${col.right ? 'text-right' : ''} cursor-pointer select-none hover:text-gray-900`} onClick={() => sortBy(gk, col.key)}>
+              <span className={`inline-flex items-center gap-1 ${col.right ? 'flex-row-reverse' : ''}`}>
+                {col.key === 'amount' ? `Importe en ${account}` : col.label}
+                {sort[gk]?.key === col.key && (sort[gk].dir === 1 ? <ArrowUp size={11} /> : <ArrowDown size={11} />)}
+              </span>
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {sorted(gk, docs).map(doc => {
+          const k = `${gk}|${doc.documentNo}`;
+          return (
+            <Fragment key={k}>
+              <tr className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => toggle(k)}>
+                <td className={td}>{open[k] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</td>
+                <td className={`${td} font-mono`}>{doc.documentNo}</td>
+                <td className={td}>{doc.type}</td>
+                <td className={`${td} font-mono`}>{date(doc.firstDate)}</td>
+                <td className="py-1.5 px-2 min-w-[180px]">{doc.vendorName || doc.vendorNo || '–'} <span className="text-gray-400 font-mono">{doc.vendorName ? doc.vendorNo : ''}</span></td>
+                <td className={td}>{doc.externalDocNo || '–'}</td>
+                <td className={`${td} font-mono`}>{doc.initialAccounts.join(', ') || '–'}</td>
+                <td className={td}>{doc.reclassified ? <span className="text-[#C8186C] font-semibold">Sí</span> : 'No'}</td>
+                <td className={`${td} text-right font-mono font-semibold`}>{num(doc.amount, 2)}</td>
+              </tr>
+              {open[k] && (
+                <tr>
+                  <td />
+                  <td colSpan={8} className="py-2 pr-2">
+                    <Table cols={[{ label: 'Fecha', mono: true }, { label: 'Cuenta', mono: true }, { label: 'Origen', mono: true }, { label: 'Descripción', wide: true }, { label: 'Contrapartida', mono: true }, { label: 'Importe', align: 'right', mono: true }]}
+                      rows={doc.movements.map(m => [date(m.date), m.account, m.source, m.description, m.balAccount || '–', num(m.amount, 2)])} />
+                  </td>
+                </tr>
+              )}
+            </Fragment>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+
 
   useEffect(() => {
     if (!from || !to || from > to) return;
@@ -131,47 +193,43 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                           <td />
                           <td colSpan={8} className="py-2 pr-2">
                             <table className="w-full text-[12px] bg-white rounded-lg border border-gray-200">
-                              <thead>
-                                <tr className="border-b border-gray-200 text-left">
-                                  <th className={th} />
-                                  {DOC_COLS.map(col => (
-                                    <th key={col.key} className={`${th} ${col.right ? 'text-right' : ''} cursor-pointer select-none hover:text-gray-900`} onClick={() => sortBy(c.key, col.key)}>
-                                      <span className={`inline-flex items-center gap-1 ${col.right ? 'flex-row-reverse' : ''}`}>
-                                        {col.key === 'amount' ? `Importe en ${c.account}` : col.label}
-                                        {sort[c.key]?.key === col.key && (sort[c.key].dir === 1 ? <ArrowUp size={11} /> : <ArrowDown size={11} />)}
-                                      </span>
-                                    </th>
-                                  ))}
-                                </tr>
-                              </thead>
                               <tbody>
-                                {sorted(c).map(doc => {
-                                  const k = `${c.key}|${doc.documentNo}`;
-                                  return (
-                                    <Fragment key={k}>
-                                      <tr className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => toggle(k)}>
-                                        <td className={td}>{open[k] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</td>
-                                        <td className={`${td} font-mono`}>{doc.documentNo}</td>
-                                        <td className={td}>{doc.type}</td>
-                                        <td className={`${td} font-mono`}>{date(doc.firstDate)}</td>
-                                        <td className="py-1.5 px-2 min-w-[180px]">{doc.vendorName || doc.vendorNo || '–'} <span className="text-gray-400 font-mono">{doc.vendorName ? doc.vendorNo : ''}</span></td>
-                                        <td className={td}>{doc.externalDocNo || '–'}</td>
-                                        <td className={`${td} font-mono`}>{doc.initialAccounts.join(', ') || '–'}</td>
-                                        <td className={td}>{doc.reclassified ? <span className="text-[#C8186C] font-semibold">Sí</span> : 'No'}</td>
-                                        <td className={`${td} text-right font-mono font-semibold`}>{num(doc.amount, 2)}</td>
+                                {groupsOf(c).map(g => (
+                                  <Fragment key={g.id}>
+                                    <tr className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => toggle(`${c.key}|${g.id}`)}>
+                                      <td className={`${td} w-6`}>{open[`${c.key}|${g.id}`] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</td>
+                                      <td className={`${td} font-semibold text-gray-900`}>{g.label}</td>
+                                      <td className={`${td} text-right text-gray-500`}>{g.docs.length} documentos</td>
+                                      <td className={`${td} text-right font-mono font-semibold`}>{num(sum(g.docs), 2)}</td>
+                                    </tr>
+                                    {open[`${c.key}|${g.id}`] && (
+                                      <tr>
+                                        <td />
+                                        <td colSpan={3} className="py-2 pr-2">
+                                          {g.children ? (
+                                            <table className="w-full text-[12px] border border-gray-200 rounded-lg">
+                                              <tbody>
+                                                {g.children.map(sub => (
+                                                  <Fragment key={sub.id}>
+                                                    <tr className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => toggle(`${c.key}|${sub.id}`)}>
+                                                      <td className={`${td} w-6`}>{open[`${c.key}|${sub.id}`] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</td>
+                                                      <td className={`${td} font-semibold text-gray-900`}>{sub.label}</td>
+                                                      <td className={`${td} text-right text-gray-500`}>{sub.docs.length} documentos</td>
+                                                      <td className={`${td} text-right font-mono font-semibold`}>{num(sum(sub.docs), 2)}</td>
+                                                    </tr>
+                                                    {open[`${c.key}|${sub.id}`] && (
+                                                      <tr><td /><td colSpan={3} className="py-2 pr-2">{docsTable(`${c.key}|${sub.id}`, sub.docs, c.account)}</td></tr>
+                                                    )}
+                                                  </Fragment>
+                                                ))}
+                                              </tbody>
+                                            </table>
+                                          ) : docsTable(`${c.key}|${g.id}`, g.docs, c.account)}
+                                        </td>
                                       </tr>
-                                      {open[k] && (
-                                        <tr>
-                                          <td />
-                                          <td colSpan={8} className="py-2 pr-2">
-                                            <Table cols={[{ label: 'Fecha', mono: true }, { label: 'Cuenta', mono: true }, { label: 'Origen', mono: true }, { label: 'Descripción', wide: true }, { label: 'Contrapartida', mono: true }, { label: 'Importe', align: 'right', mono: true }]}
-                                              rows={doc.movements.map(m => [date(m.date), m.account, m.source, m.description, m.balAccount || '–', num(m.amount, 2)])} />
-                                          </td>
-                                        </tr>
-                                      )}
-                                    </Fragment>
-                                  );
-                                })}
+                                    )}
+                                  </Fragment>
+                                ))}
                               </tbody>
                             </table>
                           </td>
