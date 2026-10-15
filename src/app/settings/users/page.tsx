@@ -15,6 +15,7 @@ const MODULES = [
   { id: 'bwa', label: 'BWA Analytics' },
   { id: 'reporting', label: 'Reporting' },
   { id: 'provision', label: 'Provision' },
+  { id: 'controlling', label: 'Controlling' },
   { id: 'royalties', label: 'Royalties' },
   { id: 'payment_proposal', label: 'Payment Proposal' },
   { id: 'dforce', label: 'D-FORCE (Craze Entertainment)' },

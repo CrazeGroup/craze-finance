@@ -29,6 +29,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
     { href: '/bwa', label: 'BWA Analytics', module: 'bwa' },
     { href: '/reporting', label: 'Reporting', module: 'reporting' },
     { href: '/provision', label: 'Provision', module: 'provision' },
+    { href: '/controlling', label: 'Controlling', module: 'controlling' },
     { href: '/royalties', label: 'Royalties', module: 'royalties' },
     { href: '/payment-proposal', label: 'Payment Proposal', module: 'payment_proposal' },
     // Solo para Craze Entertainment
