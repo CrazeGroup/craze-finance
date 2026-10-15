@@ -66,7 +66,7 @@ const es = {
   cnDueChart: 'CHINA TRF · vencimientos por mes', cnDueSub: '(rojo = ya vencido a {date})', cnSched: 'CHINA TRF · pagos programados', schedDate: 'Fecha programada',
   totalScheduled: 'Total programado', cnByVendor: 'CHINA TRF · por proveedor',
 
-  provTitle: 'Provisiones {year} · enero a {month}', provSource: 'G/L Entries · documentos PROV- · original, consumido y abierto',
+  provTitle: 'Provisiones {year} · enero a {month}', provSource: 'G/L Entries · documentos PROV* · original, consumido y abierto',
   kpiProvOrig: 'Provisión original', nEntries: '{n} asientos', kpiConsumed: 'Consumido', consumedSub: '{p} de lo provisionado',
   kpiOpen: 'Abierto', openSub: '{p} sin consumir', kpiMonthProv: 'Dotación {month}', monthOpenSub: 'Abierto del mes: {v}',
   byProvType: 'Por tipo de provisión', typeSummary: 'Resumen por tipo', original: 'Original', pctConsumed: '% consumo', provDetail: 'Detalle por documento', description: 'Descripción',
@@ -151,7 +151,7 @@ const en: Dict = {
   cnDueChart: 'CHINA TRF · due by month', cnDueSub: '(red = already overdue at {date})', cnSched: 'CHINA TRF · scheduled payments', schedDate: 'Scheduled date',
   totalScheduled: 'Total scheduled', cnByVendor: 'CHINA TRF · by vendor',
 
-  provTitle: 'Provisions {year} · January to {month}', provSource: 'G/L Entries · PROV- documents · original, used and open',
+  provTitle: 'Provisions {year} · January to {month}', provSource: 'G/L Entries · PROV* documents · original, used and open',
   kpiProvOrig: 'Original provision', nEntries: '{n} entries', kpiConsumed: 'Used', consumedSub: '{p} of provisioned',
   kpiOpen: 'Open', openSub: '{p} unused', kpiMonthProv: 'Booked in {month}', monthOpenSub: 'Open from the month: {v}',
   byProvType: 'By provision type', typeSummary: 'Summary by type', original: 'Original', pctConsumed: '% used', provDetail: 'Detail by document', description: 'Description',
@@ -234,7 +234,7 @@ const de: Dict = {
   cnDueChart: 'CHINA TRF · Fälligkeiten nach Monat', cnDueSub: '(rot = zum {date} bereits überfällig)', cnSched: 'CHINA TRF · geplante Zahlungen', schedDate: 'Geplantes Datum',
   totalScheduled: 'Summe geplant', cnByVendor: 'CHINA TRF · nach Lieferant',
 
-  provTitle: 'Rückstellungen {year} · Januar bis {month}', provSource: 'Sachposten · Belege PROV- · gebildet, verbraucht und offen',
+  provTitle: 'Rückstellungen {year} · Januar bis {month}', provSource: 'Sachposten · Belege PROV* · gebildet, verbraucht und offen',
   kpiProvOrig: 'Gebildete Rückstellung', nEntries: '{n} Buchungen', kpiConsumed: 'Verbraucht', consumedSub: '{p} der Rückstellung',
   kpiOpen: 'Offen', openSub: '{p} nicht verbraucht', kpiMonthProv: 'Zuführung {month}', monthOpenSub: 'Davon offen: {v}',
   byProvType: 'Nach Art der Rückstellung', typeSummary: 'Übersicht nach Art', original: 'Gebildet', pctConsumed: '% Verbrauch', provDetail: 'Details nach Beleg', description: 'Beschreibung',

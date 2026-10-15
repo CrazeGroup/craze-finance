@@ -6,7 +6,7 @@ import { Card, ErrorBox, Grid, Kpi, Loading, Section, Table } from './ui';
 import type { Loaded } from './OperationalView';
 import { ProvisionsSection } from './ManagementView';
 
-// Pestaña Provision: la tabla de provisiones del reporting (G/L PROV-) y la provisión de condiciones y marketing
+// Pestaña Provision: la tabla de provisiones del reporting (G/L PROV*) y la provisión de condiciones y marketing
 // por Customer Group de la LM de BC, con su propio rango de fechas.
 const iso = (d: Date) => d.toISOString().substring(0, 10);
 const store = {

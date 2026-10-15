@@ -7,7 +7,7 @@ import { makeT } from '../reporting/i18n';
 import type { Loaded } from '../reporting/OperationalView';
 import ProvisionView from '../reporting/ProvisionView';
 
-// Provision: provisiones G/L (documentos PROV-, como en el Reporting) y provisión de condiciones y marketing
+// Provision: provisiones G/L (documentos PROV*, como en el Reporting) y provisión de condiciones y marketing
 // por Customer Group de la LM de BC.
 const monthKey = (d: Date) => d.toISOString().substring(0, 7);
 const shift = (ym: string, n: number) => { const [y, m] = ym.split('-').map(Number); return monthKey(new Date(Date.UTC(y, m - 1 + n, 1))); };

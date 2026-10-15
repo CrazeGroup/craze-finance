@@ -31,8 +31,8 @@ export async function GET(req: Request) {
       company: ctx.companyName, doc, cutoff: date,
       reporting: row ? {
         series: row.account, original: row.orig, consumed: row.cons, open: row.open, latestOfSeries: row.latest,
-        note: 'Abierto = saldo de la cuenta de provisión de la serie con todos sus documentos PROV- del año, en el último documento',
-      } : 'El documento no tiene movimientos PROV- en una cuenta de balance hasta la fecha de corte',
+        note: 'Abierto = saldo de la cuenta de provisión de la serie con todos sus documentos PROV* del año, en el último documento',
+      } : 'El documento no tiene movimientos PROV* en una cuenta de balance hasta la fecha de corte',
       seriesDocuments: series.map(r => ({ doc: r.doc, date: r.date, desc: r.desc, original: r.orig, open: r.open })),
       entries: docEntries.map(e => ({
         entryNo: e.Entry_No, date: e.Posting_Date, account: e.G_L_Account_No, description: e.Description, amount: e.Amount,
