@@ -39,10 +39,16 @@ const PROVISION_ACCOUNTS: [string, Key][] = [['660031', 'amazon'], ['6600', 'mar
 const SERIES_ACCOUNT: Record<Key, string> = { conditions: '307113', kam: '307108', royalties: '307112', marketing: '307201', amazon: '307202' };
 const conceptOf = (account: string) => { const a = account.replace(/\s+/g, ''); return PROVISION_ACCOUNTS.find(([p]) => a.startsWith(p))?.[1] || null; };
 const PURCHASE_CODES = /^(PURCHASES|PUR-DEFER)$/i;
-// Proveedores que se asignan a mano a un Customer Group y concepto en la tabla por grupo
+// Proveedores que se asignan a mano a un Customer Group (y, si se indica, a un concepto) en la tabla por grupo
 // (Savi Marketing: condiciones de dm DE, aunque se registren en PROV-MARKETING)
-const VENDOR_OVERRIDES: { vendor: RegExp; group: string; concept: Key }[] = [
+const VENDOR_OVERRIDES: { vendor: RegExp; group: string; concept?: Key }[] = [
   { vendor: /\bsavi\b/i, group: '017', concept: 'conditions' },
+  // Clientes que como proveedor no encajan por CIF ni por nombre (sufijo de país, razón social distinta)
+  { vendor: /^dm[\s-]drogerie markt.*\bDE\b/i, group: '017' },
+  { vendor: /rossmann/i, group: '008' },
+  { vendor: /^rewe zentral/i, group: '018' },
+  { vendor: /^edeka zentral/i, group: '014' },
+  { vendor: /^amazon eu/i, group: '023' },
 ];
 const normVat = (v: string) => v.toUpperCase().replace(/[^A-Z0-9]/g, '');
 // Nombre sin forma jurídica ni signos, para emparejar proveedor y cliente ("Müller Handels GmbH & Co. KG" → "muller")
@@ -89,7 +95,7 @@ async function generated(ctx: BcContext, from: string, to: string) {
 }
 
 export async function consumedProvisionsReport(ctx: BcContext, company: string, from: string, to: string, force = false) {
-  return cached(`ctrl:consumedProv8:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
+  return cached(`ctrl:consumedProv9:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
     const [gen, entries, vendors, provEntries, customerGroups] = await Promise.all([
       generated(ctx, from, to),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
