@@ -9,7 +9,7 @@ import { Card, ErrorBox, Grid, Kpi, Loading, Section, Table } from '../reporting
 // en las cuentas PROV-*.
 type Movement = { date: string; account: string; amount: number; source: string; description: string; balAccount: string };
 type Doc = { documentNo: string; type: string; vendorNo: string; vendorName: string; externalDocNo: string; firstDate: string; initialAccounts: string[]; reclassified: boolean; movements: Movement[]; amount: number };
-type Concept = { key: string; label: string; account: string; provision: number; consumed: number | null; pending: number | null; docs: Doc[] };
+type Concept = { key: string; label: string; account: string; provision: number; lm: number; consumed: number | null; pending: number | null; docs: Doc[] };
 type Data = { concepts: Concept[]; byMonth: any[]; lmLines: number; excludedJournal: number; glEntries: number };
 
 const iso = (d: Date) => d.toISOString().substring(0, 10);
@@ -43,11 +43,12 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
   const amt = (v: number | null) => (v === null ? '–' : num(v, 2));
   const totals = d ? {
     provision: d.concepts.reduce((s, c) => s + c.provision, 0),
+    lm: d.concepts.reduce((s, c) => s + c.lm, 0),
     consumed: d.concepts.reduce((s, c) => s + (c.consumed || 0), 0),
   } : null;
 
   return (
-    <Section title="Consumed Provisions" source="Generado: LM Components (60000, sin Main Item) · Consumido: facturas y abonos de compra en PROV-KONDITIONS / PROV-MARKETING / PROV-ROYALTIES / PROV-AMZPROM (G/L Entries, por Document No.)">
+    <Section title="Consumed Provisions" source="Provisionado: asientos PROV* en cuentas de resultados (4769 02, 6020 10, 6600 30, 6600 31, 6837 00) · Calculado LM: Documents LM Components (referencia) · Consumido: facturas y abonos de compra en PROV-KONDITIONS / PROV-MARKETING / PROV-ROYALTIES / PROV-AMZPROM (G/L Entries, por Document No.)">
       <div className="flex flex-wrap items-end gap-4">
         {([['Desde', from, setFrom], ['Hasta', to, setTo]] as const).map(([label, value, set]) => (
           <label key={label} className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
@@ -68,9 +69,9 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
         : (
           <>
             <Grid cols={3}>
-              <Kpi label="Provisión generada (LM)" value={num(totals.provision)} sub={`${num(d.lmLines)} líneas de la LM`} />
+              <Kpi label="Provisionado (G/L)" value={num(totals.provision)} sub={`Calculado por la LM: ${num(totals.lm)}`} />
               <Kpi label="Consumido (facturas y abonos)" value={num(totals.consumed)} sub={totals.provision ? `${pct((totals.consumed / totals.provision) * 100)} de lo generado` : undefined} />
-              <Kpi highlight tone="main" label="Pendiente" value={num(totals.provision - totals.consumed)} sub="Generado − consumido" />
+              <Kpi highlight tone="main" label="Pendiente" value={num(totals.provision - totals.consumed)} sub="Provisionado − consumido" />
             </Grid>
 
             <div className="rpt-card bg-white rounded-xl border border-gray-200 overflow-x-auto">
@@ -78,7 +79,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                 <thead>
                   <tr className="border-b border-gray-200 text-left">
                     <th className={th} /><th className={th}>Concepto</th><th className={th}>Cuenta consumo</th>
-                    <th className={`${th} text-right`}>Generado (LM)</th><th className={`${th} text-right`}>Consumido</th>
+                    <th className={`${th} text-right`}>Provisionado (G/L)</th><th className={`${th} text-right`}>Calculado LM</th><th className={`${th} text-right`}>Consumido</th>
                     <th className={`${th} text-right`}>Pendiente</th><th className={`${th} text-right`}>% consumido</th><th className={`${th} text-right`}>Documentos</th>
                   </tr>
                 </thead>
@@ -90,6 +91,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                         <td className={`${td} font-semibold text-gray-900`}>{c.label}</td>
                         <td className={`${td} font-mono`}>{c.account || '–'}</td>
                         <td className={`${td} text-right font-mono`}>{amt(c.provision)}</td>
+                        <td className={`${td} text-right font-mono text-gray-500`}>{amt(c.lm)}</td>
                         <td className={`${td} text-right font-mono`}>{amt(c.consumed)}</td>
                         <td className={`${td} text-right font-mono font-semibold ${c.pending !== null && c.pending < 0 ? 'text-[#C0392B]' : ''}`}>{amt(c.pending)}</td>
                         <td className={`${td} text-right font-mono`}>{c.consumed !== null && c.provision ? pct((c.consumed / c.provision) * 100) : '–'}</td>
@@ -98,7 +100,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                       {open[c.key] && (
                         <tr className="bg-gray-50/70">
                           <td />
-                          <td colSpan={7} className="py-2 pr-2">
+                          <td colSpan={8} className="py-2 pr-2">
                             <table className="w-full text-[12px] bg-white rounded-lg border border-gray-200">
                               <thead>
                                 <tr className="border-b border-gray-200 text-left">
@@ -145,6 +147,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                   <tr className="border-t border-gray-300 font-semibold">
                     <td /><td className={td}>Total</td><td />
                     <td className={`${td} text-right font-mono`}>{num(totals.provision, 2)}</td>
+                    <td className={`${td} text-right font-mono text-gray-500`}>{num(totals.lm, 2)}</td>
                     <td className={`${td} text-right font-mono`}>{num(totals.consumed, 2)}</td>
                     <td className={`${td} text-right font-mono`}>{num(totals.provision - totals.consumed, 2)}</td>
                     <td className={`${td} text-right font-mono`}>{totals.provision ? pct((totals.consumed / totals.provision) * 100) : '–'}</td>
@@ -154,11 +157,11 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
               </table>
             </div>
 
-            <Card title="Por mes" sub="Generado en la LM y consumido en las cuentas PROV-* por fecha de registro">
+            <Card title="Por mes" sub="Provisionado (G/L) y consumido en las cuentas PROV-* por fecha de registro">
               <div className="overflow-x-auto">
                 <Table
                   cols={[{ label: 'Mes' }, ...d.concepts.flatMap(c => [
-                    { label: `${c.label.replace('Provision ', '')} gen.`, align: 'right' as const, mono: true },
+                    { label: `${c.label.replace('Provision ', '')} prov.`, align: 'right' as const, mono: true },
                     ...(c.account ? [{ label: 'cons.', align: 'right' as const, mono: true }] : []),
                   ])]}
                   rows={d.byMonth.map(m => [monthName(m.month), ...d.concepts.flatMap(c => [num(m[c.key].provision), ...(c.account ? [num(m[c.key].consumed)] : [])])])}

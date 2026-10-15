@@ -10,7 +10,8 @@ import { cutoffDate, today } from './period';
 //   cuenta 30xx (PROV1, PROV3: refacturación de royalties) no son dotaciones y no salen aquí (cuentan como consumo en Controlling).
 // - Abierto de la serie = saldo de todos los movimientos PROV* del año en esa cuenta hasta la fecha de corte,
 //   asignado al último documento de la serie; los anteriores quedan consumidos (abierto 0).
-// - Original de cada documento = su primer movimiento en la cuenta de la serie. En la tabla, la fila de cada serie
+// - Original de cada documento = lo que carga en cuentas de resultados (4769 02 Konditionen, 6020 10 KAM, 6600 30 Marketing,
+//   6600 31 Amazon Promotions, 6837 00 Lizenzen): los saldos provisionados en la cuenta de resultados. En la tabla, la fila de cada serie
 //   (su último documento) lleva como original la dotación del año (suma de los originales de la serie) y
 //   consumido = dotación − abierto.
 // Importes con el signo de gasto (provisión dotada en positivo). P. ej. PROV-00049 (CRAZE, 30/09/2026):
@@ -25,7 +26,9 @@ export const accountKey = (no: string) => String(no || '').replace(/\s+/g, '').t
 // Cuentas de provisiones (Rückstellungen 30xx: 3071 13, 3072 02…). Los documentos PROV sin cuenta 30xx no son dotaciones
 // (p. ej. PROV1 / PROV3, refacturación de royalties contra 3401 01 / 1260 01: consumen PROV-ROYALTIES) y no forman serie.
 const isBalanceAccount = (no: string) => /^30\d/.test(accountKey(no));
-const isOtherBalanceAccount = (no: string) => /^[0-3]\d/.test(accountKey(no)) && !isBalanceAccount(no);
+// Cuentas de resultados (clases 4-7: 4769 02, 6020 10, 6600 30, 6600 31, 6837 00…): lo provisionado (dotación) es lo que
+// el documento carga en ellas, como los saldos de la cuenta de resultados.
+const isIncomeAccount = (no: string) => /^[4-7]\d/.test(accountKey(no));
 
 function provisionType(account: string, description: string): ProvType {
   const a = accountKey(account);
@@ -59,13 +62,13 @@ export function buildProvisionRows(entries: GlEntry[], flaggedAccounts: Set<stri
     const firstBalance = list.find(e => isBalanceAccount(e.G_L_Account_No));
     if (!firstBalance) continue;   // sin cuenta de provisión: no es una dotación (traspasos, refacturación PROV1/PROV3…)
     const expense = list.find(e => flaggedAccounts.has(accountKey(e.G_L_Account_No)))
-      || list.find(e => !isBalanceAccount(e.G_L_Account_No) && !isOtherBalanceAccount(e.G_L_Account_No));
+      || list.find(e => isIncomeAccount(e.G_L_Account_No)) || list.find(e => !isBalanceAccount(e.G_L_Account_No));
     const date0 = list.reduce((m, e) => (e.Posting_Date < m ? e.Posting_Date : m), list[0].Posting_Date);
     rows.push({
       doc, date: date0, desc: firstBalance.Description || list[0].Description, account: firstBalance.G_L_Account_No,
       series: accountKey(firstBalance.G_L_Account_No),
       t: accountKey(firstBalance.G_L_Account_No) === '307202' ? 'amazon' : provisionType(expense?.G_L_Account_No || '', firstBalance.Description || ''),
-      orig: r2(-firstBalance.Amount), cons: 0, open: 0, latest: false,
+      orig: r2(list.filter(e => isIncomeAccount(e.G_L_Account_No)).reduce((sum, e) => sum + e.Amount, 0)), cons: 0, open: 0, latest: false,
     });
   }
   // Saldo de cada cuenta de serie con todos los movimientos PROV* del año
@@ -100,7 +103,7 @@ export async function fetchProvisionData(ctx: BcContext, date: string) {
 export async function provisionsReport(ctx: BcContext, company: string, month: string, force = false) {
   const date = cutoffDate(month);
   const year = date.substring(0, 4);
-  return cached(`prov6:${company}:${date}`, date < today() ? 12 * HOUR : 1 * HOUR, async () => {
+  return cached(`prov7:${company}:${date}`, date < today() ? 12 * HOUR : 1 * HOUR, async () => {
     const { entries, flagged } = await fetchProvisionData(ctx, date);
     const all = buildProvisionRows(entries, flagged, date, year);
     // Tabla: una fila por serie (su último documento) con la dotación del año; dotación del mes: documentos del mes

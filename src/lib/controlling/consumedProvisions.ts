@@ -4,7 +4,9 @@ import { today } from '@/lib/reporting/period';
 import { findService } from '@/lib/royalties';
 
 // Controlling · Consumed Provisions, entre dos fechas de registro:
-// - Generado: LM (página 60000 "Documents LM Components", sin líneas Main Item):
+// - Provisionado: asientos PROV* del periodo en las cuentas de resultados de cada provisión (PROVISION_ACCOUNTS: 4769 02,
+//   6020 10, 6600 30, 6600 31, 6837 00), igual que los saldos de la cuenta de resultados.
+// - Calculado LM (referencia; puede diferir por abonos posteriores): página 60000 "Documents LM Components", sin Main Item:
 //     Provision Conditions = Total Provision Sales · Provision KAM = "Provision HHRR" (campo Total_Provision_Bonus)
 //     Provision Royalties = Total Provision Royalties · Provision Marketing = Provision Marketing sin ventas a Amazon
 //     Provision Amazon Promotion = Provision Marketing de las ventas a Amazon.
@@ -28,6 +30,9 @@ export const CONCEPTS = [
 ] as const;
 type Key = typeof CONCEPTS[number]['key'];
 const ACCOUNTS = CONCEPTS.map(c => c.account).filter(Boolean) as string[];
+// Cuenta de resultados (sin espacios) → concepto; el primer prefijo que encaja
+const PROVISION_ACCOUNTS: [string, Key][] = [['660031', 'amazon'], ['6600', 'marketing'], ['4769', 'conditions'], ['6020', 'kam'], ['6837', 'royalties']];
+const conceptOf = (account: string) => { const a = account.replace(/\s+/g, ''); return PROVISION_ACCOUNTS.find(([p]) => a.startsWith(p))?.[1] || null; };
 const PURCHASE_CODES = /^(PURCHASES|PUR-DEFER)$/i;
 const isAmazon = (r: any) => /amazon/i.test(`${str(r.Sell_to_Customer_Name)} ${str(r.Bill_to_Customer_Name)}`);
 
@@ -63,15 +68,29 @@ async function generated(ctx: BcContext, from: string, to: string) {
 }
 
 export async function consumedProvisionsReport(ctx: BcContext, company: string, from: string, to: string, force = false) {
-  return cached(`ctrl:consumedProv2:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
-    const [gen, entries, vendors] = await Promise.all([
+  return cached(`ctrl:consumedProv3:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
+    const [gen, entries, vendors, provEntries] = await Promise.all([
       generated(ctx, from, to),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
         $filter: `Posting_Date ge ${from} and Posting_Date le ${to} and (${ACCOUNTS.map(a => `G_L_Account_No eq '${a}'`).join(' or ')})`,
         $select: 'Entry_No,Posting_Date,Document_Type,Document_No,G_L_Account_No,Description,Amount,Source_Type,Source_No,Source_Code,External_Document_No,Bal_Account_No',
       }), ctx.token),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Vendor_Card_Excel`, { $select: 'No,Name' }), ctx.token).catch(() => [] as any[]),
+      bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
+        $filter: `startswith(Document_No,'PROV') and Posting_Date ge ${from} and Posting_Date le ${to}`,
+        $select: 'Posting_Date,G_L_Account_No,Amount',
+      }), ctx.token),
     ]);
+    // Provisionado por concepto y mes (cuentas de resultados)
+    const booked: Record<Key, number> = { conditions: 0, kam: 0, royalties: 0, marketing: 0, amazon: 0 };
+    const bookedByMonth: Record<string, Record<Key, number>> = {};
+    for (const e of provEntries) {
+      const key = conceptOf(str(e.G_L_Account_No));
+      if (!key) continue;
+      booked[key] += num(e.Amount);
+      const m = str(e.Posting_Date).substring(0, 7);
+      (bookedByMonth[m] ||= { conditions: 0, kam: 0, royalties: 0, marketing: 0, amazon: 0 })[key] += num(e.Amount);
+    }
     const vendorName = new Map(vendors.map((v: any) => [str(v.No), str(v.Name)]));
 
     // Movimientos de cada documento (sin asientos de provisión PROV…)
@@ -126,19 +145,19 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
     const concepts = CONCEPTS.map(c => {
       const list = c.account ? docs.filter(d => Math.abs(d.byAccount[c.account] || 0) >= 0.005) : [];
       const consumed = r2(list.reduce((s, d) => s + (d.byAccount[c.account] || 0), 0));
-      const provision = r2(gen[c.key]);
+      const provision = r2(booked[c.key]);
       return {
-        ...c, provision, consumed: c.account ? consumed : null, pending: c.account ? r2(provision - consumed) : null,
+        ...c, provision, lm: r2(gen[c.key]), consumed: c.account ? consumed : null, pending: c.account ? r2(provision - consumed) : null,
         docs: list.map(d => ({ ...d, amount: d.byAccount[c.account] })).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)),
       };
     });
     // Consumido por mes (fecha de cada movimiento) para comparar con lo generado
-    const months = Array.from(new Set([...Object.keys(gen.byMonth), ...entries.map((e: any) => str(e.Posting_Date).substring(0, 7))])).sort();
+    const months = Array.from(new Set([...Object.keys(bookedByMonth), ...entries.map((e: any) => str(e.Posting_Date).substring(0, 7))])).sort();
     const docSet = new Set(docs.map(d => d.documentNo));
     const byMonth = months.map(m => ({
       month: m,
       ...Object.fromEntries(CONCEPTS.map(c => [c.key, {
-        provision: r2(gen.byMonth[m]?.[c.key] || 0),
+        provision: r2(bookedByMonth[m]?.[c.key] || 0), lm: r2(gen.byMonth[m]?.[c.key] || 0),
         consumed: c.account ? r2(entries.filter((e: any) => docSet.has(str(e.Document_No)) && str(e.G_L_Account_No) === c.account && str(e.Posting_Date).startsWith(m)).reduce((s: number, e: any) => s + num(e.Amount), 0)) : null,
       }])),
     }));
