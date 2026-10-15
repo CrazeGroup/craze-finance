@@ -39,6 +39,11 @@ const PROVISION_ACCOUNTS: [string, Key][] = [['660031', 'amazon'], ['6600', 'mar
 const SERIES_ACCOUNT: Record<Key, string> = { conditions: '307113', kam: '307108', royalties: '307112', marketing: '307201', amazon: '307202' };
 const conceptOf = (account: string) => { const a = account.replace(/\s+/g, ''); return PROVISION_ACCOUNTS.find(([p]) => a.startsWith(p))?.[1] || null; };
 const PURCHASE_CODES = /^(PURCHASES|PUR-DEFER)$/i;
+// Proveedores que se asignan a mano a un Customer Group y concepto en la tabla por grupo
+// (Savi Marketing: condiciones de dm DE, aunque se registren en PROV-MARKETING)
+const VENDOR_OVERRIDES: { vendor: RegExp; group: string; concept: Key }[] = [
+  { vendor: /\bsavi\b/i, group: '017', concept: 'conditions' },
+];
 const normVat = (v: string) => v.toUpperCase().replace(/[^A-Z0-9]/g, '');
 // Nombre sin forma jurídica ni signos, para emparejar proveedor y cliente ("Müller Handels GmbH & Co. KG" → "muller")
 const normName = (v: string) => v.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -84,7 +89,7 @@ async function generated(ctx: BcContext, from: string, to: string) {
 }
 
 export async function consumedProvisionsReport(ctx: BcContext, company: string, from: string, to: string, force = false) {
-  return cached(`ctrl:consumedProv7:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
+  return cached(`ctrl:consumedProv8:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
     const [gen, entries, vendors, provEntries, customerGroups] = await Promise.all([
       generated(ctx, from, to),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
@@ -227,6 +232,7 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
     // por CIF y, si no, por nombre (exacto o primera palabra, cuando solo encaja en un grupo)
     const vendorVat = new Map(vendors.map((v: any) => [str(v.No), normVat(str(v.VAT_Registration_No))]));
     const groupOfVendor = new Map<string, string>();
+    const override = (vendorNo: string) => VENDOR_OVERRIDES.find(o => o.vendor.test(vendorName.get(vendorNo) || ''));
     const byVat = new Map<string, string>(), byNameExact = new Map<string, string>(), byFirst = new Map<string, Set<string>>();
     for (const [code, ids] of Object.entries(gen.groupIds)) {
       ids.vats.forEach(v => { if (v) byVat.set(v, code); });
@@ -239,6 +245,8 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
     }
     const matchGroup = (vendorNo: string) => {
       if (groupOfVendor.has(vendorNo)) return groupOfVendor.get(vendorNo)!;
+      const o = override(vendorNo);
+      if (o) { groupOfVendor.set(vendorNo, o.group); return o.group; }
       const vat = vendorVat.get(vendorNo) || '';
       const name = normName(vendorName.get(vendorNo) || '');
       const first = byFirst.get(name.split(' ')[0]);
@@ -254,7 +262,7 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
         const g = matchGroup(x.vendorNo);
         if (!g) continue;
         groupDocs.set(g, [...(groupDocs.get(g) || []), {
-          concept: c.key as Key, documentNo: x.documentNo, type: x.type, date: x.firstDate, vendorNo: x.vendorNo, vendorName: x.vendorName, externalDocNo: x.externalDocNo, amount: x.amount,
+          concept: override(x.vendorNo)?.concept || c.key as Key, documentNo: x.documentNo, type: x.type, date: x.firstDate, vendorNo: x.vendorNo, vendorName: x.vendorName, externalDocNo: x.externalDocNo, amount: x.amount,
         }]);
       }
     }
