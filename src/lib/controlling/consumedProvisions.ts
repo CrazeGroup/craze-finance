@@ -147,7 +147,7 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
       const consumed = r2(list.reduce((s, d) => s + (d.byAccount[c.account] || 0), 0));
       const provision = r2(booked[c.key]);
       return {
-        ...c, provision, lm: r2(gen[c.key]), consumed: c.account ? consumed : null, pending: c.account ? r2(provision - consumed) : null,
+        ...c, provision, lm: r2(gen[c.key]), consumed: c.account ? consumed : null, pending: r2(provision - (c.account ? consumed : 0)),   // sin cuenta de consumo (KAM): todo pendiente
         docs: list.map(d => ({ ...d, amount: d.byAccount[c.account] })).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)),
       };
     });
