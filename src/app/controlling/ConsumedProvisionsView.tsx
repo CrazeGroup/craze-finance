@@ -13,6 +13,10 @@ type Concept = { key: string; label: string; account: string; provision: number;
 type Data = { concepts: Concept[]; byMonth: any[]; lmLines: number; excludedJournal: number; glEntries: number };
 
 const iso = (d: Date) => d.toISOString().substring(0, 10);
+// Pendiente (provisionado − consumido), en rojo si se ha consumido más de lo provisionado
+const Pending = ({ v }: { v: number }) => (
+  <span className={v < -0.5 ? 'text-[#C0392B]' : ''}>{Math.round(v).toLocaleString('es-ES')}</span>
+);
 
 // Columnas ordenables de los documentos de una provisión
 type SortKey = 'documentNo' | 'type' | 'firstDate' | 'vendor' | 'externalDocNo' | 'initialAccounts' | 'reclassified' | 'amount';
@@ -187,14 +191,22 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
               </table>
             </div>
 
-            <Card title="Por mes" sub="Provisionado (G/L) y consumido en las cuentas PROV-* por fecha de registro">
+            <Card title="Por mes" sub="Provisionado (G/L), consumido en las cuentas PROV-* y pendiente (provisionado − consumido) por fecha de registro">
               <div className="overflow-x-auto">
                 <Table
                   cols={[{ label: 'Mes' }, ...d.concepts.flatMap(c => [
                     { label: `${c.label.replace('Provision ', '')} prov.`, align: 'right' as const, mono: true },
-                    ...(c.account ? [{ label: 'cons.', align: 'right' as const, mono: true }] : []),
+                    ...(c.account ? [{ label: 'cons.', align: 'right' as const, mono: true }, { label: 'pend.', align: 'right' as const, mono: true }] : []),
                   ])]}
-                  rows={d.byMonth.map(m => [monthName(m.month), ...d.concepts.flatMap(c => [num(m[c.key].provision), ...(c.account ? [num(m[c.key].consumed)] : [])])])}
+                  rows={d.byMonth.map(m => [monthName(m.month), ...d.concepts.flatMap(c => {
+                    const v = m[c.key];
+                    return [num(v.provision), ...(c.account ? [num(v.consumed), <Pending key="p" v={v.provision - v.consumed} />] : [])];
+                  })])}
+                  total={['Total', ...d.concepts.flatMap(c => {
+                    const p = d.byMonth.reduce((s, m) => s + m[c.key].provision, 0);
+                    const k = d.byMonth.reduce((s, m) => s + (m[c.key].consumed || 0), 0);
+                    return [num(p), ...(c.account ? [num(k), <Pending key="p" v={p - k} />] : [])];
+                  })]}
                 />
               </div>
             </Card>
