@@ -13,14 +13,14 @@ type Doc = { documentNo: string; type: string; vendorNo: string; vendorName: str
 type Concept = { key: string; label: string; account: string; provision: number; lm: number; consumed: number | null; pending: number | null; docs: Doc[] };
 type GroupDoc = { concept: string; documentNo: string; type: string; date: string; vendorNo: string; vendorName: string; externalDocNo: string; amount: number };
 type LmGroup = {
-  code: string; name: string; conditions: number; kam: number; royalties: number; marketing: number; amazon: number; total: number;
+  code: string; name: string; conditions: number; markant: number; kam: number; royalties: number; marketing: number; amazon: number; total: number;
   consumed: Record<string, number>; consumedTotal: number; docs: GroupDoc[];
 };
 type Data = { concepts: Concept[]; byMonth: any[]; lmByGroup: LmGroup[]; lmLines: number; excludedJournal: number; glEntries: number };
 
 const iso = (d: Date) => d.toISOString().substring(0, 10);
-const LM_COLS: ['conditions' | 'kam' | 'royalties' | 'marketing' | 'amazon', string][] = [
-  ['conditions', 'Conditions'], ['kam', 'KAM'], ['royalties', 'Royalties'], ['marketing', 'Marketing (sin Amazon)'], ['amazon', 'Amazon Promotion'],
+const LM_COLS: ['conditions' | 'markant' | 'kam' | 'royalties' | 'marketing' | 'amazon', string][] = [
+  ['conditions', 'Conditions (sin Markant)'], ['markant', 'Markant (Accounting Partner)'], ['kam', 'KAM'], ['royalties', 'Royalties'], ['marketing', 'Marketing (sin Amazon)'], ['amazon', 'Amazon Promotion'],
 ];
 // Pendiente (provisionado − consumido), en rojo si se ha consumido más de lo provisionado
 const Pending = ({ v }: { v: number }) => (
@@ -77,7 +77,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
     }))), 'LM por Customer Group');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.lmByGroup.flatMap(g => g.docs.map(x => ({
       'Customer Group': g.code, 'Customer Group Name': g.name, Concepto: LM_COLS.find(([k]) => k === x.concept)?.[1] || x.concept,
-      'Document No.': x.documentNo, Tipo: x.type === 'Invoice' ? 'Factura' : 'Abono', Fecha: x.date, 'Vendor No.': x.vendorNo, Proveedor: x.vendorName,
+      'Document No.': x.documentNo, Tipo: x.type === 'Invoice' ? 'Factura' : x.type === 'Credit Memo' ? 'Abono' : x.type, Fecha: x.date, 'Vendor No.': x.vendorNo, Proveedor: x.vendorName,
       'Nº doc. proveedor': x.externalDocNo, Importe: x.amount,
     })))), 'Facturas por Customer Group');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.byMonth.map(m => Object.fromEntries([['Mes', m.month], ...d.concepts.flatMap(c => {
@@ -297,7 +297,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
               </table>
             </div>
 
-            <Card title="Calculado por la LM y consumido por Customer Group" sub="Calculado: Documents LM Components (60000, sin Main Item). Consumido: facturas y abonos de compra de proveedores que son clientes del grupo (por CIF o nombre) en las cuentas PROV-*. Pincha un grupo para ver sus documentos.">
+            <Card title="Calculado por la LM y consumido por Customer Group" sub="Calculado: Documents LM Components (60000, sin Main Item); Markant = Provision Accounting Partner (parte de Conditions). Consumido: facturas y abonos de compra de proveedores que son clientes del grupo (por CIF o nombre) en las cuentas PROV-*; las facturas de Markant se reparten en proporción al Markant calculado de cada grupo. Pincha un grupo para ver sus documentos.">
               <div className="overflow-x-auto">
                 <table className="w-full text-[12px]">
                   <thead>
@@ -338,7 +338,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                               <td />
                               <td colSpan={2 + LM_COLS.length * 3 - 1 + 3} className="py-2 pr-2">
                                 <Table cols={[{ label: 'Concepto' }, { label: 'Document No.', mono: true }, { label: 'Tipo' }, { label: 'Fecha', mono: true }, { label: 'Proveedor', wide: true }, { label: 'Nº doc. proveedor' }, { label: 'Importe', align: 'right', mono: true }]}
-                                  rows={g.docs.map(x => [LM_COLS.find(([k]) => k === x.concept)?.[1] || x.concept, x.documentNo, x.type === 'Invoice' ? 'Factura' : 'Abono', date(x.date), `${x.vendorName || ''} ${x.vendorNo}`.trim(), x.externalDocNo || '–', num(x.amount, 2)])}
+                                  rows={g.docs.map(x => [LM_COLS.find(([k]) => k === x.concept)?.[1] || x.concept, x.documentNo, x.type === 'Invoice' ? 'Factura' : x.type === 'Credit Memo' ? 'Abono' : x.type, date(x.date), `${x.vendorName || ''} ${x.vendorNo}`.trim(), x.externalDocNo || '–', num(x.amount, 2)])}
                                   total={['Total', '', '', '', '', '', num(g.consumedTotal, 2)]} />
                               </td>
                             </tr>
