@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment, useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 import type { Fmt } from '../reporting/i18n';
 import { Card, ErrorBox, Grid, Kpi, Loading, Section, Table } from '../reporting/ui';
 
@@ -13,6 +13,17 @@ type Concept = { key: string; label: string; account: string; provision: number;
 type Data = { concepts: Concept[]; byMonth: any[]; lmLines: number; excludedJournal: number; glEntries: number };
 
 const iso = (d: Date) => d.toISOString().substring(0, 10);
+
+// Columnas ordenables de los documentos de una provisión
+type SortKey = 'documentNo' | 'type' | 'firstDate' | 'vendor' | 'externalDocNo' | 'initialAccounts' | 'reclassified' | 'amount';
+const DOC_COLS: { key: SortKey; label: string; right?: boolean }[] = [
+  { key: 'documentNo', label: 'Document No.' }, { key: 'type', label: 'Tipo' }, { key: 'firstDate', label: 'Fecha' },
+  { key: 'vendor', label: 'Proveedor' }, { key: 'externalDocNo', label: 'Nº doc. proveedor' }, { key: 'initialAccounts', label: 'Registrado en' },
+  { key: 'reclassified', label: 'Reclasificado' }, { key: 'amount', label: 'Importe', right: true },
+];
+const sortValue = (d: Doc, k: SortKey): string | number =>
+  k === 'amount' ? d.amount : k === 'vendor' ? (d.vendorName || d.vendorNo).toLowerCase()
+  : k === 'initialAccounts' ? d.initialAccounts.join(', ') : k === 'reclassified' ? Number(d.reclassified) : String(d[k] || '').toLowerCase();
 const th = 'py-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-gray-500 font-mono whitespace-nowrap';
 const td = 'py-1.5 px-2 whitespace-nowrap';
 
@@ -23,6 +34,19 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
   const [reload, setReload] = useState({ n: 0, force: false });
   const [state, setState] = useState<{ data: Data | null; loading: boolean; error: string | null }>({ data: null, loading: true, error: null });
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [sort, setSort] = useState<Record<string, { key: SortKey; dir: 1 | -1 }>>({});
+  const sortBy = (concept: string, key: SortKey) => setSort(s => {
+    const cur = s[concept];
+    return { ...s, [concept]: { key, dir: cur?.key === key ? (cur.dir === 1 ? -1 : 1) : key === 'amount' ? -1 : 1 } };
+  });
+  const sorted = (c: Concept) => {
+    const st = sort[c.key];
+    if (!st) return c.docs;
+    return [...c.docs].sort((a, b) => {
+      const va = sortValue(a, st.key), vb = sortValue(b, st.key);
+      return (va < vb ? -1 : va > vb ? 1 : 0) * st.dir;
+    });
+  };
 
   useEffect(() => {
     if (!from || !to || from > to) return;
@@ -104,13 +128,19 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                             <table className="w-full text-[12px] bg-white rounded-lg border border-gray-200">
                               <thead>
                                 <tr className="border-b border-gray-200 text-left">
-                                  <th className={th} /><th className={th}>Document No.</th><th className={th}>Tipo</th><th className={th}>Fecha</th>
-                                  <th className={th}>Proveedor</th><th className={th}>Nº doc. proveedor</th><th className={th}>Registrado en</th>
-                                  <th className={th}>Reclasificado</th><th className={`${th} text-right`}>Importe en {c.account}</th>
+                                  <th className={th} />
+                                  {DOC_COLS.map(col => (
+                                    <th key={col.key} className={`${th} ${col.right ? 'text-right' : ''} cursor-pointer select-none hover:text-gray-900`} onClick={() => sortBy(c.key, col.key)}>
+                                      <span className={`inline-flex items-center gap-1 ${col.right ? 'flex-row-reverse' : ''}`}>
+                                        {col.key === 'amount' ? `Importe en ${c.account}` : col.label}
+                                        {sort[c.key]?.key === col.key && (sort[c.key].dir === 1 ? <ArrowUp size={11} /> : <ArrowDown size={11} />)}
+                                      </span>
+                                    </th>
+                                  ))}
                                 </tr>
                               </thead>
                               <tbody>
-                                {c.docs.map(doc => {
+                                {sorted(c).map(doc => {
                                   const k = `${c.key}|${doc.documentNo}`;
                                   return (
                                     <Fragment key={k}>
