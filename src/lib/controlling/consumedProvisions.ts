@@ -14,7 +14,10 @@ import { findService } from '@/lib/royalties';
 //   PROV-ROYALTIES / PROV-AMZPROM. Se sigue el hilo por el Document No.: cuenta todo lo que un documento de compra
 //   tiene en esas cuentas en el periodo (su registro inicial, periodificaciones y las reclasificaciones de diario hechas
 //   con el mismo nº de documento). También cuentan los asientos PROV + número (PROV1, PROV3…: refacturación de royalties
-//   que consume PROV-ROYALTIES). No cuentan las dotaciones PROV-… ni los diarios sin documento de compra.
+//   que consume PROV-ROYALTIES), los asientos de diario en esas cuentas sin factura detrás (p. ej. Skonto Reclassification)
+//   y, en los asientos PROV-…, lo que rebaja la cuenta de provisión de la serie (3071 13…) contra otras cuentas de balance
+//   (p. ej. PROV-00049: traspaso de la 3071 06). No cuentan la dotación (cuenta de resultados) ni el traspaso desde la PROV-*,
+//   que ya son las facturas contadas una a una. Así lo consumido coincide con el del Reporting (provisionado − abierto).
 
 const str = (v: any) => (v == null ? '' : String(v).trim());
 const num = (v: any) => (typeof v === 'number' ? v : parseFloat(v) || 0);
@@ -32,6 +35,8 @@ type Key = typeof CONCEPTS[number]['key'];
 const ACCOUNTS = CONCEPTS.map(c => c.account).filter(Boolean) as string[];
 // Cuenta de resultados (sin espacios) → concepto; el primer prefijo que encaja
 const PROVISION_ACCOUNTS: [string, Key][] = [['660031', 'amazon'], ['6600', 'marketing'], ['4769', 'conditions'], ['6020', 'kam'], ['6837', 'royalties']];
+// Cuenta de provisión (balance) de cada concepto
+const SERIES_ACCOUNT: Record<Key, string> = { conditions: '307113', kam: '307108', royalties: '307112', marketing: '307201', amazon: '307202' };
 const conceptOf = (account: string) => { const a = account.replace(/\s+/g, ''); return PROVISION_ACCOUNTS.find(([p]) => a.startsWith(p))?.[1] || null; };
 const PURCHASE_CODES = /^(PURCHASES|PUR-DEFER)$/i;
 const isAmazon = (r: any) => /amazon/i.test(`${str(r.Sell_to_Customer_Name)} ${str(r.Bill_to_Customer_Name)}`);
@@ -68,7 +73,7 @@ async function generated(ctx: BcContext, from: string, to: string) {
 }
 
 export async function consumedProvisionsReport(ctx: BcContext, company: string, from: string, to: string, force = false) {
-  return cached(`ctrl:consumedProv4:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
+  return cached(`ctrl:consumedProv5:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
     const [gen, entries, vendors, provEntries] = await Promise.all([
       generated(ctx, from, to),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
@@ -78,7 +83,7 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Vendor_Card_Excel`, { $select: 'No,Name' }), ctx.token).catch(() => [] as any[]),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
         $filter: `startswith(Document_No,'PROV') and Posting_Date ge ${from} and Posting_Date le ${to}`,
-        $select: 'Posting_Date,G_L_Account_No,Amount',
+        $select: 'Entry_No,Posting_Date,Document_No,G_L_Account_No,Description,Amount,Source_Code,Bal_Account_No',
       }), ctx.token),
     ]);
     // Provisionado por concepto y mes (cuentas de resultados)
@@ -118,28 +123,63 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
       byAccount: Record<string, number>;
     };
     const docs: DocOut[] = [];
-    let excludedJournal = 0;
+    const excludedJournal = 0;
     for (const [doc, list] of byDoc) {
       const purchase = list.filter(e => PURCHASE_CODES.test(str(e.Source_Code)));
       const reinvoicing = /^PROV\d/i.test(doc);   // PROV1, PROV3…: refacturación de royalties
-      const orig = purchase.length ? purchase : reinvoicing ? list : (origin.get(doc) || []);
-      if (!orig.length) { excludedJournal++; continue; }   // diario sin factura/abono de compra detrás
+      const found = purchase.length ? purchase : reinvoicing ? list : (origin.get(doc) || []);
+      const journal = !found.length;   // diario sin factura/abono de compra detrás (Skonto Reclassification…)
+      const orig = journal ? list : found;
       const typed = orig.find(e => str(e.Document_Type)) || orig[0];
       const vendorNo = str(orig.find(e => str(e.Source_No))?.Source_No);
       const byAccount: Record<string, number> = {};
       for (const e of list) byAccount[str(e.G_L_Account_No)] = r2((byAccount[str(e.G_L_Account_No)] || 0) + num(e.Amount));
       docs.push({
-        documentNo: doc, type: reinvoicing ? 'Refacturación (diario)' : str(typed.Document_Type).replace(/_x0020_/g, ' ') || '–', vendorNo, vendorName: vendorName.get(vendorNo) || '',
+        documentNo: doc, type: reinvoicing ? 'Refacturación (diario)' : journal ? 'Diario' : str(typed.Document_Type).replace(/_x0020_/g, ' ') || '–', vendorNo, vendorName: vendorName.get(vendorNo) || '',
         externalDocNo: str(orig.find(e => str(e.External_Document_No))?.External_Document_No),
         firstDate: [...list, ...orig].map(e => str(e.Posting_Date).substring(0, 10)).sort()[0],
-        initialAccounts: Array.from(new Set(orig.filter(e => str(e.Gen_Posting_Type) === 'Purchase' || ACCOUNTS.includes(str(e.G_L_Account_No))).map(e => str(e.G_L_Account_No)))),
-        reclassified: list.some(e => !PURCHASE_CODES.test(str(e.Source_Code))),
+        initialAccounts: journal ? Array.from(new Set(list.map(e => str(e.Bal_Account_No)).filter(Boolean)))
+          : Array.from(new Set(orig.filter(e => str(e.Gen_Posting_Type) === 'Purchase' || ACCOUNTS.includes(str(e.G_L_Account_No))).map(e => str(e.G_L_Account_No)))),
+        reclassified: !journal && list.some(e => !PURCHASE_CODES.test(str(e.Source_Code))),
         movements: list.sort((a, b) => a.Entry_No - b.Entry_No).map(e => ({
           date: str(e.Posting_Date).substring(0, 10), account: str(e.G_L_Account_No), amount: r2(num(e.Amount)),
           source: str(e.Source_Code), description: str(e.Description), balAccount: str(e.Bal_Account_No),
         })),
         byAccount,
       });
+    }
+
+    // Asientos PROV-…: lo que rebaja la cuenta de provisión de cada concepto contra otras cuentas de balance
+    // = saldo en la cuenta de la serie + dotación (cuenta de resultados) + traspaso desde la cuenta PROV-*
+    const provDocs = new Map<string, any[]>();
+    for (const e of provEntries) if (/^PROV-/i.test(str(e.Document_No))) provDocs.set(str(e.Document_No), [...(provDocs.get(str(e.Document_No)) || []), e]);
+    const transferMonth: Record<string, Partial<Record<Key, number>>> = {};
+    for (const [doc, list] of provDocs) {
+      for (const c of CONCEPTS) {
+        if (!c.account) continue;
+        const key = c.key as Key;
+        let t = 0;
+        for (const e of list) {
+          const a = str(e.G_L_Account_No).replace(/\s+/g, '');
+          if (a === SERIES_ACCOUNT[key] || a === c.account || conceptOf(a) === key) t += num(e.Amount);
+        }
+        if (Math.abs(t) < 0.5) continue;
+        const sources = list.filter(e => {
+          const a = str(e.G_L_Account_No).replace(/\s+/g, '');
+          return !conceptOf(a) && !ACCOUNTS.includes(str(e.G_L_Account_No)) && !Object.values(SERIES_ACCOUNT).includes(a);
+        });
+        const date = list.map(e => str(e.Posting_Date).substring(0, 10)).sort().pop() as string;
+        docs.push({
+          documentNo: doc, type: 'Traspaso (asiento PROV)', vendorNo: '', vendorName: '', externalDocNo: '', firstDate: date,
+          initialAccounts: Array.from(new Set(sources.map(e => str(e.G_L_Account_No)))), reclassified: false,
+          movements: sources.sort((a, b) => a.Entry_No - b.Entry_No).map(e => ({
+            date: str(e.Posting_Date).substring(0, 10), account: str(e.G_L_Account_No), amount: r2(num(e.Amount)),
+            source: str(e.Source_Code), description: str(e.Description), balAccount: str(e.Bal_Account_No),
+          })),
+          byAccount: { [c.account]: r2(t) },
+        });
+        (transferMonth[date.substring(0, 7)] ||= {})[key] = ((transferMonth[date.substring(0, 7)] || {})[key] || 0) + t;
+      }
     }
 
     const concepts = CONCEPTS.map(c => {
@@ -158,7 +198,8 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
       month: m,
       ...Object.fromEntries(CONCEPTS.map(c => [c.key, {
         provision: r2(bookedByMonth[m]?.[c.key] || 0), lm: r2(gen.byMonth[m]?.[c.key] || 0),
-        consumed: c.account ? r2(entries.filter((e: any) => docSet.has(str(e.Document_No)) && str(e.G_L_Account_No) === c.account && str(e.Posting_Date).startsWith(m)).reduce((s: number, e: any) => s + num(e.Amount), 0)) : null,
+        consumed: c.account ? r2(entries.filter((e: any) => docSet.has(str(e.Document_No)) && !/^PROV-/i.test(str(e.Document_No)) && str(e.G_L_Account_No) === c.account && str(e.Posting_Date).startsWith(m)).reduce((s: number, e: any) => s + num(e.Amount), 0)
+          + (transferMonth[m]?.[c.key as Key] || 0)) : null,
       }])),
     }));
     return { company, from, to, lmLines: gen.lines, concepts, byMonth, excludedJournal, glEntries: entries.length };

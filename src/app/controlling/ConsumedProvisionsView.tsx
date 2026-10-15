@@ -212,7 +212,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
               </div>
             </Card>
             <p className="text-xs text-gray-500">
-              Provision KAM es la columna «Provision HHRR» de la LM; no tiene cuenta PROV de consumo. {d.excludedJournal > 0 && `${num(d.excludedJournal)} documentos de diario en las cuentas PROV sin factura ni abono de compra detrás no cuentan como consumo.`}
+              Provision KAM es la columna «Provision HHRR» de la LM; no tiene cuenta PROV de consumo. El consumido incluye las facturas y abonos de compra, los asientos de diario en las cuentas PROV-* (p. ej. Skonto Reclassification) y los traspasos de los asientos PROV-… que rebajan la cuenta de provisión contra otras cuentas de balance (p. ej. PROV-00049 desde la 3071 06).
             </p>
           </>
         )}
