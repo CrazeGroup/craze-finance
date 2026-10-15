@@ -1,7 +1,8 @@
 'use client';
 
 import { Fragment, useEffect, useState } from 'react';
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, FileDown, RefreshCw } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
 import { Card, ErrorBox, Grid, Kpi, Loading, Section, Table } from '../reporting/ui';
 
@@ -52,6 +53,30 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
       return (va < vb ? -1 : va > vb ? 1 : 0) * st.dir;
     });
   };
+  // Excel: resumen, por mes, documentos (con su grupo) y movimientos
+  const exportExcel = () => {
+    if (!d) return;
+    const group = (x: Doc) => (x.type === 'Invoice' ? 'Factura' : x.type === 'Credit Memo' ? 'Abono' : 'Asiento');
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.concepts.map(c => ({
+      Concepto: c.label, 'Cuenta consumo': c.account, 'Provisionado (G/L)': c.provision, 'Calculado LM': c.lm,
+      Consumido: c.consumed, Pendiente: c.pending, '% consumido': c.consumed !== null && c.provision ? c.consumed / c.provision : null, Documentos: c.docs.length,
+    }))), 'Resumen');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.byMonth.map(m => Object.fromEntries([['Mes', m.month], ...d.concepts.flatMap(c => {
+      const v = m[c.key];
+      const name = c.label.replace('Provision ', '');
+      return [[`${name} prov.`, v.provision], ...(c.account ? [[`${name} cons.`, v.consumed], [`${name} pend.`, v.provision - v.consumed]] : [])];
+    })]))), 'Por mes');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.concepts.flatMap(c => c.docs.map(x => ({
+      Concepto: c.label, Grupo: group(x), 'Document No.': x.documentNo, Tipo: x.type, Fecha: x.firstDate, 'Vendor No.': x.vendorNo, Proveedor: x.vendorName,
+      'Nº doc. proveedor': x.externalDocNo, 'Registrado en': x.initialAccounts.join(', '), Reclasificado: x.reclassified ? 'Sí' : 'No', [`Importe`]: x.amount, 'Cuenta consumo': c.account,
+    })))), 'Documentos');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.concepts.flatMap(c => c.docs.flatMap(x => x.movements.map(m => ({
+      Concepto: c.label, 'Document No.': x.documentNo, Fecha: m.date, Cuenta: m.account, Origen: m.source, Descripción: m.description, Contrapartida: m.balAccount, Importe: m.amount,
+    }))))), 'Movimientos');
+    XLSX.writeFile(wb, `Consumed_Provisions_${company}_${from}_${to}.xlsx`.replace(/\s+/g, '_'));
+  };
+
   const sum = (docs: Doc[]) => docs.reduce((t, x) => t + x.amount, 0);
   // Subniveles de una provisión: facturas y abonos de compra (con un nivel para cada uno) y asientos
   type Group = { id: string; label: string; docs: Doc[]; children?: Group[] };
@@ -148,6 +173,10 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
               className="block mt-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-900 bg-white normal-case tracking-normal" />
           </label>
         ))}
+        <button onClick={exportExcel} disabled={state.loading || !d}
+          className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
+          <FileDown size={16} /> Exportar Excel
+        </button>
         <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={state.loading} title="Volver a leer de BC"
           className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">
           <RefreshCw size={16} className={state.loading ? 'animate-spin' : ''} />

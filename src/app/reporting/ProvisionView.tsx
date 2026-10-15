@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { FileDown } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import type { Fmt } from './i18n';
 import { Card, ErrorBox, Grid, Kpi, Loading, Section, Table } from './ui';
 import type { Loaded } from './OperationalView';
@@ -14,7 +16,9 @@ const store = {
   set: (k: string, v: string) => { try { sessionStorage.setItem(k, v); } catch { /* sin almacenamiento */ } },
 };
 
-function LmProvisionsSection({ fmt, month, company, reload }: { fmt: Fmt; month: string; company: string; reload: { n: number; force: boolean } }) {
+function LmProvisionsSection({ fmt, month, company, reload, onData }: {
+  fmt: Fmt; month: string; company: string; reload: { n: number; force: boolean }; onData: (d: any, range: { from: string; to: string }) => void;
+}) {
   const { t, pct, date, num } = fmt;
   // Por defecto: del 1 de enero al último día del mes del reporting
   const defaults = () => {
@@ -49,6 +53,7 @@ function LmProvisionsSection({ fmt, month, company, reload }: { fmt: Fmt; month:
   }, [range.from, range.to, company, reload]);
 
   const d: any = state.data;
+  useEffect(() => { onData(d, range); }, [d, range, onData]);
   const money = (v: number) => new Intl.NumberFormat(fmt.locale, { style: 'currency', currency: d?.currency || 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v || 0);
   const share = (part: number, whole: number) => (whole ? (part / whole) * 100 : 0);
 
@@ -107,10 +112,45 @@ function LmProvisionsSection({ fmt, month, company, reload }: { fmt: Fmt; month:
 export default function ProvisionView({ fmt, month, company, prov, reload }: {
   fmt: Fmt; month: string; company: string; prov: Loaded; reload: { n: number; force: boolean };
 }) {
+  const [lm, setLm] = useState<{ d: any; range: { from: string; to: string } } | null>(null);
+  const onLmData = useCallback((d: any, range: { from: string; to: string }) => setLm({ d, range }), []);
+  const p: any = prov.data;
+
+  // Excel: provisiones G/L (por tipo y por documento) y la tabla de la LM por Customer Group
+  const exportExcel = () => {
+    const wb = XLSX.utils.book_new();
+    if (p) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([
+        ...p.byType.map((x: any) => ({ Tipo: fmt.t(`pt_${x.t}` as any), Original: x.orig, Consumido: x.cons, Abierto: x.open, '% consumo': x.orig ? x.cons / x.orig : 0 })),
+        { Tipo: 'Total', Original: p.orig, Consumido: p.cons, Abierto: p.open, '% consumo': p.orig ? p.cons / p.orig : 0 },
+      ]), 'Provisiones por tipo');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(p.rows.map((r: any) => ({
+        Documento: r.doc, Fecha: r.date, Descripción: r.desc, Cuenta: r.account, Tipo: fmt.t(`pt_${r.t}` as any), Original: r.orig, Consumido: r.cons, Abierto: r.open,
+      }))), 'Provisiones por documento');
+    }
+    if (lm?.d?.rows) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([
+        ...lm.d.rows.map((r: any) => ({
+          'Customer Group': r.group, 'Cliente principal': r.customer, Clientes: r.customerCount, Líneas: r.lines, Facturación: r.turnover,
+          'Provision Conditions': r.conditions, 'Provision Marketing (excl. Amazon)': r.marketing, 'Amazon Promotion': r.amazon, 'Total provisión': r.total,
+        })),
+        { 'Customer Group': 'Total', Facturación: lm.d.total.turnover, 'Provision Conditions': lm.d.total.conditions,
+          'Provision Marketing (excl. Amazon)': lm.d.total.marketing, 'Amazon Promotion': lm.d.total.amazon, 'Total provisión': lm.d.total.total },
+      ]), 'LM por Customer Group');
+    }
+    XLSX.writeFile(wb, `Provisiones_${company}_${month}${lm ? `_LM_${lm.range.from}_${lm.range.to}` : ''}.xlsx`.replace(/\s+/g, '_'));
+  };
+
   return (
     <div className="space-y-10">
+      <div className="flex justify-end -mb-6">
+        <button onClick={exportExcel} disabled={!p && !lm?.d}
+          className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
+          <FileDown size={16} /> Exportar Excel
+        </button>
+      </div>
       <ProvisionsSection fmt={fmt} prov={prov} month={month} />
-      <LmProvisionsSection fmt={fmt} month={month} company={company} reload={reload} />
+      <LmProvisionsSection fmt={fmt} month={month} company={company} reload={reload} onData={onLmData} />
     </div>
   );
 }
