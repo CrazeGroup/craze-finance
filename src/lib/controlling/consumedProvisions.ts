@@ -11,7 +11,8 @@ import { findService } from '@/lib/royalties';
 // - Consumido: facturas y abonos de compra que han acabado en las cuentas PROV-KONDITIONS / PROV-MARKETING /
 //   PROV-ROYALTIES / PROV-AMZPROM. Se sigue el hilo por el Document No.: cuenta todo lo que un documento de compra
 //   tiene en esas cuentas en el periodo (su registro inicial, periodificaciones y las reclasificaciones de diario hechas
-//   con el mismo nº de documento). No cuentan los asientos de provisión (PROV-…) ni los diarios sin documento de compra.
+//   con el mismo nº de documento). También cuentan los asientos PROV + número (PROV1, PROV3…: refacturación de royalties
+//   que consume PROV-ROYALTIES). No cuentan las dotaciones PROV-… ni los diarios sin documento de compra.
 
 const str = (v: any) => (v == null ? '' : String(v).trim());
 const num = (v: any) => (typeof v === 'number' ? v : parseFloat(v) || 0);
@@ -62,7 +63,7 @@ async function generated(ctx: BcContext, from: string, to: string) {
 }
 
 export async function consumedProvisionsReport(ctx: BcContext, company: string, from: string, to: string, force = false) {
-  return cached(`ctrl:consumedProv:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
+  return cached(`ctrl:consumedProv2:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
     const [gen, entries, vendors] = await Promise.all([
       generated(ctx, from, to),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
@@ -77,11 +78,11 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
     const byDoc = new Map<string, any[]>();
     for (const e of entries) {
       const doc = str(e.Document_No);
-      if (!doc || /^PROV/i.test(doc)) continue;
+      if (!doc || /^PROV-/i.test(doc)) continue;   // dotaciones de provisión
       byDoc.set(doc, [...(byDoc.get(doc) || []), e]);
     }
     // Documentos que solo llegan por reclasificación: se busca su registro de compra original en cualquier cuenta
-    const reclassOnly = Array.from(byDoc.entries()).filter(([, list]) => !list.some(e => PURCHASE_CODES.test(str(e.Source_Code)))).map(([d]) => d);
+    const reclassOnly = Array.from(byDoc.entries()).filter(([d, list]) => !/^PROV\d/i.test(d) && !list.some(e => PURCHASE_CODES.test(str(e.Source_Code)))).map(([d]) => d);
     const chunks = Array.from({ length: Math.ceil(reclassOnly.length / 30) }, (_, i) => reclassOnly.slice(i * 30, i * 30 + 30));
     const origin = new Map<string, any[]>();
     for (let i = 0; i < chunks.length; i += 8) {
@@ -101,14 +102,15 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
     let excludedJournal = 0;
     for (const [doc, list] of byDoc) {
       const purchase = list.filter(e => PURCHASE_CODES.test(str(e.Source_Code)));
-      const orig = purchase.length ? purchase : (origin.get(doc) || []);
+      const reinvoicing = /^PROV\d/i.test(doc);   // PROV1, PROV3…: refacturación de royalties
+      const orig = purchase.length ? purchase : reinvoicing ? list : (origin.get(doc) || []);
       if (!orig.length) { excludedJournal++; continue; }   // diario sin factura/abono de compra detrás
       const typed = orig.find(e => str(e.Document_Type)) || orig[0];
       const vendorNo = str(orig.find(e => str(e.Source_No))?.Source_No);
       const byAccount: Record<string, number> = {};
       for (const e of list) byAccount[str(e.G_L_Account_No)] = r2((byAccount[str(e.G_L_Account_No)] || 0) + num(e.Amount));
       docs.push({
-        documentNo: doc, type: str(typed.Document_Type).replace(/_x0020_/g, ' ') || '–', vendorNo, vendorName: vendorName.get(vendorNo) || '',
+        documentNo: doc, type: reinvoicing ? 'Refacturación (diario)' : str(typed.Document_Type).replace(/_x0020_/g, ' ') || '–', vendorNo, vendorName: vendorName.get(vendorNo) || '',
         externalDocNo: str(orig.find(e => str(e.External_Document_No))?.External_Document_No),
         firstDate: [...list, ...orig].map(e => str(e.Posting_Date).substring(0, 10)).sort()[0],
         initialAccounts: Array.from(new Set(orig.filter(e => str(e.Gen_Posting_Type) === 'Purchase' || ACCOUNTS.includes(str(e.G_L_Account_No))).map(e => str(e.G_L_Account_No)))),
