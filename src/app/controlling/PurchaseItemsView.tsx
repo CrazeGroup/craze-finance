@@ -1,7 +1,8 @@
 'use client';
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, RefreshCw, Search } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileDown, RefreshCw, Search } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
 import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
 
@@ -63,6 +64,30 @@ export default function PurchaseItemsView({ fmt, company }: { fmt: Fmt; company:
       || i.vendors.some(v => v.vendorNo.toLowerCase().includes(s) || v.name.toLowerCase().includes(s)));
   }, [state.data, search]);
 
+  // Excel: hoja de artículos y hoja con una fila por línea de factura/abono (artículos filtrados por el buscador)
+  const exportExcel = () => {
+    const itemRows = items.map(i => ({
+      'No.': i.itemNo, 'Description': i.description, 'Gen. Prod. Posting Group': i.genProdPostingGroup,
+      'Purch. Account': setupAccounts(i.setup, 'purch'), 'Purch. Credit Memo Account': setupAccounts(i.setup, 'crMemo'),
+      'Proveedores': i.vendors.length, 'Cantidad': i.quantity, 'Neto': i.net,
+    }));
+    const lineRows = items.flatMap(i => i.vendors.flatMap(v => v.docs.map(doc => ({
+      'Item No.': i.itemNo, 'Item Description': i.description, 'Gen. Prod. Posting Group': i.genProdPostingGroup,
+      'Vendor No.': v.vendorNo, 'Vendor Name': v.name, 'Country/Region Code': v.country, 'Payment Method Code': v.paymentMethod,
+      'Payment Terms Code': v.paymentTerms, 'Gen. Bus. Posting Group': v.genBusPostingGroup,
+      'Cuenta actual': doc.kind === 'Abono' ? v.currentCrMemoAccount : v.currentPurchAccount,
+      'Tipo': doc.kind, 'Document No.': doc.documentNo, 'Document Date': doc.documentDate, 'Posting Date': doc.postingDate,
+      'VAT Date': doc.vatDate, 'Vendor Invoice No.': doc.vendorDocNo, 'Quantity': doc.quantity,
+      'Direct Unit Cost Excl. VAT': doc.directUnitCost, 'Importe': doc.amount, 'Currency Code': doc.currency,
+      'VAT Prod. Posting Group': doc.vatProdPostingGroup, 'Deferral Code': doc.deferralCode,
+      'Cuenta G/L registrada': doc.glAccounts.map(a => a.no).join(', '), 'Nombre cuenta G/L': doc.glAccounts.map(a => a.name).join(', '),
+    }))));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(itemRows), 'Artículos');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(lineRows), 'Facturas y abonos');
+    XLSX.writeFile(wb, `Compras_por_articulo_${company}_${from}_${to}.xlsx`.replace(/\s+/g, '_'));
+  };
+
   const money = (v: number, cur = '') => `${num(v, 2)}${cur ? ` ${cur}` : ''}`;
   const toggle = (k: string) => setOpen(o => ({ ...o, [k]: !o[k] }));
   const d = state.data;
@@ -85,6 +110,10 @@ export default function PurchaseItemsView({ fmt, company }: { fmt: Fmt; company:
               className="w-full text-sm text-gray-900 outline-none normal-case tracking-normal font-normal" />
           </span>
         </label>
+        <button onClick={exportExcel} disabled={state.loading || !items.length}
+          className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
+          <FileDown size={16} /> Exportar Excel
+        </button>
         <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={state.loading} title="Volver a leer de BC"
           className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">
           <RefreshCw size={16} className={state.loading ? 'animate-spin' : ''} />
