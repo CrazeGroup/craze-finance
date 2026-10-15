@@ -33,8 +33,9 @@ const td = 'py-1.5 px-2 whitespace-nowrap';
 
 export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; company: string }) {
   const { num, pct, date, monthName } = fmt;
-  const [from, setFrom] = useState(() => `${new Date().getFullYear()}-01-01`);
-  const [to, setTo] = useState(() => iso(new Date()));
+  // Por defecto: del 1 de enero al último día del mes anterior (en enero, el año anterior completo)
+  const [to, setTo] = useState(() => { const d = new Date(); return iso(new Date(Date.UTC(d.getFullYear(), d.getMonth(), 0))); });
+  const [from, setFrom] = useState(() => `${to.substring(0, 4)}-01-01`);
   const [reload, setReload] = useState({ n: 0, force: false });
   const [state, setState] = useState<{ data: Data | null; loading: boolean; error: string | null }>({ data: null, loading: true, error: null });
   const [open, setOpen] = useState<Record<string, boolean>>({});
