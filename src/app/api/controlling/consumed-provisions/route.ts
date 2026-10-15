@@ -24,14 +24,15 @@ export async function GET(req: Request) {
       const service = await findService(ctx);
       const rows = await bcFetchAll(odataUrl(service.url, { $filter: `Posting_date ge ${from} and Posting_date le ${to}` }), ctx.token);
       const sums: Record<string, number> = {};
-      for (const r of rows) for (const [k, v] of Object.entries(r)) if (typeof v === 'number' && /prov|turnover/i.test(k)) sums[k] = (sums[k] || 0) + v;
-      return NextResponse.json({ rows: rows.length, docs: new Set(rows.map((r: any) => r.Document_No)).size, sums: Object.fromEntries(Object.entries(sums).map(([k, v]) => [k, r2(v)])) });
+      const noMain = rows.filter((r: any) => !r.Main_Item_CRZ);
+      for (const r of noMain) for (const [k, v] of Object.entries(r)) if (typeof v === 'number' && /prov|turnover/i.test(k)) sums[k] = (sums[k] || 0) + v;
+      return NextResponse.json({ rows: rows.length, noMain: noMain.length, docs: new Set(rows.map((r: any) => r.Document_No)).size, sums: Object.fromEntries(Object.entries(sums).map(([k, v]) => [k, r2(v)])) });
     }
     if (probe === 'gl') {
       const accounts = (searchParams.get('accounts') || 'PROV-AMZPROM,PROV-KONDITIONS,PROV-MARKETING,PROV-ROYALTIES').split(',');
       const entries = await bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
         $filter: `Posting_Date ge ${from} and Posting_Date le ${to} and (${accounts.map(a => `G_L_Account_No eq '${a}'`).join(' or ')})`,
-        $select: 'Entry_No,Posting_Date,Document_Type,Document_No,G_L_Account_No,Description,Amount,Source_Type,Source_No,Source_Code,External_Document_No,Bal_Account_No,Gen_Posting_Type,Transaction_No',
+        $select: 'Entry_No,Posting_Date,Document_Type,Document_No,G_L_Account_No,Description,Amount,Source_Type,Source_No,Source_Code,External_Document_No,Bal_Account_No,Gen_Posting_Type',
       }), ctx.token);
       const summary: Record<string, any> = {};
       for (const e of entries) {
