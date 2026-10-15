@@ -1,10 +1,10 @@
-import { bcFetchAll, bcFetchByEntryRanges, BcContext, odataUrl } from '@/lib/bcClient';
+import { bcFetchAll, BcContext, odataUrl } from '@/lib/bcClient';
 import { cached, HOUR } from '@/lib/reporting/cache';
 import { today } from '@/lib/reporting/period';
 
 // Controlling · Compras por artículo: facturas (tablas 122/123) y abonos (124/125) de compra registrados entre dos
 // fechas de registro, solo líneas de tipo Artículo, agrupados por artículo → proveedor → documento.
-// - Artículo: descripción y grupo contable producto de su ficha (Item_Card_Excel) y, con la configuración contable
+// - Artículo: descripción y grupo contable producto de su ficha (API v2 items) y, con la configuración contable
 //   general (tabla 252, General_Posting_Setup_Excel), la Purch. Account / Purch. Credit Memo Account actuales
 //   para cada grupo contable de negocio.
 // - Proveedor: ficha (Vendor_Card_Excel): país, forma y términos de pago, grupo contable de negocio.
@@ -49,8 +49,6 @@ export async function probeSources(ctx: BcContext, from: string, to: string) {
     purchInvLines: () => bcFetchAll(odataUrl(`${ctx.customApiBase}/purchInvLines`, { $filter: dateFilter('postingDate'), $select: 'documentNo,lineNo,type,no,postingDate' }), ctx.token),
     invHeaders: () => bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Posted_Purchase_Invoice_Excel`, { $filter: dateFilter('Posting_Date'), $select: 'No,Document_Date' }), ctx.token),
     vendors: () => bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Vendor_Card_Excel`, { $select: 'No,Name,Gen_Bus_Posting_Group' }), ctx.token),
-    itemCard: () => bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Item_Card_Excel`, { $select: 'No,Description,Gen_Prod_Posting_Group' }), ctx.token),
-    itemsApi: () => bcFetchAll(odataUrl(`${ctx.customApiBase}/items`, { $select: 'no,description,genProdPostingGroup' }), ctx.token),
     itemsV2: () => bcFetchAll(odataUrl(`${ctx.apiBase}/items`, { $select: 'number,displayName,generalProductPostingGroupCode' }), ctx.token),
     setup: () => bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Posting_Setup_Excel`, { $select: 'Gen_Bus_Posting_Group,Gen_Prod_Posting_Group,Purch_Account' }), ctx.token),
     glPurchase: () => bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, { $filter: `${dateFilter('Posting_Date')} and Gen_Posting_Type eq 'Purchase'`, $select: 'Entry_No,Document_No,G_L_Account_No,Gen_Prod_Posting_Group,Amount' }), ctx.token),
@@ -82,13 +80,15 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Vendor_Card_Excel`, {
         $select: 'No,Name,Country_Region_Code,Payment_Method_Code,Payment_Terms_Code,Gen_Bus_Posting_Group',
       }), ctx.token),
-      bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Item_Card_Excel`, { $select: 'No,Description,Gen_Prod_Posting_Group' }), ctx.token),
+      // Ficha de artículo por la API v2 (la página Item_Card_Excel tarda más de 30 s)
+      bcFetchAll(odataUrl(`${ctx.apiBase}/items`, { $select: 'number,displayName,generalProductPostingGroupCode' }), ctx.token),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Posting_Setup_Excel`, {
         $select: 'Gen_Bus_Posting_Group,Gen_Prod_Posting_Group,Purch_Account,Purch_Credit_Memo_Account',
       }), ctx.token),
-      bcFetchByEntryRanges(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, ctx.token, 'Entry_No',
-        'Entry_No,Document_No,G_L_Account_No,G_L_Account_Name,Gen_Prod_Posting_Group,Amount',
-        `${dateFilter('Posting_Date')} and Gen_Posting_Type eq 'Purchase'`).catch(e => { warnings.push(`Movimientos contables no disponibles: ${e.message}`); return [] as any[]; }),
+      bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
+        $filter: `${dateFilter('Posting_Date')} and Gen_Posting_Type eq 'Purchase'`,
+        $select: 'Entry_No,Document_No,G_L_Account_No,G_L_Account_Name,Gen_Prod_Posting_Group,Amount',
+      }), ctx.token).catch(e => { warnings.push(`Movimientos contables no disponibles: ${e.message}`); return [] as any[]; }),
       cm.header
         ? bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/${cm.header}`, { $filter: dateFilter('Posting_Date') }), ctx.token).catch(e => { warnings.push(`Abonos (${cm.header}): ${e.message}`); return [] as any[]; })
         : Promise.resolve([] as any[]),
@@ -108,7 +108,7 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
     }
 
     const vendorBy = new Map(vendors.map(v => [str(v.No), v]));
-    const itemBy = new Map(items.map(i => [str(i.No), i]));
+    const itemBy = new Map(items.map(i => [str(i.number), { Description: i.displayName, Gen_Prod_Posting_Group: i.generalProductPostingGroupCode }]));
     const invHeaderBy = new Map(invHeaders.map(h => [str(h.No), h]));
     const cmHeaderBy = new Map(cmHeaders.map(h => [str(h.No), h]));
     const setupByProd = new Map<string, { bus: string; purch: string; crMemo: string }[]>();
