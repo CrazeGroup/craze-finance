@@ -29,6 +29,9 @@ const isBalanceAccount = (no: string) => /^30\d/.test(accountKey(no));
 // Cuentas de resultados (clases 4-7: 4769 02, 6020 10, 6600 30, 6600 31, 6837 00…): lo provisionado (dotación) es lo que
 // el documento carga en ellas, como los saldos de la cuenta de resultados.
 const isIncomeAccount = (no: string) => /^[4-7]\d/.test(accountKey(no));
+// Tipo de provisión de cada cuenta de resultados (hay documentos PROV que mezclan cuentas de varios tipos)
+const INCOME_TYPE: [string, ProvType][] = [['660031', 'amazon'], ['6600', 'marketing'], ['4769', 'konditions'], ['6020', 'incentives'], ['6837', 'royalties']];
+export const incomeType = (no: string) => INCOME_TYPE.find(([p]) => accountKey(no).startsWith(p))?.[1] || null;
 
 function provisionType(account: string, description: string): ProvType {
   const a = accountKey(account);
@@ -103,12 +106,20 @@ export async function fetchProvisionData(ctx: BcContext, date: string) {
 export async function provisionsReport(ctx: BcContext, company: string, month: string, force = false) {
   const date = cutoffDate(month);
   const year = date.substring(0, 4);
-  return cached(`prov7:${company}:${date}`, date < today() ? 12 * HOUR : 1 * HOUR, async () => {
+  return cached(`prov8:${company}:${date}`, date < today() ? 12 * HOUR : 1 * HOUR, async () => {
     const { entries, flagged } = await fetchProvisionData(ctx, date);
     const all = buildProvisionRows(entries, flagged, date, year);
     // Tabla: una fila por serie (su último documento) con la dotación del año; dotación del mes: documentos del mes
+    // Provisionado del año por tipo: asientos PROV* en las cuentas de resultados de cada tipo
+    const year0 = `${year}-01-01`;
+    const byIncomeType = new Map<ProvType, number>();
+    for (const e of entries) {
+      const t = incomeType(e.G_L_Account_No);
+      if (!t || !String(e.Document_No || '').toUpperCase().startsWith(PROVISION_DOC_PREFIX) || e.Posting_Date < year0 || e.Posting_Date > date) continue;
+      byIncomeType.set(t, (byIncomeType.get(t) || 0) + e.Amount);
+    }
     const rows = all.filter(r => r.latest && r.open !== 0).map(r => {
-      const orig = r2(all.filter(x => x.series === r.series).reduce((s, x) => s + x.orig, 0));
+      const orig = byIncomeType.has(r.t) ? r2(byIncomeType.get(r.t)!) : r2(all.filter(x => x.series === r.series).reduce((s, x) => s + x.orig, 0));
       return { ...r, orig, cons: r2(orig - r.open) };
     });
     const thisMonth = all.filter(r => r.date.startsWith(date.substring(0, 7)));
