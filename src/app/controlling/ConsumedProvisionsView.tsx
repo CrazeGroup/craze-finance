@@ -72,7 +72,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
     }))), 'Resumen');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.lmByGroup.map(g => ({
       'Customer Group': g.code, 'Customer Group Name': g.name,
-      ...Object.fromEntries(LM_COLS.flatMap(([k, label]) => [[`${label} calc.`, g[k]], ...(k !== 'kam' ? [[`${label} cons.`, g.consumed[k] || 0]] : [])])),
+      ...Object.fromEntries(LM_COLS.flatMap(([k, label]) => [[`${label} calc.`, g[k]], ...(k !== 'kam' ? [[`${label} cons.`, g.consumed[k] || 0]] : []), [`${label} pend.`, g[k] - (g.consumed[k] || 0)]])),
       'Total calc.': g.total, 'Total cons.': g.consumedTotal, Pendiente: g.total - g.consumedTotal,
     }))), 'LM por Customer Group');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.lmByGroup.flatMap(g => g.docs.map(x => ({
@@ -307,6 +307,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                         <Fragment key={k}>
                           <th className={`${th} text-right`}>{label} calc.</th>
                           {k !== 'kam' && <th className={`${th} text-right`}>cons.</th>}
+                          <th className={`${th} text-right`}>pend.</th>
                         </Fragment>
                       ))}
                       <th className={`${th} text-right`}>Total calc.</th><th className={`${th} text-right`}>Total cons.</th><th className={`${th} text-right`}>Pendiente</th>
@@ -325,6 +326,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                               <Fragment key={k}>
                                 <td className={`${td} text-right font-mono`}>{num(g[k], 2)}</td>
                                 {k !== 'kam' && <td className={`${td} text-right font-mono text-gray-600`}>{g.consumed[k] ? num(g.consumed[k], 2) : '–'}</td>}
+                                <td className={`${td} text-right font-mono`}><Pending v={g[k] - (g.consumed[k] || 0)} /></td>
                               </Fragment>
                             ))}
                             <td className={`${td} text-right font-mono font-semibold`}>{num(g.total, 2)}</td>
@@ -334,7 +336,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                           {open[gk] && (
                             <tr className="bg-gray-50/70">
                               <td />
-                              <td colSpan={2 + LM_COLS.length * 2 - 1 + 3} className="py-2 pr-2">
+                              <td colSpan={2 + LM_COLS.length * 3 - 1 + 3} className="py-2 pr-2">
                                 <Table cols={[{ label: 'Concepto' }, { label: 'Document No.', mono: true }, { label: 'Tipo' }, { label: 'Fecha', mono: true }, { label: 'Proveedor', wide: true }, { label: 'Nº doc. proveedor' }, { label: 'Importe', align: 'right', mono: true }]}
                                   rows={g.docs.map(x => [LM_COLS.find(([k]) => k === x.concept)?.[1] || x.concept, x.documentNo, x.type === 'Invoice' ? 'Factura' : 'Abono', date(x.date), `${x.vendorName || ''} ${x.vendorNo}`.trim(), x.externalDocNo || '–', num(x.amount, 2)])}
                                   total={['Total', '', '', '', '', '', num(g.consumedTotal, 2)]} />
@@ -350,6 +352,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                         <Fragment key={k}>
                           <td className={`${td} text-right font-mono`}>{num(d.lmByGroup.reduce((t, g) => t + g[k], 0), 2)}</td>
                           {k !== 'kam' && <td className={`${td} text-right font-mono`}>{num(d.lmByGroup.reduce((t, g) => t + (g.consumed[k] || 0), 0), 2)}</td>}
+                          <td className={`${td} text-right font-mono`}><Pending v={d.lmByGroup.reduce((t, g) => t + g[k] - (g.consumed[k] || 0), 0)} /></td>
                         </Fragment>
                       ))}
                       <td className={`${td} text-right font-mono`}>{num(d.lmByGroup.reduce((t, g) => t + g.total, 0), 2)}</td>
