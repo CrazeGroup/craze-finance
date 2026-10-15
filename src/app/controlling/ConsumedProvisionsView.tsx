@@ -11,9 +11,13 @@ import { Card, ErrorBox, Grid, Kpi, Loading, Section, Table } from '../reporting
 type Movement = { date: string; account: string; amount: number; source: string; description: string; balAccount: string };
 type Doc = { documentNo: string; type: string; vendorNo: string; vendorName: string; externalDocNo: string; firstDate: string; initialAccounts: string[]; reclassified: boolean; movements: Movement[]; amount: number };
 type Concept = { key: string; label: string; account: string; provision: number; lm: number; consumed: number | null; pending: number | null; docs: Doc[] };
-type Data = { concepts: Concept[]; byMonth: any[]; lmLines: number; excludedJournal: number; glEntries: number };
+type LmGroup = { code: string; name: string; conditions: number; kam: number; royalties: number; marketing: number; amazon: number; total: number };
+type Data = { concepts: Concept[]; byMonth: any[]; lmByGroup: LmGroup[]; lmLines: number; excludedJournal: number; glEntries: number };
 
 const iso = (d: Date) => d.toISOString().substring(0, 10);
+const LM_COLS: [keyof Omit<LmGroup, 'code' | 'name' | 'total'>, string][] = [
+  ['conditions', 'Conditions'], ['kam', 'KAM'], ['royalties', 'Royalties'], ['marketing', 'Marketing (sin Amazon)'], ['amazon', 'Amazon Promotion'],
+];
 // Pendiente (provisionado − consumido), en rojo si se ha consumido más de lo provisionado
 const Pending = ({ v }: { v: number }) => (
   <span className={v < -0.5 ? 'text-[#C0392B]' : ''}>{Math.round(v).toLocaleString('es-ES')}</span>
@@ -62,6 +66,9 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
       Concepto: c.label, 'Cuenta consumo': c.account, 'Provisionado (G/L)': c.provision, 'Calculado LM': c.lm,
       Consumido: c.consumed, Pendiente: c.pending, '% consumido': c.consumed !== null && c.provision ? c.consumed / c.provision : null, Documentos: c.docs.length,
     }))), 'Resumen');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.lmByGroup.map(g => ({
+      'Customer Group': g.code, 'Customer Group Name': g.name, ...Object.fromEntries(LM_COLS.map(([k, label]) => [label, g[k]])), Total: g.total,
+    }))), 'LM por Customer Group');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.byMonth.map(m => Object.fromEntries([['Mes', m.month], ...d.concepts.flatMap(c => {
       const v = m[c.key];
       const name = c.label.replace('Provision ', '');
@@ -278,6 +285,19 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                 </tbody>
               </table>
             </div>
+
+            <Card title="Calculado por la LM por Customer Group" sub="Documents LM Components (60000, sin Main Item) · Marketing sin las ventas a Amazon; Amazon Promotion = Marketing de las ventas a Amazon">
+              <div className="overflow-x-auto">
+                <Table
+                  cols={[
+                    { label: 'Customer Group', mono: true }, { label: 'Customer Group Name', wide: true },
+                    ...LM_COLS.map(([, label]) => ({ label, align: 'right' as const, mono: true })), { label: 'Total', align: 'right', mono: true },
+                  ]}
+                  rows={d.lmByGroup.map(g => [g.code, g.name || '–', ...LM_COLS.map(([k]) => num(g[k], 2)), <strong key="t">{num(g.total, 2)}</strong>])}
+                  total={['Total', '', ...LM_COLS.map(([k]) => num(d.lmByGroup.reduce((t, g) => t + g[k], 0), 2)), num(d.lmByGroup.reduce((t, g) => t + g.total, 0), 2)]}
+                />
+              </div>
+            </Card>
 
             <Card title="Por mes" sub="Provisionado (G/L), consumido en las cuentas PROV-* y pendiente (provisionado − consumido) por fecha de registro">
               <div className="overflow-x-auto">

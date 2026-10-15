@@ -49,14 +49,15 @@ async function generated(ctx: BcContext, from: string, to: string) {
   const F = {
     date: k('Posting_date'), main: k('Main_Item_CRZ') || k('Main_Item'), sales: k('Total_Provision_Sales'), kam: k('Total_Provision_Bonus'),
     royalties: k('Total_Provision_Royalties'), marketing: k('Provision_Marketing'), sell: k('Sell_to_Customer_Name'), bill: k('Bill_to_Customer_Name'),
+    group: k('Customer_Group_Code'),
   };
   const missing = Object.entries(F).filter(([, v]) => !v).map(([n]) => n);
   if (sample.length && missing.length) throw new Error(`El servicio "${service.name}" no tiene los campos ${missing.join(', ')}.`);
-  if (!sample.length) return { conditions: 0, kam: 0, royalties: 0, marketing: 0, amazon: 0, lines: 0, byMonth: {} as Record<string, Record<Key, number>> };
+  if (!sample.length) return { conditions: 0, kam: 0, royalties: 0, marketing: 0, amazon: 0, lines: 0, byMonth: {} as Record<string, Record<Key, number>>, byGroup: {} as Record<string, Record<Key, number>> };
   const rows = await bcFetchAll(odataUrl(service.url, {
     $filter: `${F.date} ge ${from} and ${F.date} le ${to}`, $select: Object.values(F).join(','),
   }), ctx.token);
-  const out = { conditions: 0, kam: 0, royalties: 0, marketing: 0, amazon: 0, lines: 0, byMonth: {} as Record<string, Record<Key, number>> };
+  const out = { conditions: 0, kam: 0, royalties: 0, marketing: 0, amazon: 0, lines: 0, byMonth: {} as Record<string, Record<Key, number>>, byGroup: {} as Record<string, Record<Key, number>> };
   for (const r0 of rows) {
     const r = { ...r0, Sell_to_Customer_Name: r0[F.sell!], Bill_to_Customer_Name: r0[F.bill!] };
     if (r0[F.main!] === true) continue;
@@ -66,15 +67,16 @@ async function generated(ctx: BcContext, from: string, to: string) {
     };
     const m = str(r0[F.date!]).substring(0, 7);
     const bm = (out.byMonth[m] ||= { conditions: 0, kam: 0, royalties: 0, marketing: 0, amazon: 0 });
-    for (const key of Object.keys(v) as Key[]) { out[key] += v[key]; bm[key] += v[key]; }
+    const bg = (out.byGroup[str(r0[F.group!])] ||= { conditions: 0, kam: 0, royalties: 0, marketing: 0, amazon: 0 });
+    for (const key of Object.keys(v) as Key[]) { out[key] += v[key]; bm[key] += v[key]; bg[key] += v[key]; }
     out.lines++;
   }
   return out;
 }
 
 export async function consumedProvisionsReport(ctx: BcContext, company: string, from: string, to: string, force = false) {
-  return cached(`ctrl:consumedProv5:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
-    const [gen, entries, vendors, provEntries] = await Promise.all([
+  return cached(`ctrl:consumedProv6:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
+    const [gen, entries, vendors, provEntries, customerGroups] = await Promise.all([
       generated(ctx, from, to),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
         $filter: `Posting_Date ge ${from} and Posting_Date le ${to} and (${ACCOUNTS.map(a => `G_L_Account_No eq '${a}'`).join(' or ')})`,
@@ -85,6 +87,8 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
         $filter: `startswith(Document_No,'PROV') and Posting_Date ge ${from} and Posting_Date le ${to}`,
         $select: 'Entry_No,Posting_Date,Document_No,G_L_Account_No,Description,Amount,Source_Code,Bal_Account_No',
       }), ctx.token),
+      // Nombres de los Customer Groups (API custom customerGroups)
+      bcFetchAll(odataUrl(`${ctx.customApiBase}/customerGroups`, { $select: 'code,description' }), ctx.token).catch(() => [] as any[]),
     ]);
     // Provisionado por concepto y mes (cuentas de resultados)
     const booked: Record<Key, number> = { conditions: 0, kam: 0, royalties: 0, marketing: 0, amazon: 0 };
@@ -202,6 +206,14 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
           + (transferMonth[m]?.[c.key as Key] || 0)) : null,
       }])),
     }));
-    return { company, from, to, lmLines: gen.lines, concepts, byMonth, excludedJournal, glEntries: entries.length };
+    // Calculado por la LM, por Customer Group
+    const groupName = new Map(customerGroups.map((g: any) => [str(g.code), str(g.description)]));
+    const lmByGroup = Object.entries(gen.byGroup).map(([code, v]) => ({
+      code: code || '(sin grupo)', name: groupName.get(code) || '',
+      ...Object.fromEntries(Object.entries(v).map(([k, x]) => [k, r2(x)])) as Record<Key, number>,
+      total: r2(Object.values(v).reduce((t, x) => t + x, 0)),
+    })).filter(g => CONCEPTS.some(c => Math.abs(g[c.key]) >= 0.005))
+      .sort((a, b) => b.total - a.total);
+    return { company, from, to, lmLines: gen.lines, concepts, byMonth, lmByGroup, excludedJournal, glEntries: entries.length };
   }, force);
 }
