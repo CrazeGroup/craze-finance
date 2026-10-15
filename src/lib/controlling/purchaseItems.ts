@@ -42,6 +42,29 @@ async function creditMemoServices(ctx: BcContext) {
   return { header, lines, candidates: crMemo };
 }
 
+// Diagnóstico: tiempo y nº de filas de cada lectura de BC por separado (?probe=1)
+export async function probeSources(ctx: BcContext, from: string, to: string) {
+  const dateFilter = (f: string) => `${f} ge ${from} and ${f} le ${to}`;
+  const sources: Record<string, () => Promise<any[]>> = {
+    purchInvLines: () => bcFetchAll(odataUrl(`${ctx.customApiBase}/purchInvLines`, { $filter: dateFilter('postingDate'), $select: 'documentNo,lineNo,type,no,postingDate' }), ctx.token),
+    invHeaders: () => bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Posted_Purchase_Invoice_Excel`, { $filter: dateFilter('Posting_Date'), $select: 'No,Document_Date' }), ctx.token),
+    vendors: () => bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Vendor_Card_Excel`, { $select: 'No,Name,Gen_Bus_Posting_Group' }), ctx.token),
+    itemCard: () => bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Item_Card_Excel`, { $select: 'No,Description,Gen_Prod_Posting_Group' }), ctx.token),
+    itemsApi: () => bcFetchAll(odataUrl(`${ctx.customApiBase}/items`, { $select: 'no,description,genProdPostingGroup' }), ctx.token),
+    itemsV2: () => bcFetchAll(odataUrl(`${ctx.apiBase}/items`, { $select: 'number,displayName,generalProductPostingGroupCode' }), ctx.token),
+    setup: () => bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Posting_Setup_Excel`, { $select: 'Gen_Bus_Posting_Group,Gen_Prod_Posting_Group,Purch_Account' }), ctx.token),
+    glPurchase: () => bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, { $filter: `${dateFilter('Posting_Date')} and Gen_Posting_Type eq 'Purchase'`, $select: 'Entry_No,Document_No,G_L_Account_No,Gen_Prod_Posting_Group,Amount' }), ctx.token),
+    glLEntries: () => bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/G_LEntries`, { $filter: `${dateFilter('Posting_Date')} and Gen_Posting_Type eq 'Purchase'`, $select: 'Entry_No,Document_No,G_L_Account_No,Gen_Prod_Posting_Group,Amount' }), ctx.token),
+  };
+  const out: Record<string, unknown> = {};
+  await Promise.all(Object.entries(sources).map(async ([k, f]) => {
+    const t = Date.now();
+    try { const rows = await f(); out[k] = { rows: rows.length, ms: Date.now() - t }; }
+    catch (e: any) { out[k] = { error: String(e.message).substring(0, 300), ms: Date.now() - t }; }
+  }));
+  return out;
+}
+
 export async function purchaseItemsReport(ctx: BcContext, company: string, from: string, to: string, force = false) {
   return cached(`ctrl:purchItems:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
     const warnings: string[] = [];

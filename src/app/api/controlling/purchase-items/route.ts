@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getBcContext } from '@/lib/bcClient';
-import { purchaseItemsReport } from '@/lib/controlling/purchaseItems';
+import { probeSources, purchaseItemsReport } from '@/lib/controlling/purchaseItems';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -18,6 +18,7 @@ export async function GET(req: Request) {
     const company = cookieStore.get('craze_selected_company')?.value || 'CRAZE';
     if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
     const ctx = await getBcContext(company);
+    if (searchParams.get('probe') === '1') return NextResponse.json(await probeSources(ctx, from, to));
     return NextResponse.json(await purchaseItemsReport(ctx, company, from, to, searchParams.get('force') === '1'));
   } catch (error: any) {
     console.error('Error in controlling purchase-items:', error);
