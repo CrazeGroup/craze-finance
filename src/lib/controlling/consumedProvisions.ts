@@ -103,7 +103,7 @@ async function generated(ctx: BcContext, from: string, to: string) {
 }
 
 export async function consumedProvisionsReport(ctx: BcContext, company: string, from: string, to: string, force = false) {
-  return cached(`ctrl:consumedProv11:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
+  return cached(`ctrl:consumedProv12:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
     const [gen, entries, vendors, provEntries, customerGroups] = await Promise.all([
       generated(ctx, from, to),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
@@ -278,7 +278,11 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
           + (!g.country && !vendorCountry ? 0.5 : 0);
         if (score > bestScore) { best = g.code; bestScore = score; tie = false; } else if (score === bestScore) tie = true;
       }
-      return bestScore > 0 && !tie ? best : '';
+      if (bestScore > 0 && !tie) return best;
+      // Primera palabra distintiva del grupo (≥ 4 letras) que solo tiene un grupo: "Koordination GLOBUS Holding" → Globus Bingen
+      const firstHits = groupWords.filter(g => g.core[0].length >= 4 && words.has(g.core[0]));
+      const unique = firstHits.filter(g => groupWords.filter(x => x.core[0] === g.core[0]).length === 1);
+      return unique.length === 1 ? unique[0].code : '';
     };
     const matchGroup = (vendorNo: string) => {
       if (groupOfVendor.has(vendorNo)) return groupOfVendor.get(vendorNo)!;
