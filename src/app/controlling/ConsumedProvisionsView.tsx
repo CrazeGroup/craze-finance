@@ -337,9 +337,40 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                             <tr className="bg-gray-50/70">
                               <td />
                               <td colSpan={2 + LM_COLS.length * 3 - 1 + 3} className="py-2 pr-2">
-                                <Table cols={[{ label: 'Concepto' }, { label: 'Document No.', mono: true }, { label: 'Tipo' }, { label: 'Fecha', mono: true }, { label: 'Proveedor', wide: true }, { label: 'Nº doc. proveedor' }, { label: 'Importe', align: 'right', mono: true }]}
-                                  rows={g.docs.map(x => [LM_COLS.find(([k]) => k === x.concept)?.[1] || x.concept, x.documentNo, x.type === 'Invoice' ? 'Factura' : x.type === 'Credit Memo' ? 'Abono' : x.type, date(x.date), `${x.vendorName || ''} ${x.vendorNo}`.trim(), x.externalDocNo || '–', num(x.amount, 2)])}
-                                  total={['Total', '', '', '', '', '', num(g.consumedTotal, 2)]} />
+                                {/* Un subnivel por concepto (Conditions, Markant, Marketing…), que se abre para ver sus documentos */}
+                                <table className="w-full text-[12px] bg-white rounded-lg border border-gray-200">
+                                  <tbody>
+                                    {LM_COLS.map(([k, label]) => {
+                                      const docs = g.docs.filter(x => x.concept === k);
+                                      if (!docs.length) return null;
+                                      const ck = `${gk}|${k}`;
+                                      return (
+                                        <Fragment key={k}>
+                                          <tr className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => toggle(ck)}>
+                                            <td className={`${td} w-6`}>{open[ck] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</td>
+                                            <td className={`${td} font-semibold text-gray-900`}>{label}</td>
+                                            <td className={`${td} text-right text-gray-500`}>{docs.length} documentos</td>
+                                            <td className={`${td} text-right font-mono font-semibold`}>{num(docs.reduce((t, x) => t + x.amount, 0), 2)}</td>
+                                          </tr>
+                                          {open[ck] && (
+                                            <tr>
+                                              <td />
+                                              <td colSpan={3} className="py-2 pr-2">
+                                                <Table cols={[{ label: 'Document No.', mono: true }, { label: 'Tipo' }, { label: 'Fecha', mono: true }, { label: 'Proveedor', wide: true }, { label: 'Nº doc. proveedor' }, { label: 'Importe', align: 'right', mono: true }]}
+                                                  rows={docs.map(x => [x.documentNo, x.type === 'Invoice' ? 'Factura' : x.type === 'Credit Memo' ? 'Abono' : x.type, date(x.date), `${x.vendorName || ''} ${x.vendorNo}`.trim(), x.externalDocNo || '–', num(x.amount, 2)])}
+                                                  total={['Total', '', '', '', '', num(docs.reduce((t, x) => t + x.amount, 0), 2)]} />
+                                              </td>
+                                            </tr>
+                                          )}
+                                        </Fragment>
+                                      );
+                                    })}
+                                    <tr className="border-t border-gray-300 font-semibold">
+                                      <td /><td className={td}>Total</td><td className={`${td} text-right text-gray-500`}>{g.docs.length} documentos</td>
+                                      <td className={`${td} text-right font-mono`}>{num(g.consumedTotal, 2)}</td>
+                                    </tr>
+                                  </tbody>
+                                </table>
                                 {g.cancelledPairs > 0 && <p className="text-xs text-gray-500 mt-2">No se muestran {g.cancelledPairs} facturas con su abono que se anulan (mismo proveedor, fecha, concepto e importe).</p>}
                               </td>
                             </tr>
