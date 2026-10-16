@@ -40,9 +40,9 @@ const SERIES_ACCOUNT: Record<Key, string> = { conditions: '307113', kam: '307108
 const conceptOf = (account: string) => { const a = account.replace(/\s+/g, ''); return PROVISION_ACCOUNTS.find(([p]) => a.startsWith(p))?.[1] || null; };
 const PURCHASE_CODES = /^(PURCHASES|PUR-DEFER)$/i;
 // Proveedores que se asignan a mano a un Customer Group (y, si se indica, a un concepto) en la tabla por grupo
-// (Savi Marketing: condiciones de dm DE, aunque se registren en PROV-MARKETING)
+
 const VENDOR_OVERRIDES: { vendor: RegExp; group: string; concept?: Key }[] = [
-  { vendor: /\bsavi\b/i, group: '017', concept: 'conditions' },
+  { vendor: /\bsavi\b/i, group: '017' },   // Savi Marketing: dm DE, con el concepto de su cuenta (Marketing)
   // Clientes que como proveedor no encajan por CIF ni por nombre (sufijo de país, razón social distinta)
   { vendor: /^dm[\s-]drogerie markt.*\bDE\b/i, group: '017' },
   { vendor: /rossmann/i, group: '008' },
@@ -103,7 +103,7 @@ async function generated(ctx: BcContext, from: string, to: string) {
 }
 
 export async function consumedProvisionsReport(ctx: BcContext, company: string, from: string, to: string, force = false) {
-  return cached(`ctrl:consumedProv13:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
+  return cached(`ctrl:consumedProv14:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
     const [gen, entries, vendors, provEntries, customerGroups] = await Promise.all([
       generated(ctx, from, to),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
