@@ -18,7 +18,7 @@ type Vendor = {
   currentPurchAccount: string; currentCrMemoAccount: string; net: number; quantity: number; invoices: number; creditMemos: number; docs: Doc[];
 };
 type Item = { itemNo: string; description: string; genProdPostingGroup: string; setup: { bus: string; purch: string; crMemo: string }[]; net: number; quantity: number; vendors: Vendor[] };
-type Data = { items: Item[]; excludedZero: number; warnings: string[]; counts: { invoiceLines: number; creditMemoLines: number; glEntries: number } };
+type Data = { items: Item[]; excludedZero: number; excludedEqual: number; warnings: string[]; counts: { invoiceLines: number; creditMemoLines: number; glEntries: number } };
 
 const iso = (d: Date) => d.toISOString().substring(0, 10);
 const PAGE = 100;
@@ -129,7 +129,7 @@ export default function PurchaseItemsView({ fmt, company }: { fmt: Fmt; company:
             <Grid cols={4}>
               <Kpi label="Artículos" value={num(d.items.length)} sub={`${num(d.items.reduce((s, i) => s + i.vendors.length, 0))} pares artículo/proveedor`} />
               <Kpi label="Líneas" value={num(d.counts.invoiceLines + d.counts.creditMemoLines)} sub={`${num(d.counts.invoiceLines)} de factura · ${num(d.counts.creditMemoLines)} de abono`} />
-              <Kpi label="Excluidos con neto 0" value={num(d.excludedZero)} sub="Artículo/proveedor que se anulan (factura + abono)" />
+              <Kpi label="Excluidos" value={num(d.excludedZero + d.excludedEqual)} sub={`Artículo/proveedor con tantos abonos como facturas (${num(d.excludedEqual)}) o neto 0 (${num(d.excludedZero)})`} />
               <Kpi highlight tone="main" label="Neto (divisa del documento)" value={num(d.items.reduce((s, i) => s + i.net, 0))} sub="Suma de importes sin IVA" />
             </Grid>
 

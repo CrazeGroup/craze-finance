@@ -12,7 +12,8 @@ import { today } from '@/lib/reporting/period';
 //   cuenta contable histórica = movimientos contables (tabla 17) de compra del documento con el mismo grupo contable
 //   producto que la línea.
 // - Se excluyen los artículos de tipo Inventario (ficha v2 items, type = Inventory).
-// - Se descartan los pares artículo/proveedor con neto 0 (p. ej. una factura y su abono).
+// - Abonos: página 140 publicada en OData o, si no está, los movimientos contables de compra de cada abono (G/L Entries).
+// - Se descartan los pares artículo/proveedor con tantos abonos como facturas (facturas corregidas) y los de neto 0 (p. ej. una factura y su abono).
 
 const str = (v: any) => (v == null ? '' : String(v).trim());
 const num = (v: any) => (typeof v === 'number' ? v : parseFloat(v) || 0);
@@ -65,7 +66,7 @@ export async function probeSources(ctx: BcContext, from: string, to: string) {
 }
 
 export async function purchaseItemsReport(ctx: BcContext, company: string, from: string, to: string, force = false) {
-  return cached(`ctrl:purchItems2:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
+  return cached(`ctrl:purchItems3:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
     const warnings: string[] = [];
     const cm = await creditMemoServices(ctx);
     const dateFilter = (f: string) => `${f} ge ${from} and ${f} le ${to}`;
@@ -88,17 +89,19 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
       }), ctx.token),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
         $filter: `${dateFilter('Posting_Date')} and Gen_Posting_Type eq 'Purchase'`,
-        $select: 'Entry_No,Document_No,G_L_Account_No,G_L_Account_Name,Gen_Prod_Posting_Group,Amount',
+        $select: 'Entry_No,Document_No,Document_Type,Posting_Date,VAT_Reporting_Date,G_L_Account_No,G_L_Account_Name,Gen_Prod_Posting_Group,VAT_Prod_Posting_Group,Amount,Source_No,External_Document_No',
       }), ctx.token).catch(e => { warnings.push(`Movimientos contables no disponibles: ${e.message}`); return [] as any[]; }),
       cm.header
         ? bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/${cm.header}`, { $filter: dateFilter('Posting_Date') }), ctx.token).catch(e => { warnings.push(`Abonos (${cm.header}): ${e.message}`); return [] as any[]; })
-        : Promise.resolve([] as any[]),
+        // Sin la página 140: cabeceras de Document Capture (fecha del documento y nº de abono del proveedor)
+        : bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/CS_PostedPurchaseCrMemos`, { $filter: dateFilter('PostingDate') }), ctx.token).catch(() => [] as any[]),
     ]);
 
     // Líneas de abono de los abonos del periodo
     let cmLines: any[] = [];
-    if (!cm.header || !cm.lines) {
-      warnings.push('Faltan los abonos de compra: publica en BC la página 140 "Posted Purchase Credit Memo" como servicio web (con sus líneas), p. ej. con el nombre Posted_Purchase_Credit_Memo_Excel.');
+    const glCreditMemos = !cm.header || !cm.lines;
+    if (glCreditMemos) {
+      warnings.push('Abonos de compra leídos de G/L Entries (movimientos de compra de cada abono por grupo contable producto): sin cantidad ni coste unitario. Para tener sus líneas, publica en BC la página 140 "Posted Purchase Credit Memo" como servicio web (p. ej. Posted_Purchase_Credit_Memo_Excel).');
     } else if (cmHeaders.length) {
       const docNos = cmHeaders.map(h => str(h.No));
       const chunks = Array.from({ length: Math.ceil(docNos.length / 40) }, (_, i) => docNos.slice(i * 40, i * 40 + 40));
@@ -149,6 +152,39 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
         glAccounts: glAccounts(str(l.documentNo), str(l.genProdPostingGroup)),
       });
     }
+    // Abonos desde G/L Entries (sin la página 140): una línea por abono y grupo contable producto; el artículo es el que
+    // tiene ese grupo (en los servicios coincide con el nº de artículo) o, si hay varios, el que el proveedor facturó
+    if (glCreditMemos) {
+      const prodItems = new Map<string, string[]>();
+      for (const [no, it] of itemBy) if (it.type !== 'Inventory' && it.Gen_Prod_Posting_Group) prodItems.set(str(it.Gen_Prod_Posting_Group), [...(prodItems.get(str(it.Gen_Prod_Posting_Group)) || []), no]);
+      const cmGroups = new Map<string, any[]>();
+      for (const e of gl) {
+        if (str(e.Document_Type).replace(/_x0020_/g, ' ') !== 'Credit Memo' || !str(e.Gen_Prod_Posting_Group)) continue;
+        const k = `${str(e.Document_No)}|${str(e.Gen_Prod_Posting_Group)}`;
+        cmGroups.set(k, [...(cmGroups.get(k) || []), e]);
+      }
+      for (const [k, list] of cmGroups) {
+        const [docNo, prod] = k.split('|');
+        const vendor = str(list.find(e => str(e.Source_No))?.Source_No);
+        const candidates = prodItems.get(prod) || [];
+        let item = candidates.length === 1 ? candidates[0] : '';
+        if (!item && candidates.length) {
+          const invoiced = lines.filter(l => l.vendor === vendor && l.genProdPostingGroup === prod && candidates.includes(l.item));
+          item = invoiced[0]?.item || '';
+        }
+        if (!item) continue;
+        const h = cmHeaderBy.get(docNo);
+        const amount = list.reduce((t, e) => t + num(e.Amount), 0);
+        lines.push({
+          kind: 'Abono', item, desc: str(itemBy.get(item)?.Description), vendor: vendor || str(h?.VendorNo),
+          documentNo: docNo, lineNo: 0, documentDate: day(h?.DocDate), postingDate: day(list[0].Posting_Date),
+          vatDate: day(list[0].VAT_Reporting_Date), vendorDocNo: str(h?.VendorCrMemoNo) || str(list[0].External_Document_No), currency: str(h?.CurrCode),
+          quantity: 0, directUnitCost: 0, amount,
+          vatProdPostingGroup: str(list[0].VAT_Prod_Posting_Group), deferralCode: '', genProdPostingGroup: prod,
+          glAccounts: glAccounts(docNo, prod),
+        });
+      }
+    }
     for (const l of cmLines) {
       if (str(l.Type) !== 'Item' || !str(l.No) || isInventory(str(l.No))) continue;
       const h = cmHeaderBy.get(str(l.Document_No));
@@ -171,7 +207,7 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
       v.set(l.vendor, [...(v.get(l.vendor) || []), l]);
       byItem.set(l.item, v);
     }
-    let excludedZero = 0;
+    let excludedZero = 0, excludedEqual = 0;
     const out = Array.from(byItem.entries()).map(([itemNo, byVendor]) => {
       const card = itemBy.get(itemNo);
       const prod = str(card?.Gen_Prod_Posting_Group);
@@ -190,6 +226,8 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
         };
       }).filter(v => {
         if (Math.abs(v.net) < 0.005) { excludedZero++; return false; }
+        // Tantas facturas como abonos: las facturas se han corregido (abonado) y el proveedor no cuenta
+        if (v.creditMemos > 0 && v.invoices === v.creditMemos) { excludedEqual++; return false; }
         return true;
       }).sort((a, b) => b.net - a.net);
       return {
@@ -201,7 +239,7 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
     }).filter(i => i.vendors.length).sort((a, b) => b.net - a.net);
 
     return {
-      company, from, to, items: out, excludedZero, warnings,
+      company, from, to, items: out, excludedZero, excludedEqual, warnings,
       counts: { invoiceLines: lines.filter(l => l.kind === 'Factura').length, creditMemoLines: lines.filter(l => l.kind === 'Abono').length, glEntries: gl.length },
       creditMemoService: cm.header ? { header: cm.header, lines: cm.lines } : null,
     };
