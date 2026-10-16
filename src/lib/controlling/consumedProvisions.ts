@@ -103,7 +103,7 @@ async function generated(ctx: BcContext, from: string, to: string) {
 }
 
 export async function consumedProvisionsReport(ctx: BcContext, company: string, from: string, to: string, force = false) {
-  return cached(`ctrl:consumedProv12:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
+  return cached(`ctrl:consumedProv13:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
     const [gen, entries, vendors, provEntries, customerGroups] = await Promise.all([
       generated(ctx, from, to),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
@@ -320,7 +320,18 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
         vendorNo: '', vendorName: `Markant · ${(share * 100).toFixed(1)} % del total`, externalDocNo: '', amount: r2(markantConsumed * share),
       });
       const consumed = Object.fromEntries([...CONCEPTS.map(c => c.key), 'markant'].map(k => [k, r2(docs.filter(x => x.concept === k).reduce((t, x) => t + x.amount, 0))])) as Record<Key | 'markant', number>;
-      return { ...g, consumed, consumedTotal: r2(Object.values(consumed).reduce((t, x) => t + x, 0)), docs: docs.sort((a, b) => a.date.localeCompare(b.date)) };
+      // Factura y abono que se anulan (mismo proveedor, fecha, concepto e importe contrario): no se listan (suman 0)
+      const shown = [...docs];
+      let cancelled = 0;
+      for (let i = 0; i < shown.length; i++) {
+        const x = shown[i];
+        if (x.type !== 'Invoice') continue;
+        const j = shown.findIndex(y => y.type === 'Credit Memo' && y.vendorNo === x.vendorNo && y.date === x.date && y.concept === x.concept && Math.abs(y.amount + x.amount) < 0.005);
+        if (j < 0) continue;
+        shown.splice(Math.max(i, j), 1); shown.splice(Math.min(i, j), 1);
+        cancelled++; i = -1;
+      }
+      return { ...g, consumed, consumedTotal: r2(Object.values(consumed).reduce((t, x) => t + x, 0)), cancelledPairs: cancelled, docs: shown.sort((a, b) => a.date.localeCompare(b.date)) };
     });
 
     return { company, from, to, lmLines: gen.lines, concepts, byMonth, lmByGroup: withConsumed, excludedJournal, glEntries: entries.length };

@@ -14,7 +14,7 @@ type Concept = { key: string; label: string; account: string; provision: number;
 type GroupDoc = { concept: string; documentNo: string; type: string; date: string; vendorNo: string; vendorName: string; externalDocNo: string; amount: number };
 type LmGroup = {
   code: string; name: string; conditions: number; markant: number; kam: number; royalties: number; marketing: number; amazon: number; total: number;
-  consumed: Record<string, number>; consumedTotal: number; docs: GroupDoc[];
+  consumed: Record<string, number>; consumedTotal: number; cancelledPairs: number; docs: GroupDoc[];
 };
 type Data = { concepts: Concept[]; byMonth: any[]; lmByGroup: LmGroup[]; lmLines: number; excludedJournal: number; glEntries: number };
 
@@ -340,6 +340,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                                 <Table cols={[{ label: 'Concepto' }, { label: 'Document No.', mono: true }, { label: 'Tipo' }, { label: 'Fecha', mono: true }, { label: 'Proveedor', wide: true }, { label: 'Nº doc. proveedor' }, { label: 'Importe', align: 'right', mono: true }]}
                                   rows={g.docs.map(x => [LM_COLS.find(([k]) => k === x.concept)?.[1] || x.concept, x.documentNo, x.type === 'Invoice' ? 'Factura' : x.type === 'Credit Memo' ? 'Abono' : x.type, date(x.date), `${x.vendorName || ''} ${x.vendorNo}`.trim(), x.externalDocNo || '–', num(x.amount, 2)])}
                                   total={['Total', '', '', '', '', '', num(g.consumedTotal, 2)]} />
+                                {g.cancelledPairs > 0 && <p className="text-xs text-gray-500 mt-2">No se muestran {g.cancelledPairs} facturas con su abono que se anulan (mismo proveedor, fecha, concepto e importe).</p>}
                               </td>
                             </tr>
                           )}
