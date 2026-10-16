@@ -33,6 +33,7 @@ export async function GET() {
     let totalCarteraClientes = 0;
     let totalVencido = 0;
     let totalMarkant = 0;
+    let totalConfirmadoMarkant = 0;
     let totalAmazon = 0;
     let totalRefundsCliente = 0;
 
@@ -49,8 +50,10 @@ export async function GET() {
 
       // Check for Markant — based exclusively on paymentMethod code
       const pMethod = (inv.paymentMethod || '').toLowerCase();
+      // Confirmado = con Confirmed Payment Date; Pendiente de confirmar = el resto (Confirmado + Pendiente = Total)
       if (pMethod.includes('markant')) {
         totalMarkant += amt;
+        if (inv.confirmedPaymentDate) totalConfirmadoMarkant += amt;
       }
 
       // Check for Amazon
@@ -60,20 +63,8 @@ export async function GET() {
       }
     }
 
-    // Confirmado Markant: facturas (Document Type Invoice) abiertas con paymentMethod MARKANT + confirmedPaymentDate informed
-    // Includes both Open AND Overdue, because in Business Central there is no "Overdue" status —
-    // all outstanding invoices are "Open" in BC regardless of whether they are past due.
-    const confirmadoMarkantInvoices = await prisma.invoice.aggregate({
-      where: {
-        companyId,
-        status: { in: ['open', 'Open', 'Overdue', 'overdue'] },
-        type: { in: ['invoice', 'Invoice'] },
-        paymentMethod: 'MARKANT',
-        confirmedPaymentDate: { not: null },
-      },
-      _sum: { amount: true },
-    });
-    const totalConfirmadoMarkant = confirmadoMarkantInvoices._sum.amount || 0;
+    // Markant: todas las partidas abiertas con forma de pago MARKANT (abiertas y vencidas: en BC todas están "Open")
+    const totalPendienteMarkant = totalMarkant - totalConfirmadoMarkant;
 
     // 2. CARTERA PROVEEDORES (Pagos)
     const openPurchases = await prisma.purchaseInvoice.findMany({
@@ -142,6 +133,7 @@ export async function GET() {
       totalCarteraClientes,
       totalEnMarkant: totalMarkant,
       totalConfirmadoMarkant,
+      totalPendienteMarkant,
       totalVencido,
       totalAmazon,
 

@@ -79,7 +79,7 @@ export default function Dashboard() {
                 <ArrowDownRight className="text-gray-700" /> 
                 Gestión de Cobros (Clientes)
               </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <KPICard 
                   title="Cartera de Clientes" 
                   value={kpis?.totalCarteraClientes} 
@@ -95,22 +95,37 @@ export default function Dashboard() {
                   link="/recobros"
                 />
                 <KPICard 
-                  title="Total Markant" 
-                  value={kpis?.totalEnMarkant} 
-                  icon={<ShoppingCart size={24} />} 
-
-                />
-                <KPICard 
                   title="Total Amazon" 
                   value={kpis?.totalAmazon} 
                   icon={<ShoppingCart size={24} />} 
 
                 />
+              </div>
+            </div>
+
+            {/* MARKANT */}
+            <div>
+              <h2 className="text-xl font-bold text-black mb-4 flex items-center gap-2 border-b border-gray-200 pb-2">
+                <Landmark className="text-gray-700" /> 
+                Markant
+              </h2>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <KPICard 
+                  title="Total Markant" 
+                  value={kpis?.totalEnMarkant} 
+                  icon={<ShoppingCart size={24} />} 
+                />
                 <KPICard 
                   title="Confirmado Markant" 
                   value={kpis?.totalConfirmadoMarkant} 
                   icon={<CheckCircle2 size={24} />} 
-
+                  trend="Con fecha de pago confirmada"
+                />
+                <KPICard 
+                  title="Pendiente de confirmar Markant" 
+                  value={kpis?.totalPendienteMarkant} 
+                  icon={<Clock size={24} />} 
+                  trend="Sin fecha de pago confirmada"
                 />
               </div>
             </div>
