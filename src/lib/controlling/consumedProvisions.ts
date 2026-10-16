@@ -52,10 +52,13 @@ const VENDOR_OVERRIDES: { vendor: RegExp; group: string; concept?: Key }[] = [
 ];
 // Proveedor Markant (liquida las condiciones de varias cadenas: Provision Accounting Partner de la LM)
 const MARKANT = /markant/i;
+// Códigos y nombres de país en los nombres de Customer Group y proveedores
+const COUNTRIES = new Set(['de', 'at', 'ch', 'uk', 'gb', 'fr', 'es', 'it', 'nl', 'be', 'pl', 'cz', 'pt', 'dk', 'se', 'eu', 'germany', 'austria', 'international']);
 const normVat = (v: string) => v.toUpperCase().replace(/[^A-Z0-9]/g, '');
 // Nombre sin forma jurídica ni signos, para emparejar proveedor y cliente ("Müller Handels GmbH & Co. KG" → "muller")
 const normName = (v: string) => v.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-  .replace(/\b(gmbh|co|kg|ag|se|sarl|s a r l|sa|sl|s l|ltd|limited|bv|nv|spa|srl|sp z o o|ohg|ug|inc|llc|niederlassung|deutschland|zentral|zentrale|handels|stiftung)\b/g, ' ')
+  .replace(/\b(gmbh|co|kg|ag|se|sarl|s a r l|sa|sl|s l|ltd|limited|bv|nv|spa|srl|sp z o o|ohg|ug|inc|llc|niederlassung|zentral|zentrale|handels|stiftung)\b/g, ' ')
+  .replace(/\bdeutschland\b/g, 'de').replace(/\b(osterreich|oesterreich)\b/g, 'at')
   .replace(/[^a-z0-9]+/g, ' ').trim();
 const isAmazon = (r: any) => /amazon/i.test(`${str(r.Sell_to_Customer_Name)} ${str(r.Bill_to_Customer_Name)}`);
 
@@ -100,7 +103,7 @@ async function generated(ctx: BcContext, from: string, to: string) {
 }
 
 export async function consumedProvisionsReport(ctx: BcContext, company: string, from: string, to: string, force = false) {
-  return cached(`ctrl:consumedProv10:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
+  return cached(`ctrl:consumedProv11:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
     const [gen, entries, vendors, provEntries, customerGroups] = await Promise.all([
       generated(ctx, from, to),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
@@ -259,6 +262,24 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
         if (first.length >= 3) byFirst.set(first, (byFirst.get(first) || new Set<string>()).add(code));
       });
     }
+    // Último recurso: el nombre del Customer Group ("dm DE", "Müller", "Amazon EU", "Rewe International"…). Todas sus
+    // palabras (sin el país) tienen que estar en el nombre del proveedor; si el proveedor lleva país, gana el grupo de ese país.
+    const groupWords = Array.from(groupName.entries()).filter(([code]) => gen.byGroup[code]).map(([code, gname]) => {
+      const words = normName(gname).split(' ').filter(Boolean);
+      return { code, core: words.filter(w => !COUNTRIES.has(w)), country: words.find(w => COUNTRIES.has(w)) || '' };
+    }).filter(g => g.core.length && g.core.every(w => w.length >= 2) && !(g.core.length === 1 && g.core[0].length < 3 && g.core[0] !== 'dm'));
+    const byGroupName = (vendor: string) => {
+      const words = new Set(normName(vendor).split(' ').filter(Boolean));
+      const vendorCountry = Array.from(words).find(w => COUNTRIES.has(w)) || '';
+      let best = '', bestScore = 0, tie = false;
+      for (const g of groupWords) {
+        if (!g.core.every(w => words.has(w))) continue;
+        const score = g.core.length * 2 + (g.country && g.country === vendorCountry ? 1 : 0) - (g.country && vendorCountry && g.country !== vendorCountry ? 2 : 0)
+          + (!g.country && !vendorCountry ? 0.5 : 0);
+        if (score > bestScore) { best = g.code; bestScore = score; tie = false; } else if (score === bestScore) tie = true;
+      }
+      return bestScore > 0 && !tie ? best : '';
+    };
     const matchGroup = (vendorNo: string) => {
       if (groupOfVendor.has(vendorNo)) return groupOfVendor.get(vendorNo)!;
       const o = override(vendorNo);
@@ -266,7 +287,7 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
       const vat = vendorVat.get(vendorNo) || '';
       const name = normName(vendorName.get(vendorNo) || '');
       const first = byFirst.get(name.split(' ')[0]);
-      const g = (vat && byVat.get(vat)) || byNameExact.get(name) || (first && first.size === 1 ? Array.from(first)[0] : '') || '';
+      const g = (vat && byVat.get(vat)) || byNameExact.get(name) || (first && first.size === 1 ? Array.from(first)[0] : '') || byGroupName(vendorName.get(vendorNo) || '');
       groupOfVendor.set(vendorNo, g);
       return g;
     };
