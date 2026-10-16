@@ -321,16 +321,18 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
       });
       const consumed = Object.fromEntries([...CONCEPTS.map(c => c.key), 'markant'].map(k => [k, r2(docs.filter(x => x.concept === k).reduce((t, x) => t + x.amount, 0))])) as Record<Key | 'markant', number>;
       // Factura y abono que se anulan (mismo proveedor, fecha, concepto e importe contrario): no se listan (suman 0)
-      const shown = [...docs];
-      let cancelled = 0;
-      for (let i = 0; i < shown.length; i++) {
-        const x = shown[i];
+      const pairKey = (x: GroupDoc) => `${x.vendorNo}|${x.date}|${x.concept}|${Math.abs(x.amount).toFixed(2)}`;
+      const memos = new Map<string, GroupDoc[]>();
+      for (const x of docs) if (x.type === 'Credit Memo') memos.set(pairKey(x), [...(memos.get(pairKey(x)) || []), x]);
+      const hidden = new Set<GroupDoc>();
+      for (const x of docs) {
         if (x.type !== 'Invoice') continue;
-        const j = shown.findIndex(y => y.type === 'Credit Memo' && y.vendorNo === x.vendorNo && y.date === x.date && y.concept === x.concept && Math.abs(y.amount + x.amount) < 0.005);
-        if (j < 0) continue;
-        shown.splice(Math.max(i, j), 1); shown.splice(Math.min(i, j), 1);
-        cancelled++; i = -1;
+        const m = memos.get(pairKey(x));
+        const y = m?.find(c => !hidden.has(c) && Math.abs(c.amount + x.amount) < 0.005);
+        if (y) { hidden.add(x); hidden.add(y); }
       }
+      const shown = docs.filter(x => !hidden.has(x));
+      const cancelled = hidden.size / 2;
       return { ...g, consumed, consumedTotal: r2(Object.values(consumed).reduce((t, x) => t + x, 0)), cancelledPairs: cancelled, docs: shown.sort((a, b) => a.date.localeCompare(b.date)) };
     });
 
