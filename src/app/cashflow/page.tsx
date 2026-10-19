@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Save, X, ChevronRight, ChevronDown, Download, Upload, Archive, Send, Briefcase, Calendar } from 'lucide-react';
+import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Save, X, ChevronRight, ChevronDown, Download, Upload, Archive, Send, Briefcase, Calendar, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useCompany } from '@/contexts/CompanyContext';
 
@@ -23,6 +23,7 @@ export default function CashflowPage() {
   const [newBalance, setNewBalance] = useState('');
   const [filterType, setFilterType] = useState<'ALL' | 'AUTO' | 'MANUAL'>('ALL');
   const [showArchived, setShowArchived] = useState(false);
+  const [search, setSearch] = useState('');
   const [selectedEntries, setSelectedEntries] = useState<any[]>([]);
   const [draggedItem, setDraggedItem] = useState<any>(null);
   const [consolidatedCurrency, setConsolidatedCurrency] = useState('EUR');
@@ -412,7 +413,7 @@ export default function CashflowPage() {
   // Exporta lo que se ve en pantalla (divisa, filtro y archivadas): saldo inicial + una fila por línea,
   // sin el detalle de facturas de los cobros agrupados
   const handleExportCashflow = () => {
-    const visible = entries.filter(e => filterType === 'ALL' || (filterType === 'AUTO' && !e.isManual) || (filterType === 'MANUAL' && e.isManual));
+    const visible = visibleEntries;
     const [d, m, y] = initialBalanceDate.split('/').map(Number);
     const rows: any[][] = [
       ['Fecha', 'Descripción', 'Importe', 'Saldo'],
@@ -582,6 +583,22 @@ export default function CashflowPage() {
     } catch (err) { console.error(err); }
   };
 
+  // Líneas visibles: filtro de tipo + buscador de texto (descripción, cliente y nº de las facturas agrupadas)
+  const searchTerm = search.trim().toLowerCase();
+  const visibleEntries = entries.filter(e =>
+    (filterType === 'ALL' || (filterType === 'AUTO' && !e.isManual) || (filterType === 'MANUAL' && e.isManual)) &&
+    (!searchTerm || [e.description, e.customer?.name, ...(e.invoices || []).map((i: any) => i.bcId)]
+      .some(t => t && String(t).toLowerCase().includes(searchTerm)))
+  );
+
+  // Subtotal de lo marcado: líneas seleccionadas + facturas sueltas marcadas dentro de grupos no seleccionados
+  const selectedIds = new Set(selectedEntries.map(e => e.id));
+  const looseInvoices = entries
+    .filter(e => e.isGroup && !selectedIds.has(e.id))
+    .flatMap(e => (e.invoices || []).filter((i: any) => selectedInvoices[i.id]));
+  const selectionCount = selectedEntries.length + looseInvoices.length;
+  const selectionTotal = selectedEntries.reduce((acc, e) => acc + (e.amount || 0), 0) + looseInvoices.reduce((acc: number, i: any) => acc + (i.amount || 0), 0);
+
   return (
     <div className="flex-1 p-8 max-w-[1600px] mx-auto overflow-hidden">
         <div className="flex justify-between items-center mb-8 sticky top-0 z-10 bg-gray-50/95 backdrop-blur-md pb-4 pt-6 -mt-6 border-b border-gray-200">
@@ -599,6 +616,21 @@ export default function CashflowPage() {
                 <button onClick={() => setShowArchived(!showArchived)} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${showArchived ? 'bg-purple-500/30 text-purple-700 font-bold border border-purple-500/50' : 'text-gray-900 font-bold hover:text-purple-700 font-bold hover:bg-purple-500/10'}`}>
                   {showArchived ? 'Ocultar Archivadas' : 'Ver Archivadas'}
                 </button>
+              </div>
+              <div className="relative">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Buscar (ej. Amazon)..."
+                  className="w-56 bg-white border border-gray-200 rounded-lg pl-8 pr-7 py-1.5 text-sm text-gray-900 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
+                />
+                {search && (
+                  <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-900" title="Limpiar búsqueda">
+                    <X size={14} />
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -732,14 +764,13 @@ export default function CashflowPage() {
                         type="checkbox" 
                         className="rounded border-gray-300 bg-white text-blue-500 focus:ring-blue-500"
                         onChange={(e) => {
-                          const currentFilteredEntries = entries.filter(e => filterType === 'ALL' || (filterType === 'AUTO' && !e.isManual) || (filterType === 'MANUAL' && e.isManual));
                           if (e.target.checked) {
-                            setSelectedEntries(currentFilteredEntries);
+                            setSelectedEntries(visibleEntries);
                           } else {
                             setSelectedEntries([]);
                           }
                         }}
-                        checked={entries.length > 0 && selectedEntries.length === entries.filter(e => filterType === 'ALL' || (filterType === 'AUTO' && !e.isManual) || (filterType === 'MANUAL' && e.isManual)).length}
+                        checked={visibleEntries.length > 0 && visibleEntries.every(v => selectedIds.has(v.id))}
                       />
                     </th>
                     <th className="p-4">Fecha</th>
@@ -772,14 +803,10 @@ export default function CashflowPage() {
                     <td className="p-4 text-center text-slate-600">-</td>
                   </tr>
 
-                  {entries
-                    .filter(e => filterType === 'ALL' || (filterType === 'AUTO' && !e.isManual) || (filterType === 'MANUAL' && e.isManual))
-                    .length === 0 ? (
-                     <tr><td colSpan={6} className="p-8 text-center text-gray-700 font-semibold">No hay movimientos a partir del 29/07/2026</td></tr>
+                  {visibleEntries.length === 0 ? (
+                     <tr><td colSpan={6} className="p-8 text-center text-gray-700 font-semibold">{searchTerm ? `No hay líneas que contengan "${search.trim()}"` : 'No hay movimientos a partir del 29/07/2026'}</td></tr>
                   ) : (
-                    entries
-                      .filter(e => filterType === 'ALL' || (filterType === 'AUTO' && !e.isManual) || (filterType === 'MANUAL' && e.isManual))
-                      .map((entry, idx) => (
+                    visibleEntries.map((entry, idx) => (
                       <React.Fragment key={entry.id}>
                         <tr 
                           draggable={true}
@@ -1214,6 +1241,19 @@ export default function CashflowPage() {
           </div>
         )}
 
+        {/* Subtotal de las líneas marcadas */}
+        {selectionCount > 0 && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-black text-white rounded-xl shadow-2xl px-5 py-3 flex items-center gap-5">
+            <span className="text-sm text-gray-300">{selectionCount} {selectionCount === 1 ? 'línea seleccionada' : 'líneas seleccionadas'}</span>
+            <span className="text-sm font-semibold uppercase tracking-wider text-gray-300">Subtotal</span>
+            <span className={`text-lg font-black ${selectionTotal < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+              {selectionTotal > 0 ? '+' : ''}{getCurrencySymbol(currentCurrency)}{selectionTotal.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            <button onClick={() => { setSelectedEntries([]); setSelectedInvoices({}); }} className="p-1 text-gray-400 hover:text-white rounded transition-colors" title="Quitar selección">
+              <X size={16} />
+            </button>
+          </div>
+        )}
       </div>
   );
 }
