@@ -628,6 +628,9 @@ export default function CashflowPage() {
       .some(t => t && String(t).toLowerCase().includes(searchTerm)))
   );
 
+  // Total reclamado de las líneas visibles (lo que sale del saldo con "Excluir reclamadas")
+  const claimedTotal = visibleEntries.reduce((acc, e) => acc + claimedInvoices(e).reduce((a: number, i: any) => a + i.amount, 0), 0);
+
   // Subtotal de lo marcado: líneas seleccionadas + facturas sueltas marcadas dentro de grupos no seleccionados
   const selectedIds = new Set(selectedEntries.map(e => e.id));
   const looseInvoices = entries
@@ -776,9 +779,14 @@ export default function CashflowPage() {
           </div>
           
           <div className="flex flex-wrap items-center gap-3">
-          <button onClick={() => setExcludeClaimed(!excludeClaimed)} className={`flex items-center gap-2 whitespace-nowrap px-4 py-2 rounded-lg border text-sm font-bold transition-all ${excludeClaimed ? 'bg-amber-500/20 text-amber-800 border-amber-500/50' : 'bg-white text-gray-900 border-gray-200 hover:bg-amber-500/10 hover:text-amber-800'}`} title="Incluir o excluir del saldo los cobros ya reclamados al cliente">
-            <MailCheck size={16} /> {excludeClaimed ? 'Reclamadas excluidas del saldo' : 'Excluir reclamadas del saldo'}
-          </button>
+          <div className="flex flex-col items-end gap-1">
+            <button onClick={() => setExcludeClaimed(!excludeClaimed)} className={`flex items-center gap-2 whitespace-nowrap px-4 py-2 rounded-lg border text-sm font-bold transition-all ${excludeClaimed ? 'bg-amber-500/20 text-amber-800 border-amber-500/50' : 'bg-white text-gray-900 border-gray-200 hover:bg-amber-500/10 hover:text-amber-800'}`} title="Incluir o excluir del saldo los cobros ya reclamados al cliente">
+              <MailCheck size={16} /> {excludeClaimed ? 'Reclamadas excluidas del saldo' : 'Excluir reclamadas del saldo'}
+            </button>
+            <span className={`text-xs font-bold whitespace-nowrap ${excludeClaimed ? 'text-amber-700' : 'text-gray-500'}`}>
+              {excludeClaimed ? 'Total fuera del saldo: −' : 'Total reclamado: '}{getCurrencySymbol(currentCurrency)}{claimedTotal.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
           {totalEurSum !== null && (
             <div className="bg-emerald-500/10 border border-emerald-500/20 px-4 py-2 rounded-lg flex items-center gap-3">
               <span className="text-emerald-800 font-bold text-sm uppercase tracking-wider whitespace-nowrap">Saldo Consolidado</span>
