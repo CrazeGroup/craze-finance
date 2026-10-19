@@ -122,6 +122,76 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
     );
   };
 
+  // ---------- Puntos clave (calculados de la tabla, sin IA) ----------
+  const unitLabel = measure === 'turnover' ? currency : 'uds.';
+  const amt = (v: number) => `${num(v, 0)} ${unitLabel}`;
+  const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${num(Math.abs(v), 0)} ${unitLabel}`;
+  const pctTxt = (cur: number, prev: number) => (prev ? `${cur >= prev ? '+' : '−'}${num(Math.abs((cur - prev) / prev) * 100, 1)} %` : 'nueva');
+  const B = ({ children }: { children: React.ReactNode }) => <span className="font-semibold text-gray-900">{children}</span>;
+  const Tone = ({ v, children }: { v: number; children: React.ReactNode }) => <span className={`font-semibold ${v > 0 ? 'text-emerald-700' : v < 0 ? 'text-[#C0392B]' : 'text-gray-500'}`}>{children}</span>;
+
+  const keyPoints = (): React.ReactNode[] => {
+    if (!current?.data || !previous?.data) return [];
+    const levelName = level === 'ship' ? 'país' : 'Customer Group';
+    const licences = codes.filter(c => c !== 'NON-ROYALTY');
+    const cur = (c: string) => value(current, c);
+    const prev = (c: string) => value(previous, c);
+    const tCur = total(current), tPrev = total(previous);
+    const points: React.ReactNode[] = [];
+
+    points.push(<>Total {current.year}: <B>{amt(tCur)}</B> frente a {amt(tPrev)} en {previous.year} (<Tone v={tCur - tPrev}>{signed(tCur - tPrev)}, {pctTxt(tCur, tPrev)}</Tone>).</>);
+
+    // Licencias principales: las que suman el 80 % de la venta del año (entre 3 y 6)
+    const top: string[] = [];
+    let acc = 0;
+    for (const c of [...licences].sort((a, b) => cur(b) - cur(a))) {
+      if (cur(c) <= 0 || top.length >= 6 || (top.length >= 3 && acc >= 0.8 * tCur)) break;
+      top.push(c); acc += cur(c);
+    }
+    for (const c of top) {
+      const d = cur(c) - prev(c);
+      const subs = subKeys(c).map(k => ({ k, d: subValue(current, c, k) - subValue(previous, c, k) }));
+      const ups = subs.filter(x => x.d > 0).sort((a, b) => b.d - a.d).slice(0, 2);
+      const downs = subs.filter(x => x.d < 0).sort((a, b) => a.d - b.d).slice(0, 2);
+      const list = (xs: typeof subs) => xs.map((x, i) => <span key={x.k}>{i ? ' y ' : ''}{subLabel(x.k)} (<Tone v={x.d}>{signed(x.d)}</Tone>)</span>);
+      points.push(
+        <>
+          <B>{c}</B>: {amt(cur(c))} ({tCur ? num((cur(c) / tCur) * 100, 1) : 0} % del total), <Tone v={d}>{signed(d)} ({pctTxt(cur(c), prev(c))})</Tone> vs {previous.year}.
+          {ups.length > 0 && <> Sube sobre todo en {list(ups)}.</>}
+          {downs.length > 0 && <> Baja en {list(downs)}.</>}
+        </>
+      );
+    }
+
+    // Mayores movimientos entre todas las licencias
+    const moves = licences.map(c => ({ c, d: cur(c) - prev(c) }));
+    const up = moves.filter(m => m.d > 0).sort((a, b) => b.d - a.d)[0];
+    const down = moves.filter(m => m.d < 0).sort((a, b) => a.d - b.d)[0];
+    if (up || down) points.push(<>
+      {up && <>Mayor subida: <B>{up.c}</B> (<Tone v={up.d}>{signed(up.d)}</Tone>). </>}
+      {down && <>Mayor caída: <B>{down.c}</B> (<Tone v={down.d}>{signed(down.d)}</Tone>).</>}
+    </>);
+
+    // Mayores movimientos por país / Customer Group sumando todas las licencias
+    const bySub: Record<string, number> = {};
+    for (const c of licences) for (const k of subKeys(c)) bySub[k] = (bySub[k] || 0) + subValue(current, c, k) - subValue(previous, c, k);
+    const subMoves = Object.entries(bySub).filter(([, d]) => d);
+    const subUp = subMoves.filter(([, d]) => d > 0).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    const subDown = subMoves.filter(([, d]) => d < 0).sort((a, b) => a[1] - b[1]).slice(0, 3);
+    if (subUp.length || subDown.length) points.push(<>
+      Por {levelName}, todas las licencias:
+      {subUp.length > 0 && <> crecen {subUp.map(([k, d], i) => <span key={k}>{i ? ', ' : ''}<B>{subLabel(k)}</B> (<Tone v={d}>{signed(d)}</Tone>)</span>)}.</>}
+      {subDown.length > 0 && <> Caen {subDown.map(([k, d], i) => <span key={k}>{i ? ', ' : ''}<B>{subLabel(k)}</B> (<Tone v={d}>{signed(d)}</Tone>)</span>)}.</>}
+    </>);
+
+    // Licencias nuevas o sin venta este año
+    const fresh = licences.filter(c => cur(c) > 0 && !prev(c));
+    const lost = licences.filter(c => prev(c) > 0 && !cur(c));
+    if (fresh.length) points.push(<>Licencias nuevas en {current.year} (sin venta en el mismo periodo de {previous.year}): {fresh.map((c, i) => <span key={c}>{i ? ', ' : ''}<B>{c}</B> ({amt(cur(c))})</span>)}.</>);
+    if (lost.length) points.push(<>Sin venta en {current.year} (sí en {previous.year}): {lost.map((c, i) => <span key={c}>{i ? ', ' : ''}<B>{c}</B> ({amt(prev(c))})</span>)}.</>);
+    return points;
+  };
+
   const exportExcel = () => {
     const unit = measure === 'turnover' ? `${basis === 'amount' ? 'Amount' : 'Turnover Net of Provision Sales'} ${currency}` : 'Unidades';
     const rows = [...codes, 'Total'].map(code => {
@@ -270,6 +340,17 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
                 </tfoot>
               </table>
             </div>
+            {current && previous && (
+              <div className="rpt-card bg-white rounded-xl border border-gray-200 p-5">
+                <p className="text-xs font-bold uppercase tracking-widest text-[#C8186C] mb-3">
+                  Puntos clave · {current.year} vs {previous.year} · por {level === 'ship' ? 'país' : 'Customer Group'}
+                </p>
+                <ul className="space-y-2 text-sm text-gray-700 list-disc pl-5">
+                  {keyPoints().map((p, i) => <li key={i}>{p}</li>)}
+                </ul>
+                <p className="mt-3 text-xs text-gray-400">Calculado con las cifras de la tabla ({measure === 'qty' ? 'unidades' : basis === 'amount' ? 'Amount' : 'Turnover Net of Provision Sales'}). Cambia el desglose para verlo por {level === 'ship' ? 'Customer Group' : 'país'}.</p>
+              </div>
+            )}
             <p className="text-xs text-gray-500">
               Importes en la divisa de la empresa ({currency}), {basis === 'amount' ? 'Amount' : 'Turnover Net of Provision Sales'} de la LM de BC. Cada año se compara del 1 de enero a la misma fecha.
               Las licencias se asignan con el Royalty Code actual de la ficha del artículo, también en los años anteriores.
