@@ -71,11 +71,11 @@ export function buildReport(
     excluded: { codes: excludedCodes, lines: 0, turnover: 0 },
   };
   // Desglose de cada código por país de envío y por Customer Group (Ventas por licencia)
-  type Agg = { turnover: number; amount: number; qty: number };
+  type Agg = { turnover: number; amount: number; qty: number; provision: number };
   const breakdown: Record<string, { ship: Record<string, Agg>; group: Record<string, Agg> }> = {};
-  const add = (m: Record<string, Agg>, k: string, l: LmLine) => {
-    const a = (m[k] ||= { turnover: 0, amount: 0, qty: 0 });
-    a.turnover += l.turnover; a.amount += l.amount; a.qty += l.qty;
+  const add = (m: Record<string, Agg>, k: string, l: LmLine, provision: number) => {
+    const a = (m[k] ||= { turnover: 0, amount: 0, qty: 0, provision: 0 });
+    a.turnover += l.turnover; a.amount += l.amount; a.qty += l.qty; a.provision += provision;
   };
   const noCard = new Set<string>();
   const noRate = new Set<string>();
@@ -121,8 +121,8 @@ export function buildReport(
       turnoverFob: 0, domestic: r ? r.domestic : null, fob: r ? (r.fob || r.domestic) : null,
     };
     const b = (breakdown[code] ||= { ship: {}, group: {} });
-    add(b.ship, l.shipCountry || l.country, l);
-    add(b.group, l.group, l);
+    add(b.ship, l.shipCountry || l.country, l, provision);
+    add(b.group, l.group, l, provision);
     if (/^FOB$/i.test(l.ship)) g.turnoverFob += l.turnover;
     g.qty += l.qty;
     g.turnover += l.turnover;

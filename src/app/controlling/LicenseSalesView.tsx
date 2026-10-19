@@ -8,9 +8,9 @@ import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
 
 // Controlling · Ventas por licencia: venta (Turnover de la LM, como Royalties) por Royalty Code de la empresa activa,
 // del 1 de enero a la fecha elegida, comparada con el mismo periodo de años anteriores.
-type Agg = { turnover: number; amount: number; qty: number };
+type Agg = { turnover: number; amount: number; qty: number; provision: number };
 type YearData = {
-  from: string; to: string; currency: string; amountField: string | null; shipCountryField: string | null; byCode: Record<string, Agg>; lines: number;
+  from: string; to: string; currency: string; ratesSource: 'bc' | 'lm'; amountField: string | null; shipCountryField: string | null; byCode: Record<string, Agg>; lines: number;
   breakdown: Record<string, { ship: Record<string, Agg>; group: Record<string, Agg> }>; groupNames: Record<string, string>;
 };
 type YearState = { year: number; from: string; to: string; data: YearData | null; error: string | null; loading: boolean };
@@ -24,6 +24,15 @@ function sameDayIn(year: number, to: string) {
   const last = new Date(year, m, 0).getDate();
   return `${year}-${String(m).padStart(2, '0')}-${String(Math.min(d, last)).padStart(2, '0')}`;
 }
+// Qué se compara: importes de la LM, provisión de royalties (calculada como en Royalties) o unidades
+const MEASURES = [
+  { id: 'amount', label: 'Venta (Amount)' },
+  { id: 'turnover', label: 'Venta (Turnover Net of Provision Sales)' },
+  { id: 'provision', label: 'Provision Royalties' },
+  { id: 'qty', label: 'Unidades' },
+] as const;
+type MeasureKey = typeof MEASURES[number]['id'];
+const measureLabel = (k: MeasureKey) => MEASURES.find(m => m.id === k)!.label;
 const th = 'py-2 px-3 text-[10px] font-semibold uppercase tracking-wider text-gray-500 whitespace-nowrap';
 const td = 'py-2 px-3 whitespace-nowrap tabular-nums';
 
@@ -32,9 +41,8 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
   const [to, setTo] = useState(defaultTo);
   const [yearsBack, setYearsBack] = useState(2);
   // Venta por Turnover Net of Provision Sales o por Amount de la LM, o unidades
-  const [key, setKey] = useState<'turnover' | 'amount' | 'qty'>('turnover');
-  const measure = key === 'qty' ? 'qty' : 'turnover';
-  const basis = key === 'amount' ? 'amount' : 'turnover';
+  const [key, setKey] = useState<MeasureKey>('turnover');
+  const measure = key === 'qty' ? 'qty' : 'turnover';   // importe o unidades
   // Subnivel al desplegar un Royalty Code: país de envío o Customer Group
   const [level, setLevel] = useState<'ship' | 'group'>('ship');
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -88,7 +96,7 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
     : (k || '(sin país)');
   const shipFromBill = level === 'ship' && years.some(y => y.data && !y.data.shipCountryField);
   const allOpen = (list: string[]) => list.length > 0 && list.every(c => open[c]);
-  const noAmount = basis === 'amount' && years.some(y => y.data && !y.data.amountField);
+  const noAmount = key === 'amount' && years.some(y => y.data && !y.data.amountField);
   const current = years[years.length - 1];
   const previous = years[years.length - 2];
 
@@ -193,7 +201,7 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
   };
 
   const exportExcel = () => {
-    const unit = measure === 'turnover' ? `${basis === 'amount' ? 'Amount' : 'Turnover Net of Provision Sales'} ${currency}` : 'Unidades';
+    const unit = measure === 'turnover' ? `${measureLabel(key)} ${currency}` : 'Unidades';
     const rows = [...codes, 'Total'].map(code => {
       const row: Record<string, string | number | null> = { 'Royalty Code': code };
       years.forEach(y => { row[`${unit} ${y.year}`] = code === 'Total' ? total(y) : value(y, code); });
@@ -238,14 +246,13 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
             {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n === 1 ? 'el año anterior' : `los ${n} años anteriores`}</option>)}
           </select>
         </label>
-        <div className="flex bg-gray-100 rounded-lg p-1">
-          {([['amount', 'Venta (Amount)'], ['turnover', 'Venta (Turnover Net of Provision Sales)'], ['qty', 'Unidades']] as const).map(([id, label]) => (
-            <button key={id} onClick={() => setKey(id)}
-              className={`px-3 py-1 rounded-md text-sm font-semibold ${key === id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
-              {label}
-            </button>
-          ))}
-        </div>
+        <label className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+          Comparar
+          <select value={key} onChange={e => setKey(e.target.value as MeasureKey)}
+            className="block mt-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-900 bg-white normal-case tracking-normal">
+            {MEASURES.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+        </label>
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Desglose</span>
           <div className="flex bg-gray-100 rounded-lg p-1">
@@ -270,6 +277,7 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
       </div>
 
       {noAmount && <ErrorBox message="El servicio de la LM en BC no publica el campo Amount: no se puede comparar por Amount. Publica el campo en la página 60000 o usa Turnover Net of Provision Sales." />}
+      {key === 'provision' && years.some(y => y.data?.ratesSource === 'lm') && <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">No se ha podido leer RoyaltiesCRZ de BC: la provisión es la que trae la LM.</p>}
       {shipFromBill && <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">El servicio de la LM en BC no publica el país de envío (Ship-to Country/Region Code): el desglose por país usa el país de facturación.</p>}
       {errors.map(y => <ErrorBox key={y.year} message={`${y.year}: ${y.error}`} />)}
       {loading ? <Loading text={`Leyendo las ventas de ${years.filter(y => y.loading).map(y => y.year).join(', ')} de Business Central…`} />
@@ -348,11 +356,11 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
                 <ul className="space-y-2 text-sm text-gray-700 list-disc pl-5">
                   {keyPoints().map((p, i) => <li key={i}>{p}</li>)}
                 </ul>
-                <p className="mt-3 text-xs text-gray-400">Calculado con las cifras de la tabla ({measure === 'qty' ? 'unidades' : basis === 'amount' ? 'Amount' : 'Turnover Net of Provision Sales'}). Cambia el desglose para verlo por {level === 'ship' ? 'Customer Group' : 'país'}.</p>
+                <p className="mt-3 text-xs text-gray-400">Calculado con las cifras de la tabla ({measureLabel(key)}). Cambia el desglose para verlo por {level === 'ship' ? 'Customer Group' : 'país'}.</p>
               </div>
             )}
             <p className="text-xs text-gray-500">
-              Importes en la divisa de la empresa ({currency}), {basis === 'amount' ? 'Amount' : 'Turnover Net of Provision Sales'} de la LM de BC. Cada año se compara del 1 de enero a la misma fecha.
+              Importes en la divisa de la empresa ({currency}), {key === 'provision' ? 'Provision Royalties (Turnover × % de la licencia en RoyaltiesCRZ, como en Royalties)' : `${measureLabel(key)} de la LM de BC`}. Cada año se compara del 1 de enero a la misma fecha.
               Las licencias se asignan con el Royalty Code actual de la ficha del artículo, también en los años anteriores.
             </p>
           </>

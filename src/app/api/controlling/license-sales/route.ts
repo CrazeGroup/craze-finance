@@ -27,9 +27,10 @@ export async function GET(req: Request) {
     const force = searchParams.get('force') === '1';
     const ctx = await getBcContext(company).catch(e => { console.error('License sales BC:', e); return null; });
     const r = await royaltiesReport(ctx, company, from, to, force);
-    const byCode: Record<string, { turnover: number; amount: number; qty: number }> = {};
+    const byCode: Record<string, { turnover: number; amount: number; qty: number; provision: number }> = {};
     for (const row of r.rows) {
-      const c = (byCode[row.code] ||= { turnover: 0, amount: 0, qty: 0 });
+      const c = (byCode[row.code] ||= { turnover: 0, amount: 0, qty: 0, provision: 0 });
+      c.provision += row.provision;
       c.turnover += row.turnover;
       c.amount += row.amount;
       c.qty += row.qty;
@@ -40,7 +41,7 @@ export async function GET(req: Request) {
       return Object.fromEntries(rows.map((g: any) => [str(g.code), str(g.description)]));
     }, force).catch(() => ({} as Record<string, string>)) : {};
     return NextResponse.json({
-      from, to, company, currency: r.currency, amountField: r.amountField, shipCountryField: r.shipCountryField,
+      from, to, company, currency: r.currency, ratesSource: r.ratesSource, amountField: r.amountField, shipCountryField: r.shipCountryField,
       byCode, breakdown: r.breakdown, groupNames, lines: r.stats.lines, ic: r.stats.ic, itemsError: r.itemsError,
     });
   } catch (error: any) {
