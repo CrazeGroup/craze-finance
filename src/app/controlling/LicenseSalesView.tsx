@@ -8,7 +8,7 @@ import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
 
 // Controlling · Ventas por licencia: venta (Turnover de la LM, como Royalties) por Royalty Code de la empresa activa,
 // del 1 de enero a la fecha elegida, comparada con el mismo periodo de años anteriores.
-type YearData = { from: string; to: string; currency: string; byCode: Record<string, { turnover: number; qty: number }>; lines: number };
+type YearData = { from: string; to: string; currency: string; amountField: string | null; byCode: Record<string, { turnover: number; amount: number; qty: number }>; lines: number };
 type YearState = { year: number; from: string; to: string; data: YearData | null; error: string | null; loading: boolean };
 
 const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -28,6 +28,9 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
   const [to, setTo] = useState(defaultTo);
   const [yearsBack, setYearsBack] = useState(2);
   const [measure, setMeasure] = useState<'turnover' | 'qty'>('turnover');
+  // Importe: Turnover Net of Provision Sales o Amount de la LM
+  const [basis, setBasis] = useState<'turnover' | 'amount'>('turnover');
+  const key = measure === 'qty' ? 'qty' : basis;
   const [reload, setReload] = useState({ n: 0, force: false });
   const [years, setYears] = useState<YearState[]>([]);
 
@@ -58,8 +61,9 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
   const loading = years.some(y => y.loading);
   const errors = years.filter(y => y.error);
   const currency = years.find(y => y.data)?.data?.currency || 'EUR';
-  const value = (y: YearState, code: string) => y.data?.byCode[code]?.[measure] || 0;
-  const total = (y: YearState) => Object.values(y.data?.byCode || {}).reduce((s, c) => s + c[measure], 0);
+  const value = (y: YearState, code: string) => y.data?.byCode[code]?.[key] || 0;
+  const total = (y: YearState) => Object.values(y.data?.byCode || {}).reduce((s, c) => s + (c[key] || 0), 0);
+  const noAmount = basis === 'amount' && years.some(y => y.data && !y.data.amountField);
   const current = years[years.length - 1];
   const previous = years[years.length - 2];
 
@@ -74,7 +78,7 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
       return a.localeCompare(b);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [years, measure]);
+  }, [years, key]);
 
   const fmtV = (v: number) => (v ? num(v, measure === 'turnover' ? 2 : 0) : '—');
   const delta = (cur: number, prev: number) => {
@@ -94,7 +98,7 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
   };
 
   const exportExcel = () => {
-    const unit = measure === 'turnover' ? `Venta ${currency}` : 'Unidades';
+    const unit = measure === 'turnover' ? `${basis === 'amount' ? 'Amount' : 'Turnover Net of Provision Sales'} ${currency}` : 'Unidades';
     const rows = [...codes, 'Total'].map(code => {
       const row: Record<string, string | number | null> = { 'Royalty Code': code };
       years.forEach(y => { row[`${unit} ${y.year}`] = code === 'Total' ? total(y) : value(y, code); });
@@ -135,6 +139,17 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
             </button>
           ))}
         </div>
+        {measure === 'turnover' && (
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <span className={basis === 'amount' ? 'text-gray-900' : 'text-gray-400'}>Amount</span>
+            <button role="switch" aria-checked={basis === 'turnover'} onClick={() => setBasis(b => b === 'amount' ? 'turnover' : 'amount')}
+              title="Importe de la LM que se compara"
+              className={`relative w-11 h-6 rounded-full transition-colors ${basis === 'turnover' ? 'bg-[#C8186C]' : 'bg-gray-400'}`}>
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${basis === 'turnover' ? 'translate-x-5' : ''}`} />
+            </button>
+            <span className={basis === 'turnover' ? 'text-gray-900' : 'text-gray-400'}>Turnover Net of Provision Sales</span>
+          </div>
+        )}
         <div className="ml-auto flex gap-2">
           <button onClick={exportExcel} disabled={loading || !codes.length}
             className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
@@ -147,6 +162,7 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
         </div>
       </div>
 
+      {noAmount && <ErrorBox message="El servicio de la LM en BC no publica el campo Amount: no se puede comparar por Amount. Publica el campo en la página 60000 o usa Turnover Net of Provision Sales." />}
       {errors.map(y => <ErrorBox key={y.year} message={`${y.year}: ${y.error}`} />)}
       {loading ? <Loading text={`Leyendo las ventas de ${years.filter(y => y.loading).map(y => y.year).join(', ')} de Business Central…`} />
         : !codes.length ? <p className="text-sm text-gray-600">No hay ventas en estos periodos.</p>
@@ -198,7 +214,7 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
               </table>
             </div>
             <p className="text-xs text-gray-500">
-              Importes en la divisa de la empresa ({currency}), Turnover neto de la LM de BC. Cada año se compara del 1 de enero a la misma fecha.
+              Importes en la divisa de la empresa ({currency}), {basis === 'amount' ? 'Amount' : 'Turnover Net of Provision Sales'} de la LM de BC. Cada año se compara del 1 de enero a la misma fecha.
               Las licencias se asignan con el Royalty Code actual de la ficha del artículo, también en los años anteriores.
             </p>
           </>

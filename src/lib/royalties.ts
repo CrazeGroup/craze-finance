@@ -13,7 +13,7 @@ import { today } from '@/lib/reporting/period';
 // Línea normalizada de la LM de BC. Las líneas Main Item no se guardan.
 export type LmLine = {
   date: string; code: string; country: string; item: string; desc: string;
-  qty: number; turnover: number; provision: number;
+  qty: number; turnover: number; amount: number; provision: number;
   custNo: string; custName: string; dim: string; vatBus: string; ship: string;
 };
 
@@ -22,7 +22,7 @@ export type RoyaltyRates = Record<string, { domestic: number; fob: number }>;
 
 export type RoyaltyRow = {
   code: string; country: string; item: string; desc: string;
-  qty: number; turnover: number; price: number; provision: number; rate: number; lines: number;
+  qty: number; turnover: number; amount: number; price: number; provision: number; rate: number; lines: number;
   turnoverFob: number;                          // parte del turnover con condición de envío FOB
   domestic: number | null; fob: number | null;  // % del Royalty Code (null = sin % en la tabla)
 };
@@ -106,12 +106,13 @@ export function buildReport(
     const key = `${code}|${l.country}|${l.item}`;
     const r = rates?.[code.toUpperCase()];
     const g = groups.get(key) || {
-      code, country: l.country, item: l.item, desc: l.desc, qty: 0, turnover: 0, price: 0, provision: 0, rate: 0, lines: 0,
+      code, country: l.country, item: l.item, desc: l.desc, qty: 0, turnover: 0, amount: 0, price: 0, provision: 0, rate: 0, lines: 0,
       turnoverFob: 0, domestic: r ? r.domestic : null, fob: r ? (r.fob || r.domestic) : null,
     };
     if (/^FOB$/i.test(l.ship)) g.turnoverFob += l.turnover;
     g.qty += l.qty;
     g.turnover += l.turnover;
+    g.amount += l.amount;
     g.provision += provision;
     g.lines++;
     groups.set(key, g);
@@ -139,6 +140,7 @@ const FIELDS = {
   desc: ['Description', 'description'],
   qty: ['Quantity', 'quantity'],
   turnover: ['Turnover_Net_of_Provision_Sales', 'turnoverNetOfProvisionSales', 'Turnover_Sales_Provision'],
+  amount: ['Amount', 'amount'],  // importe de la línea antes de provisiones (opcional: Ventas por licencia)
   provision: ['Provision_Royalties', 'provisionRoyalties', 'Total_Provision_Royalties'],
   main: ['Main_Item', 'mainItem', 'Main_Item_CRZ'],
   date: ['Posting_Date', 'postingDate'],
@@ -198,11 +200,11 @@ export const isTrue = (v: any) => v === true || v === 1 || v === '1' || v === 't
 export const num = (v: any) => (typeof v === 'number' ? v : parseFloat(v) || 0);
 export const str = (v: any) => (v == null ? '' : String(v).trim());
 
-async function bcLines(ctx: BcContext, from: string, to: string): Promise<{ service: string; lines: LmLine[] }> {
+async function bcLines(ctx: BcContext, from: string, to: string): Promise<{ service: string; amountField: string | null; lines: LmLine[] }> {
   const service = await findService(ctx);
   // Una fila para conocer los nombres reales de los campos
   const sample = await bcFetchAll(odataUrl(service.url, { $top: '1' }), ctx.token);
-  if (!sample.length) return { service: service.name, lines: [] };
+  if (!sample.length) return { service: service.name, amountField: null, lines: [] };
   const { map: F, keys } = resolveFields(sample[0]);
   const missing = REQUIRED.filter(f => !F[f]);
   if (missing.length) {
@@ -216,11 +218,11 @@ async function bcLines(ctx: BcContext, from: string, to: string): Promise<{ serv
   const lines = raw.filter(r => !isTrue(get(r, 'main'))).map(r => ({
     date: str(get(r, 'date')).substring(0, 10),
     code: str(get(r, 'code')), country: str(get(r, 'country')), item: str(get(r, 'item')), desc: str(get(r, 'desc')),
-    qty: num(get(r, 'qty')), turnover: num(get(r, 'turnover')), provision: num(get(r, 'provision')),
+    qty: num(get(r, 'qty')), turnover: num(get(r, 'turnover')), amount: num(get(r, 'amount')), provision: num(get(r, 'provision')),
     custNo: str(get(r, 'custNo')), custName: str(get(r, 'custName')), dim: str(get(r, 'dim')), vatBus: str(get(r, 'vatBus')),
     ship: str(get(r, 'ship')),
   }));
-  return { service: service.name, lines };
+  return { service: service.name, amountField: F.amount, lines };
 }
 
 // ---------- Royalty Code de la ficha de artículo (CRAZE GmbH) ----------
@@ -342,9 +344,9 @@ export async function royaltiesReport(ctx: BcContext | null, company: string, fr
   const masterInfo = { currency, fx, itemsError: master.itemsError, ratesSource: master.ratesSource, ratesBcError: master.ratesBcError };
   if (!ctx) throw new RoyaltiesSetupError('No se ha podido conectar con Business Central.', {});
   // Se guardan las líneas (no el agregado) para aplicar los Royalty Codes de artículo vigentes
-  const fromBc = await cached(`royalties:lines:${company}:${from}:${to}`, to < today() ? 12 * HOUR : 1 * HOUR, () => bcLines(ctx, from, to), force);
+  const fromBc = await cached(`royalties:lines2:${company}:${from}:${to}`, to < today() ? 12 * HOUR : 1 * HOUR, () => bcLines(ctx, from, to), force);
   return {
-    from, to, company, source: 'bc' as const, service: fromBc.service, ...masterInfo,
+    from, to, company, source: 'bc' as const, service: fromBc.service, amountField: fromBc.amountField ?? null, ...masterInfo,
     ...buildReport(fromBc.lines, from, to, await intergroupCustomers(company), master.itemCodes, master.rates, excludedCodesFor(company), trackDates),
   };
 }

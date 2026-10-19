@@ -24,13 +24,14 @@ export async function GET(req: Request) {
 
     const ctx = await getBcContext(company).catch(e => { console.error('License sales BC:', e); return null; });
     const r = await royaltiesReport(ctx, company, from, to, searchParams.get('force') === '1');
-    const byCode: Record<string, { turnover: number; qty: number }> = {};
+    const byCode: Record<string, { turnover: number; amount: number; qty: number }> = {};
     for (const row of r.rows) {
-      const c = (byCode[row.code] ||= { turnover: 0, qty: 0 });
+      const c = (byCode[row.code] ||= { turnover: 0, amount: 0, qty: 0 });
       c.turnover += row.turnover;
+      c.amount += row.amount;
       c.qty += row.qty;
     }
-    return NextResponse.json({ from, to, company, currency: r.currency, byCode, lines: r.stats.lines, ic: r.stats.ic, itemsError: r.itemsError });
+    return NextResponse.json({ from, to, company, currency: r.currency, amountField: r.amountField, byCode, lines: r.stats.lines, ic: r.stats.ic, itemsError: r.itemsError });
   } catch (error: any) {
     console.error('Error in license sales:', error);
     const status = error instanceof RoyaltiesSetupError ? 422 : 500;
