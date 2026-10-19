@@ -27,10 +27,10 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
   const { num, date } = fmt;
   const [to, setTo] = useState(defaultTo);
   const [yearsBack, setYearsBack] = useState(2);
-  const [measure, setMeasure] = useState<'turnover' | 'qty'>('turnover');
-  // Importe: Turnover Net of Provision Sales o Amount de la LM
-  const [basis, setBasis] = useState<'turnover' | 'amount'>('turnover');
-  const key = measure === 'qty' ? 'qty' : basis;
+  // Venta por Turnover Net of Provision Sales o por Amount de la LM, o unidades
+  const [key, setKey] = useState<'turnover' | 'amount' | 'qty'>('turnover');
+  const measure = key === 'qty' ? 'qty' : 'turnover';
+  const basis = key === 'amount' ? 'amount' : 'turnover';
   const [reload, setReload] = useState({ n: 0, force: false });
   const [years, setYears] = useState<YearState[]>([]);
 
@@ -132,24 +132,13 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
           </select>
         </label>
         <div className="flex bg-gray-100 rounded-lg p-1">
-          {([['turnover', `Venta (${currency})`], ['qty', 'Unidades']] as const).map(([id, label]) => (
-            <button key={id} onClick={() => setMeasure(id)}
-              className={`px-3 py-1 rounded-md text-sm font-semibold ${measure === id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
+          {([['amount', 'Venta (Amount)'], ['turnover', 'Venta (Turnover Net of Provision Sales)'], ['qty', 'Unidades']] as const).map(([id, label]) => (
+            <button key={id} onClick={() => setKey(id)}
+              className={`px-3 py-1 rounded-md text-sm font-semibold ${key === id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
               {label}
             </button>
           ))}
         </div>
-        {measure === 'turnover' && (
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            <span className={basis === 'amount' ? 'text-gray-900' : 'text-gray-400'}>Amount</span>
-            <button role="switch" aria-checked={basis === 'turnover'} onClick={() => setBasis(b => b === 'amount' ? 'turnover' : 'amount')}
-              title="Importe de la LM que se compara"
-              className={`relative w-11 h-6 rounded-full transition-colors ${basis === 'turnover' ? 'bg-[#C8186C]' : 'bg-gray-400'}`}>
-              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${basis === 'turnover' ? 'translate-x-5' : ''}`} />
-            </button>
-            <span className={basis === 'turnover' ? 'text-gray-900' : 'text-gray-400'}>Turnover Net of Provision Sales</span>
-          </div>
-        )}
         <div className="ml-auto flex gap-2">
           <button onClick={exportExcel} disabled={loading || !codes.length}
             className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
