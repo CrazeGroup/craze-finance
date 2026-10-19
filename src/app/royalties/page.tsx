@@ -20,7 +20,7 @@ type Report = {
 };
 type SortKey = 'code' | 'country' | 'item' | 'desc' | 'qty' | 'turnover' | 'price' | 'provision' | 'domestic' | 'fob';
 
-const NOT_APPLIED = 'NOT APPLIED';
+const NOT_APPLIED = 'NON-ROYALTY';
 const iso = (d: Date) => d.toISOString().substring(0, 10);
 
 // Trimestre natural: offset 0 = el actual, -1 = el anterior
@@ -324,7 +324,7 @@ export default function RoyaltiesPage() {
                 </select>
                 <label className="flex items-center gap-2 text-sm text-gray-700">
                   <input type="checkbox" checked={hideNotApplied} onChange={e => setHideNotApplied(e.target.checked)} />
-                  Ocultar NOT APPLIED
+                  Ocultar NON-ROYALTY
                 </label>
               </div>
               <div className="overflow-x-auto max-h-[70vh]">
@@ -740,7 +740,7 @@ function MgContractCard({ contract: c, companies, to, rate, fxReady }: {
   );
 }
 
-// NOT APPLIED siempre al final
+// NON-ROYALTY siempre al final
 function byCode(a: string, b: string) {
   if (a === b) return 0;
   if (a === NOT_APPLIED) return 1;

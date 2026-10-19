@@ -56,6 +56,8 @@ function cardItem(item: string, itemCodes: Record<string, string>): string | nul
   return null;
 }
 
+export const NON_ROYALTY = 'NON-ROYALTY';
+
 // excludedCodes: licencias que la empresa no puede vender (se quitan del informe, ver EXCLUDED_CODES)
 // trackDates: además, provisión por código → país → fecha (para repartir por periodos de Minimum Guarantee)
 export function buildReport(
@@ -85,7 +87,8 @@ export function buildReport(
       if (card) code = itemCodes[card];
       else noCard.add(l.item);
     }
-    code = code || 'NOT APPLIED';
+    // Sin licencia: vacío o "NOT APPLIED" en BC → NON-ROYALTY
+    code = !code || /^not applied$/i.test(code) ? NON_ROYALTY : code;
     if (excludedCodes.includes(code.toUpperCase())) {
       stats.excluded.lines++;
       stats.excluded.turnover += l.turnover;
@@ -94,7 +97,7 @@ export function buildReport(
     let provision = l.provision;
     if (rates) {
       const r = rates[code.toUpperCase()];
-      if (!r && code !== 'NOT APPLIED') noRate.add(code);
+      if (!r && code !== NON_ROYALTY) noRate.add(code);
       // Venta FOB: % Fob Royalty, salvo que el código no tenga (0) → % Domestic
       provision = r ? l.turnover * (/^FOB$/i.test(l.ship) && r.fob ? r.fob : r.domestic) : 0;
     }
