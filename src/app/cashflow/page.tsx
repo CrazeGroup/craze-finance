@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Save, X, ChevronRight, ChevronDown, Download, Upload, Archive, Send, Briefcase, Calendar, Search } from 'lucide-react';
+import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Save, X, ChevronRight, ChevronDown, Download, Upload, Archive, Send, Briefcase, Calendar, Search, MailCheck } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useCompany } from '@/contexts/CompanyContext';
 
@@ -24,6 +24,7 @@ export default function CashflowPage() {
   const [filterType, setFilterType] = useState<'ALL' | 'AUTO' | 'MANUAL'>('ALL');
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState('');
+  const [excludeClaimed, setExcludeClaimed] = useState(false);
   const [selectedEntries, setSelectedEntries] = useState<any[]>([]);
   const [draggedItem, setDraggedItem] = useState<any>(null);
   const [consolidatedCurrency, setConsolidatedCurrency] = useState('EUR');
@@ -583,9 +584,43 @@ export default function CashflowPage() {
     } catch (err) { console.error(err); }
   };
 
+  // Facturas reclamadas al cliente: lastReminderDate (recordatorio enviado desde Cashflow o Recobros, o marca manual)
+  const claimedInvoices = (entry: any) => (entry.invoices || []).filter((i: any) => i.lastReminderDate);
+  const daysSince = (date: string) => Math.max(0, Math.floor((Date.now() - new Date(date).getTime()) / 86400000));
+  const claimLabel = (date: string) => {
+    const d = daysSince(date);
+    return `${new Date(date).toLocaleDateString('es-ES')} · ${d === 0 ? 'hoy' : d === 1 ? 'hace 1 día' : `hace ${d} días`}`;
+  };
+
+  const toggleClaim = async (invoiceIds: number[], claimed: boolean) => {
+    try {
+      const res = await fetch('/api/invoices/claim', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoiceIds, claimed })
+      });
+      if (!res.ok) throw new Error((await res.json()).error);
+      // Se actualiza en local para no recargar todo el cashflow
+      const date = claimed ? new Date().toISOString() : null;
+      setEntries(prev => prev.map(e => e.invoices?.some((i: any) => invoiceIds.includes(i.id))
+        ? { ...e, invoices: e.invoices.map((i: any) => invoiceIds.includes(i.id) ? { ...i, lastReminderDate: date } : i) }
+        : e));
+    } catch (err: any) {
+      alert(`No se pudo guardar la marca: ${err.message || err}`);
+    }
+  };
+
+  // Con "Excluir reclamadas" el importe de las facturas reclamadas no cuenta en el saldo acumulado
+  let runningBalance = initialBalance;
+  const balancedEntries = entries.map(e => {
+    const excluded = excludeClaimed ? claimedInvoices(e).reduce((acc: number, i: any) => acc + i.amount, 0) : 0;
+    runningBalance += e.amount - excluded;
+    return { ...e, excludedAmount: excluded, balance: runningBalance };
+  });
+
   // Líneas visibles: filtro de tipo + buscador de texto (descripción, cliente y nº de las facturas agrupadas)
   const searchTerm = search.trim().toLowerCase();
-  const visibleEntries = entries.filter(e =>
+  const visibleEntries = balancedEntries.filter(e =>
     (filterType === 'ALL' || (filterType === 'AUTO' && !e.isManual) || (filterType === 'MANUAL' && e.isManual)) &&
     (!searchTerm || [e.description, e.customer?.name, ...(e.invoices || []).map((i: any) => i.bcId)]
       .some(t => t && String(t).toLowerCase().includes(searchTerm)))
@@ -615,6 +650,10 @@ export default function CashflowPage() {
                 <div className="w-px h-4 bg-white/10 mx-2"></div>
                 <button onClick={() => setShowArchived(!showArchived)} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${showArchived ? 'bg-purple-500/30 text-purple-700 font-bold border border-purple-500/50' : 'text-gray-900 font-bold hover:text-purple-700 font-bold hover:bg-purple-500/10'}`}>
                   {showArchived ? 'Ocultar Archivadas' : 'Ver Archivadas'}
+                </button>
+                <div className="w-px h-4 bg-white/10 mx-2"></div>
+                <button onClick={() => setExcludeClaimed(!excludeClaimed)} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${excludeClaimed ? 'bg-amber-500/30 text-amber-800 font-bold border border-amber-500/50' : 'text-gray-900 font-bold hover:text-amber-800 hover:bg-amber-500/10'}`} title="Incluir o excluir del saldo los cobros ya reclamados al cliente">
+                  {excludeClaimed ? 'Reclamadas excluidas del saldo' : 'Excluir reclamadas del saldo'}
                 </button>
               </div>
               <div className="relative">
@@ -850,12 +889,24 @@ export default function CashflowPage() {
                               )}
                               <span className="text-gray-900">{entry.description}</span>
                               {entry.isGroup && <span className="text-xs text-slate-500">({entry.invoices?.length} facturas)</span>}
+                              {claimedInvoices(entry).length > 0 && (() => {
+                                const claimed = claimedInvoices(entry);
+                                const last = claimed.map((i: any) => i.lastReminderDate).sort().pop();
+                                return (
+                                  <span className="flex items-center gap-1 bg-amber-500/15 text-amber-800 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-amber-500/30" title={`Último recordatorio: ${claimLabel(last)}`}>
+                                    <MailCheck size={11} /> Reclamada {claimed.length}/{entry.invoices.length} · {claimLabel(last)}
+                                  </span>
+                                );
+                              })()}
                             </div>
                           </td>
                           <td className="p-4 text-right font-medium">
                             <span className={entry.amount > 0 ? "text-emerald-600 font-bold" : entry.amount < 0 ? "text-red-600 font-bold" : "text-gray-700 font-semibold font-bold"}>
                               {entry.amount > 0 ? '+' : ''}{getCurrencySymbol(currentCurrency)}{entry.amount.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
                             </span>
+                            {entry.excludedAmount !== 0 && (
+                              <div className="text-[11px] text-amber-700 font-semibold">−{getCurrencySymbol(currentCurrency)}{entry.excludedAmount.toLocaleString('es-ES', { minimumFractionDigits: 2 })} reclamado, fuera del saldo</div>
+                            )}
                           </td>
                           <td className="p-4 text-right">
                             <span className={entry.balance <= -1000000 ? 'text-purple-600 font-black text-lg' : entry.balance < 0 ? 'text-red-600 font-bold text-base' : 'text-emerald-600 font-bold text-base'}>
@@ -874,6 +925,14 @@ export default function CashflowPage() {
                                   </button>
                                 </>
                               )}
+                              {entry.isGroup && entry.invoices?.length > 0 && (() => {
+                                const allClaimed = claimedInvoices(entry).length === entry.invoices.length;
+                                return (
+                                  <button onClick={(e) => { e.stopPropagation(); toggleClaim(entry.invoices.map((i: any) => i.id), !allClaimed); }} className={`p-1.5 rounded-md transition-colors ${allClaimed ? 'text-amber-700 hover:bg-amber-400/20' : 'text-black hover:bg-amber-400/20'}`} title={allClaimed ? 'Quitar la marca de reclamada a todas las facturas' : 'Marcar todas las facturas como reclamadas'}>
+                                    <MailCheck size={14} />
+                                  </button>
+                                );
+                              })()}
                               {entry.isGroup && entry.customer && (
                                 <>
                                   <button onClick={(e) => { e.stopPropagation(); openEmailModal(entry); }} className="p-1.5 text-gray-900 font-bold hover:bg-emerald-400/20 rounded-md transition-colors" title="Enviar Recordatorio al Cliente">
@@ -909,6 +968,11 @@ export default function CashflowPage() {
                             </td>
                             <td className="p-3 text-sm text-gray-600">
                               {inv.bcId} <span className="text-slate-500 text-xs ml-2">({inv.status})</span>
+                              {inv.lastReminderDate && (
+                                <span className="inline-flex items-center gap-1 ml-2 bg-amber-500/15 text-amber-800 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-amber-500/30">
+                                  <MailCheck size={11} /> Reclamada {claimLabel(inv.lastReminderDate)}
+                                </span>
+                              )}
                             </td>
                             <td className="p-3 text-sm text-right text-gray-600">
                               €{inv.amount.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
@@ -916,6 +980,9 @@ export default function CashflowPage() {
                             <td className="p-3 text-right text-slate-500">-</td>
                             <td className="p-3 text-center">
                               <div className="flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button onClick={(e) => { e.stopPropagation(); toggleClaim([inv.id], !inv.lastReminderDate); }} className={`p-1 rounded transition-colors hover:bg-amber-400/20 ${inv.lastReminderDate ? 'text-amber-700' : 'text-black/70 hover:text-black'}`} title={inv.lastReminderDate ? 'Quitar la marca de reclamada' : 'Marcar como reclamada'}>
+                                  <MailCheck size={12} />
+                                </button>
                                 <button onClick={(e) => { e.stopPropagation(); openEditModal({ isManual: false, id: inv.id, date: inv.cashflowDate || inv.dueDate, description: inv.bcId, amount: inv.amount }); }} className="p-1 text-black/70 hover:text-black hover:bg-blue-400/20 rounded transition-colors" title="Editar fecha individual">
                                   <Edit2 size={12} />
                                 </button>
