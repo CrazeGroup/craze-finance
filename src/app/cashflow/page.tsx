@@ -25,6 +25,7 @@ export default function CashflowPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState('');
   const [excludeClaimed, setExcludeClaimed] = useState(false);
+  const [untilDate, setUntilDate] = useState('');
   const [selectedEntries, setSelectedEntries] = useState<any[]>([]);
   const [draggedItem, setDraggedItem] = useState<any>(null);
   const [consolidatedCurrency, setConsolidatedCurrency] = useState('EUR');
@@ -622,6 +623,7 @@ export default function CashflowPage() {
   const searchTerm = search.trim().toLowerCase();
   const visibleEntries = balancedEntries.filter(e =>
     (filterType === 'ALL' || (filterType === 'AUTO' && !e.isManual) || (filterType === 'MANUAL' && e.isManual)) &&
+    (!untilDate || new Date(e.date).toISOString().substring(0, 10) <= untilDate) &&
     (!searchTerm || [e.description, e.customer?.name, ...(e.invoices || []).map((i: any) => i.bcId)]
       .some(t => t && String(t).toLowerCase().includes(searchTerm)))
   );
@@ -635,25 +637,21 @@ export default function CashflowPage() {
   const selectionTotal = selectedEntries.reduce((acc, e) => acc + (e.amount || 0), 0) + looseInvoices.reduce((acc: number, i: any) => acc + (i.amount || 0), 0);
 
   return (
-    <div className="flex-1 p-8 max-w-[1600px] mx-auto overflow-hidden">
-        <div className="flex justify-between items-center mb-8 sticky top-0 z-10 bg-gray-50/95 backdrop-blur-md pb-4 pt-6 -mt-6 border-b border-gray-200">
+    <div className="flex-1 px-6 py-8 w-full">
+        <div className="flex flex-wrap justify-between items-end gap-4 mb-8 sticky top-0 z-10 bg-gray-50/95 backdrop-blur-md pb-4 pt-6 -mt-6 border-b border-gray-200">
           <div>
             <h1 className="text-4xl font-black text-black mb-2">
               Previsión de Tesorería (Cashflow)
             </h1>
-            <div className="flex items-center gap-4">
-              <p className="text-gray-900 font-bold text-sm">Flujo de caja basado en cobros y entradas manuales.</p>
-              <div className="flex bg-white rounded-lg p-1 border border-gray-200 items-center">
+            <div className="flex flex-wrap items-center gap-4">
+              <p className="text-gray-900 font-bold text-sm whitespace-nowrap">Flujo de caja basado en cobros y entradas manuales.</p>
+              <div className="flex bg-white rounded-lg p-1 border border-gray-200 items-center whitespace-nowrap">
                 <button onClick={() => setFilterType('ALL')} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${filterType === 'ALL' ? 'bg-gray-200 text-gray-900' : 'text-gray-900 font-bold hover:text-gray-900 hover:bg-gray-50'}`}>Todos</button>
                 <button onClick={() => setFilterType('AUTO')} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${filterType === 'AUTO' ? 'bg-teal-500/30 text-teal-700 font-bold' : 'text-gray-900 font-bold hover:text-gray-900 hover:bg-gray-50'}`}>Automáticos</button>
                 <button onClick={() => setFilterType('MANUAL')} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${filterType === 'MANUAL' ? 'bg-blue-500/30 text-blue-700 font-bold' : 'text-gray-900 font-bold hover:text-gray-900 hover:bg-gray-50'}`}>Manuales</button>
                 <div className="w-px h-4 bg-white/10 mx-2"></div>
                 <button onClick={() => setShowArchived(!showArchived)} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${showArchived ? 'bg-purple-500/30 text-purple-700 font-bold border border-purple-500/50' : 'text-gray-900 font-bold hover:text-purple-700 font-bold hover:bg-purple-500/10'}`}>
                   {showArchived ? 'Ocultar Archivadas' : 'Ver Archivadas'}
-                </button>
-                <div className="w-px h-4 bg-white/10 mx-2"></div>
-                <button onClick={() => setExcludeClaimed(!excludeClaimed)} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${excludeClaimed ? 'bg-amber-500/30 text-amber-800 font-bold border border-amber-500/50' : 'text-gray-900 font-bold hover:text-amber-800 hover:bg-amber-500/10'}`} title="Incluir o excluir del saldo los cobros ya reclamados al cliente">
-                  {excludeClaimed ? 'Reclamadas excluidas del saldo' : 'Excluir reclamadas del saldo'}
                 </button>
               </div>
               <div className="relative">
@@ -671,9 +669,19 @@ export default function CashflowPage() {
                   </button>
                 )}
               </div>
+              <div className={`flex items-center gap-2 bg-white border rounded-lg px-3 py-1 text-sm whitespace-nowrap ${untilDate ? 'border-teal-500 ring-1 ring-teal-500' : 'border-gray-200'}`} title="Mostrar solo las líneas hasta esta fecha (incluida)">
+                <Calendar size={14} className="text-gray-400" />
+                <span className="text-gray-700 font-semibold">Hasta</span>
+                <input type="date" value={untilDate} onChange={e => setUntilDate(e.target.value)} className="bg-transparent text-gray-900 focus:outline-none" />
+                {untilDate && (
+                  <button onClick={() => setUntilDate('')} className="text-gray-400 hover:text-gray-900" title="Quitar filtro de fecha">
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             <input 
               type="file" 
               accept=".xlsx, .xls, .csv" 
@@ -683,7 +691,7 @@ export default function CashflowPage() {
             />
             <button 
               onClick={handleBulkDelete}
-              className="flex items-center gap-2 px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-gray-700 font-bold rounded-lg border border-red-500/20 transition-colors text-sm"
+              className="flex items-center gap-2 whitespace-nowrap px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-gray-700 font-bold rounded-lg border border-red-500/20 transition-colors text-sm"
               title={selectedEntries.filter(e => e.isManual).length > 0 ? "Borrar Manuales Seleccionadas" : "Borrar Todo (Manuales)"}
             >
               <Trash2 size={16} /> {selectedEntries.filter(e => e.isManual).length > 0 ? `Borrar (${selectedEntries.filter(e => e.isManual).length})` : 'Borrar Todas'}
@@ -691,7 +699,7 @@ export default function CashflowPage() {
             {selectedEntries.length > 0 && (
               <button 
                 onClick={handleBulkArchive}
-                className="flex items-center gap-2 px-4 py-2 bg-purple-500/10 hover:bg-purple-500/20 text-purple-700 font-bold rounded-lg border border-purple-500/20 transition-colors text-sm"
+                className="flex items-center gap-2 whitespace-nowrap px-4 py-2 bg-purple-500/10 hover:bg-purple-500/20 text-purple-700 font-bold rounded-lg border border-purple-500/20 transition-colors text-sm"
                 title="Archivar Seleccionadas"
               >
                 <Archive size={16} /> Archivar ({selectedEntries.length})
@@ -700,14 +708,14 @@ export default function CashflowPage() {
             <button 
               onClick={handleExportCashflow}
               disabled={loading}
-              className="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-gray-900 font-bold rounded-lg border border-emerald-500/20 transition-colors text-sm"
+              className="flex items-center gap-2 whitespace-nowrap px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-gray-900 font-bold rounded-lg border border-emerald-500/20 transition-colors text-sm"
               title="Exportar el cashflow en pantalla a Excel"
             >
               <Download size={16} /> Exportar Excel
             </button>
             <button 
               onClick={handleExportTemplate}
-              className="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-gray-900 font-bold rounded-lg border border-emerald-500/20 transition-colors text-sm"
+              className="flex items-center gap-2 whitespace-nowrap px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-gray-900 font-bold rounded-lg border border-emerald-500/20 transition-colors text-sm"
               title="Descargar Plantilla Excel"
             >
               <Download size={16} /> Plantilla
@@ -715,7 +723,7 @@ export default function CashflowPage() {
             <button 
               onClick={() => fileInputRef.current?.click()}
               disabled={syncing}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-500/10 hover:bg-blue-500/20 text-black rounded-lg border border-blue-500/20 transition-colors text-sm"
+              className="flex items-center gap-2 whitespace-nowrap px-4 py-2 bg-blue-500/10 hover:bg-blue-500/20 text-black rounded-lg border border-blue-500/20 transition-colors text-sm"
               title="Importar Excel"
             >
               <Upload size={16} className={syncing ? "animate-pulse" : ""} /> Importar Excel
@@ -724,20 +732,20 @@ export default function CashflowPage() {
             <button 
               onClick={handleSync}
               disabled={syncing}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-50 hover:bg-gray-200 text-gray-900 rounded-lg border border-gray-200 transition-colors ml-4 text-sm"
+              className="flex items-center gap-2 whitespace-nowrap px-4 py-2 bg-gray-50 hover:bg-gray-200 text-gray-900 rounded-lg border border-gray-200 transition-colors text-sm"
             >
               <RefreshCw size={16} className={syncing ? "animate-spin text-black" : "text-gray-900 font-bold"} />
               {syncing ? 'Sincronizando...' : 'Actualizar Local'}
             </button>
             <button 
               onClick={openAddModal}
-              className="flex items-center gap-2 px-4 py-2 bg-black hover:bg-gray-800 text-white rounded-lg shadow-lg font-medium transition-all text-sm"
+              className="flex items-center gap-2 whitespace-nowrap px-4 py-2 bg-black hover:bg-gray-800 text-white rounded-lg shadow-lg font-medium transition-all text-sm"
             >
               <Plus size={16} /> Añadir Línea
             </button>
             <button 
               onClick={openRecurringModal}
-              className="flex items-center gap-2 px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg shadow-lg font-medium transition-all text-sm ml-2"
+              className="flex items-center gap-2 whitespace-nowrap px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg shadow-lg font-medium transition-all text-sm"
             >
               <Calendar size={16} /> Configurar Recurrentes
             </button>
@@ -767,6 +775,10 @@ export default function CashflowPage() {
             ))}
           </div>
           
+          <div className="flex flex-wrap items-center gap-3">
+          <button onClick={() => setExcludeClaimed(!excludeClaimed)} className={`flex items-center gap-2 whitespace-nowrap px-4 py-2 rounded-lg border text-sm font-bold transition-all ${excludeClaimed ? 'bg-amber-500/20 text-amber-800 border-amber-500/50' : 'bg-white text-gray-900 border-gray-200 hover:bg-amber-500/10 hover:text-amber-800'}`} title="Incluir o excluir del saldo los cobros ya reclamados al cliente">
+            <MailCheck size={16} /> {excludeClaimed ? 'Reclamadas excluidas del saldo' : 'Excluir reclamadas del saldo'}
+          </button>
           {totalEurSum !== null && (
             <div className="bg-emerald-500/10 border border-emerald-500/20 px-4 py-2 rounded-lg flex items-center gap-3">
               <span className="text-emerald-800 font-bold text-sm uppercase tracking-wider whitespace-nowrap">Saldo Consolidado</span>
@@ -786,6 +798,7 @@ export default function CashflowPage() {
               </span>
             </div>
           )}
+          </div>
         </div>
 
         <div className="rounded-2xl border border-gray-200 bg-gray-50 backdrop-blur-md shadow-2xl overflow-hidden">
@@ -843,7 +856,7 @@ export default function CashflowPage() {
                   </tr>
 
                   {visibleEntries.length === 0 ? (
-                     <tr><td colSpan={6} className="p-8 text-center text-gray-700 font-semibold">{searchTerm ? `No hay líneas que contengan "${search.trim()}"` : 'No hay movimientos a partir del 29/07/2026'}</td></tr>
+                     <tr><td colSpan={6} className="p-8 text-center text-gray-700 font-semibold">{searchTerm || untilDate ? 'No hay líneas con estos filtros' : 'No hay movimientos a partir del 29/07/2026'}</td></tr>
                   ) : (
                     visibleEntries.map((entry, idx) => (
                       <React.Fragment key={entry.id}>
