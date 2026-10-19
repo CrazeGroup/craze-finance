@@ -1,14 +1,18 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { FileDown, RefreshCw } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight, FileDown, RefreshCw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
 import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
 
 // Controlling · Ventas por licencia: venta (Turnover de la LM, como Royalties) por Royalty Code de la empresa activa,
 // del 1 de enero a la fecha elegida, comparada con el mismo periodo de años anteriores.
-type YearData = { from: string; to: string; currency: string; amountField: string | null; byCode: Record<string, { turnover: number; amount: number; qty: number }>; lines: number };
+type Agg = { turnover: number; amount: number; qty: number };
+type YearData = {
+  from: string; to: string; currency: string; amountField: string | null; shipCountryField: string | null; byCode: Record<string, Agg>; lines: number;
+  breakdown: Record<string, { ship: Record<string, Agg>; group: Record<string, Agg> }>; groupNames: Record<string, string>;
+};
 type YearState = { year: number; from: string; to: string; data: YearData | null; error: string | null; loading: boolean };
 
 const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -31,6 +35,9 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
   const [key, setKey] = useState<'turnover' | 'amount' | 'qty'>('turnover');
   const measure = key === 'qty' ? 'qty' : 'turnover';
   const basis = key === 'amount' ? 'amount' : 'turnover';
+  // Subnivel al desplegar un Royalty Code: país de envío o Customer Group
+  const [level, setLevel] = useState<'ship' | 'group'>('ship');
+  const [open, setOpen] = useState<Record<string, boolean>>({});
   const [reload, setReload] = useState({ n: 0, force: false });
   const [years, setYears] = useState<YearState[]>([]);
 
@@ -63,6 +70,24 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
   const currency = years.find(y => y.data)?.data?.currency || 'EUR';
   const value = (y: YearState, code: string) => y.data?.byCode[code]?.[key] || 0;
   const total = (y: YearState) => Object.values(y.data?.byCode || {}).reduce((s, c) => s + (c[key] || 0), 0);
+  const subValue = (y: YearState, code: string, k: string) => y.data?.breakdown?.[code]?.[level]?.[k]?.[key] || 0;
+  // Subniveles de un código en cualquier año, ordenados por el año más reciente
+  const subKeys = (code: string) => {
+    const all = new Set(years.flatMap(y => Object.keys(y.data?.breakdown?.[code]?.[level] || {})));
+    return Array.from(all).sort((a, b) => {
+      for (let i = years.length - 1; i >= 0; i--) {
+        const diff = subValue(years[i], code, b) - subValue(years[i], code, a);
+        if (diff) return diff;
+      }
+      return a.localeCompare(b);
+    });
+  };
+  const groupNames = Object.assign({}, ...years.map(y => y.data?.groupNames || {})) as Record<string, string>;
+  const subLabel = (k: string) => level === 'group'
+    ? (k ? `${k}${groupNames[k] ? ` · ${groupNames[k]}` : ''}` : '(sin Customer Group)')
+    : (k || '(sin país)');
+  const shipFromBill = level === 'ship' && years.some(y => y.data && !y.data.shipCountryField);
+  const allOpen = (list: string[]) => list.length > 0 && list.every(c => open[c]);
   const noAmount = basis === 'amount' && years.some(y => y.data && !y.data.amountField);
   const current = years[years.length - 1];
   const previous = years[years.length - 2];
@@ -111,8 +136,20 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
       }
       return row;
     });
+    const subName = level === 'ship' ? 'País' : 'Customer Group';
+    const subRows = codes.flatMap(code => subKeys(code).map(k => {
+      const row: Record<string, string | number | null> = { 'Royalty Code': code, [subName]: subLabel(k) };
+      years.forEach(y => { row[`${unit} ${y.year}`] = subValue(y, code, k); });
+      if (current && previous) {
+        const { d, pct } = delta(subValue(current, code, k), subValue(previous, code, k));
+        row[`Δ ${current.year} vs ${previous.year}`] = d;
+        row[`Δ % ${current.year} vs ${previous.year}`] = pct == null ? null : pct;
+      }
+      return row;
+    }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Ventas por licencia');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(subRows), `Por ${subName}`.substring(0, 31));
     XLSX.writeFile(wb, `Ventas_por_licencia_${company}_${to}.xlsx`.replace(/\s+/g, '_'));
   };
 
@@ -139,6 +176,17 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
             </button>
           ))}
         </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Desglose</span>
+          <div className="flex bg-gray-100 rounded-lg p-1">
+            {([['ship', 'País (Ship-to)'], ['group', 'Customer Group']] as const).map(([id, label]) => (
+              <button key={id} onClick={() => setLevel(id)}
+                className={`px-3 py-1 rounded-md text-sm font-semibold ${level === id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="ml-auto flex gap-2">
           <button onClick={exportExcel} disabled={loading || !codes.length}
             className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
@@ -152,6 +200,7 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
       </div>
 
       {noAmount && <ErrorBox message="El servicio de la LM en BC no publica el campo Amount: no se puede comparar por Amount. Publica el campo en la página 60000 o usa Turnover Net of Provision Sales." />}
+      {shipFromBill && <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">El servicio de la LM en BC no publica el país de envío (Ship-to Country/Region Code): el desglose por país usa el país de facturación.</p>}
       {errors.map(y => <ErrorBox key={y.year} message={`${y.year}: ${y.error}`} />)}
       {loading ? <Loading text={`Leyendo las ventas de ${years.filter(y => y.loading).map(y => y.year).join(', ')} de Business Central…`} />
         : !codes.length ? <p className="text-sm text-gray-600">No hay ventas en estos periodos.</p>
@@ -171,7 +220,12 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
               <table className="w-full text-[13px]">
                 <thead>
                   <tr className="border-b border-gray-200 bg-gray-50">
-                    <th className={`${th} text-left`}>Royalty Code</th>
+                    <th className={`${th} text-left`}>
+                      <button onClick={() => setOpen(allOpen(codes) ? {} : Object.fromEntries(codes.map(c => [c, true])))} className="flex items-center gap-1 uppercase hover:text-gray-900" title="Desplegar o plegar todos">
+                        {allOpen(codes) ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                        Royalty Code <span className="normal-case tracking-normal font-normal">→ {level === 'ship' ? 'país' : 'Customer Group'}</span>
+                      </button>
+                    </th>
                     {years.map(y => (
                       <th key={y.year} className={`${th} text-right`}>
                         {y.year}
@@ -186,11 +240,25 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
                 </thead>
                 <tbody>
                   {codes.map(code => (
-                    <tr key={code} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className={`${td} font-semibold text-gray-900`}>{code}</td>
-                      {years.map(y => <td key={y.year} className={`${td} text-right ${y === current ? 'font-semibold text-gray-900' : 'text-gray-700'}`}>{fmtV(value(y, code))}</td>)}
-                      {current && previous && <Delta cur={value(current, code)} prev={value(previous, code)} />}
-                    </tr>
+                    <Fragment key={code}>
+                      <tr className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => setOpen(o => ({ ...o, [code]: !o[code] }))}>
+                        <td className={`${td} font-semibold text-gray-900`}>
+                          <span className="inline-flex items-center gap-1">
+                            {open[code] ? <ChevronDown size={14} className="text-gray-400" /> : <ChevronRight size={14} className="text-gray-400" />}
+                            {code}
+                          </span>
+                        </td>
+                        {years.map(y => <td key={y.year} className={`${td} text-right ${y === current ? 'font-semibold text-gray-900' : 'text-gray-700'}`}>{fmtV(value(y, code))}</td>)}
+                        {current && previous && <Delta cur={value(current, code)} prev={value(previous, code)} />}
+                      </tr>
+                      {open[code] && subKeys(code).map(k => (
+                        <tr key={`${code}|${k}`} className="border-b border-gray-100 bg-gray-50/60 text-[12px]">
+                          <td className={`${td} pl-10 text-gray-600`}>{subLabel(k)}</td>
+                          {years.map(y => <td key={y.year} className={`${td} text-right text-gray-600`}>{fmtV(subValue(y, code, k))}</td>)}
+                          {current && previous && <Delta cur={subValue(current, code, k)} prev={subValue(previous, code, k)} />}
+                        </tr>
+                      ))}
+                    </Fragment>
                   ))}
                 </tbody>
                 <tfoot>
