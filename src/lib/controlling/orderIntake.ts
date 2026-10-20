@@ -13,6 +13,7 @@ import { today } from '@/lib/reporting/period';
 //   ya facturado de ese pedido en el año.
 
 export type Invoice = {
+  kind: 'invoice' | 'credit';   // Posted Sales Invoice o Posted Sales Credit Memo (importe negativo)
   no: string; postingDate: string; customerNo: string; customerName: string; amount: number;
   orderNo: string; orderDate: string | null;
 };
@@ -65,21 +66,30 @@ async function postedInvoices(ctx: BcContext, from: string, to: string): Promise
   return parts.flat();
 }
 
+// Solo movimientos de cliente que son un documento registrado (Posted Sales Invoice / Credit Memo de la API v2): así
+// quedan fuera los movimientos con el nº de documento terminado en * (duplicados de la migración, sin documento detrás)
 async function postedInvoicesRange(ctx: BcContext, from: string, to: string): Promise<Omit<Invoice, 'orderDate'>[]> {
-  const [entries, headers] = await Promise.all([
-    bcFetchAll(odataUrl(`${ctx.customApiBase}/custLedgerEntries`, {
-      $filter: `documentType eq 'Invoice' and postingDate ge ${from} and postingDate le ${to}`,
-      $select: 'documentNo,postingDate,customerNo,customerName,salesLCY,reversed',
-    }), ctx.token),
-    bcFetchAll(odataUrl(`${ctx.apiBase}/salesInvoices`, {
-      $filter: `postingDate ge ${from} and postingDate le ${to}`, $select: 'number,orderNumber,status',
-    }), ctx.token),
+  const ledger = (type: string) => bcFetchAll(odataUrl(`${ctx.customApiBase}/custLedgerEntries`, {
+    $filter: `documentType eq '${type}' and postingDate ge ${from} and postingDate le ${to}`,
+    $select: 'documentNo,postingDate,customerNo,customerName,salesLCY,reversed',
+  }), ctx.token);
+  const docs = (entity: string, select: string) => bcFetchAll(odataUrl(`${ctx.apiBase}/${entity}`, {
+    $filter: `postingDate ge ${from} and postingDate le ${to}`, $select: select,
+  }), ctx.token);
+  const [invEntries, cmEntries, invoices, creditMemos] = await Promise.all([
+    ledger('Invoice'), ledger('Credit Memo'), docs('salesInvoices', 'number,orderNumber,status'), docs('salesCreditMemos', 'number,status'),
   ]);
-  const orderOf = new Map(headers.filter(h => s(h.status) !== 'Draft').map(h => [s(h.number), s(h.orderNumber)]));
-  return entries.filter(e => !e.reversed).map(e => ({
-    no: s(e.documentNo), postingDate: d10(e.postingDate), customerNo: s(e.customerNo), customerName: s(e.customerName),
-    amount: n(e.salesLCY), orderNo: orderOf.get(s(e.documentNo)) || '',
-  }));
+  const posted = (h: any) => s(h.status) !== 'Draft';
+  const orderOf = new Map(invoices.filter(posted).map(h => [s(h.number), s(h.orderNumber)]));
+  const cmNos = new Set(creditMemos.filter(posted).map(h => s(h.number)));
+  const row = (e: any, kind: 'invoice' | 'credit') => ({
+    kind, no: s(e.documentNo), postingDate: d10(e.postingDate), customerNo: s(e.customerNo), customerName: s(e.customerName),
+    amount: n(e.salesLCY), orderNo: kind === 'invoice' ? orderOf.get(s(e.documentNo)) || '' : '',
+  });
+  return [
+    ...invEntries.filter(e => !e.reversed && orderOf.has(s(e.documentNo))).map(e => row(e, 'invoice')),
+    ...cmEntries.filter(e => !e.reversed && cmNos.has(s(e.documentNo))).map(e => row(e, 'credit')),
+  ];
 }
 
 
@@ -93,7 +103,7 @@ export async function orderIntakeYear(ctx: BcContext, year: number, fromMonth: n
   const warnings: string[] = [];
   const [invoices, archived, open] = await Promise.all([
     // Año en curso siempre en vivo; años cerrados en caché 12 h
-    live ? postedInvoices(ctx, from, to) : cached(`order-intake:inv:${company}:${from}:${to}`, 12 * HOUR, () => postedInvoices(ctx, from, to), force),
+    live ? postedInvoices(ctx, from, to) : cached(`order-intake:inv2:${company}:${from}:${to}`, 12 * HOUR, () => postedInvoices(ctx, from, to), force),
     cached(`order-intake:archive:${company}:${year - 1}`, 6 * HOUR, () => archivedOrderDates(ctx, year - 1), force).catch(e => {
       warnings.push(`No se han podido leer los pedidos archivados (Sales Order Archives): ${e.message}`);
       return {} as Record<string, string>;
@@ -109,7 +119,7 @@ export async function orderIntakeYear(ctx: BcContext, year: number, fromMonth: n
   if (includeOpen) {
     // Lo ya facturado de cada pedido abierto (parcialmente facturado) en el año
     const invoicedByOrder: Record<string, number> = {};
-    for (const i of withDates) if (i.orderNo) invoicedByOrder[i.orderNo] = (invoicedByOrder[i.orderNo] || 0) + i.amount;
+    for (const i of withDates) if (i.kind === 'invoice' && i.orderNo) invoicedByOrder[i.orderNo] = (invoicedByOrder[i.orderNo] || 0) + i.amount;
     openOrders = open.filter(o => o.orderDate && o.requestedDeliveryDate).map(o => {
       const invoiced = invoicedByOrder[o.no] || 0;
       return { ...o, invoiced, pending: Math.max(0, o.amount - invoiced) };

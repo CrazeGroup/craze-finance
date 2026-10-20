@@ -9,7 +9,7 @@ import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
 // Controlling · Facturación según Order Date: lo facturado cada mes desglosado por el mes de la Order Date del pedido,
 // más (año en curso) las Sales Orders abiertas con Order Date y Requested Delivery Date en ese mismo mes.
 // Comparado con los mismos meses de los 2 años anteriores (solo facturas: histórico).
-type Invoice = { no: string; postingDate: string; customerNo: string; customerName: string; amount: number; orderNo: string; orderDate: string | null };
+type Invoice = { kind: 'invoice' | 'credit'; no: string; postingDate: string; customerNo: string; customerName: string; amount: number; orderNo: string; orderDate: string | null };
 type OpenOrder = { no: string; customerNo: string; customerName: string; orderDate: string; requestedDeliveryDate: string; amount: number; invoiced: number; pending: number; currency: string };
 type YearData = { year: number; from: string; to: string; invoices: Invoice[]; openOrders: OpenOrder[]; warnings: string[] };
 type YearState = { year: number; data: YearData | null; error: string | null; loading: boolean };
@@ -29,9 +29,11 @@ const BUCKETS = [
   { id: 'later', label: 'Order Date posterior a la factura' },
   { id: 'none', label: 'Factura sin pedido' },
   { id: 'unknown', label: 'Pedido no encontrado (sin Order Date)' },
+  { id: 'credit', label: 'Abonos (Posted Sales Credit Memos)' },
 ] as const;
 type Bucket = typeof BUCKETS[number]['id'];
 function bucketOf(i: Invoice): Bucket {
+  if (i.kind === 'credit') return 'credit';
   if (!i.orderNo) return 'none';
   if (!i.orderDate) return 'unknown';
   const months = (Number(i.postingDate.substring(0, 4)) - Number(i.orderDate.substring(0, 4))) * 12
@@ -109,7 +111,7 @@ export default function OrderIntakeView({ fmt, company }: { fmt: Fmt; company: s
       return row;
     });
     const invoices = years.flatMap(y => (y.data?.invoices || []).filter(i => months.includes(month(i.postingDate))).map(i => ({
-      'Año': y.year, 'Posting Date': i.postingDate, 'Factura': i.no, 'Cliente': i.customerNo, 'Nombre': i.customerName,
+      'Año': y.year, 'Tipo': i.kind === 'credit' ? 'Abono' : 'Factura', 'Posting Date': i.postingDate, 'Documento': i.no, 'Cliente': i.customerNo, 'Nombre': i.customerName,
       'Importe sin IVA': i.amount, 'Order No.': i.orderNo, 'Order Date': i.orderDate || '',
       'Antigüedad del pedido': BUCKETS.find(b => b.id === bucketOf(i))!.label,
     })));
@@ -287,7 +289,7 @@ export default function OrderIntakeView({ fmt, company }: { fmt: Fmt; company: s
                   </table>
                 </div>
                 <p className="text-xs text-gray-500">
-                  Importes sin IVA en la divisa de la empresa. Facturado = Posted Sales Invoices por Posting Date (sin abonos).
+                  Importes sin IVA en la divisa de la empresa. Facturado = Posted Sales Invoices − Posted Sales Credit Memos por Posting Date (solo documentos registrados: los movimientos con * en el nº, sin documento detrás, no cuentan).
                   &quot;Order Date del mes&quot; = facturas cuyo pedido tiene la Order Date en el mismo mes que la factura. Haz clic en un mes para ver el desglose por antigüedad del pedido.
                   {withOpen && ' "Abiertas del mes" = Sales Orders abiertas hoy con Order Date y Requested Delivery Date en ese mes, menos lo ya facturado del pedido en el periodo; solo existen para el año en curso.'}
                   {unknownCount > 0 && ` ${unknownCount} facturas de ${year} tienen un pedido que no está abierto ni archivado en BC: salen como "Pedido no encontrado".`}
