@@ -8,6 +8,7 @@ import PlCompareView from './PlCompareView';
 import ConsumedProvisionsView from './ConsumedProvisionsView';
 import LicenseSalesView from './LicenseSalesView';
 import OrderIntakeView from './OrderIntakeView';
+import BwaPbiView from './BwaPbiView';
 
 // Controlling: varios reportes de control que se cambian con las pestañas de la cabecera (como en Reporting).
 const REPORTS = [
@@ -16,6 +17,7 @@ const REPORTS = [
   { id: 'consumed-provisions', label: 'Consumed Provisions' },
   { id: 'license-sales', label: 'Ventas por licencia' },
   { id: 'order-intake', label: 'Facturación según Order Date' },
+  { id: 'bwa-pbi', label: 'BWA (Power BI)' },
 ] as const;
 type ReportId = typeof REPORTS[number]['id'];
 
@@ -57,6 +59,7 @@ export default function ControllingPage() {
         {selectedCompany === 'ALL' ? <p className="text-sm text-gray-600">{fmt.t('selectCompany')}</p>
           : report === 'purchase-items' ? <PurchaseItemsView fmt={fmt} company={selectedCompany} />
           : report === 'pl-compare' ? <PlCompareView fmt={fmt} company={selectedCompany} />
+          : report === 'bwa-pbi' ? <BwaPbiView fmt={fmt} />
           : report === 'order-intake' ? <OrderIntakeView fmt={fmt} company={selectedCompany} />
           : report === 'license-sales' ? <LicenseSalesView fmt={fmt} company={selectedCompany} />
           : <ConsumedProvisionsView fmt={fmt} company={selectedCompany} />}

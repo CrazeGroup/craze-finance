@@ -1,0 +1,287 @@
+'use client';
+
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight, FileDown, RefreshCw } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import type { Fmt } from '../reporting/i18n';
+import { ErrorBox, Loading, Section } from '../reporting/ui';
+
+// Controlling · BWA (Power BI): las páginas del Power BI "BWA" (Annual, Monthly, Annual - Detail, Exchg_Cur) leídas de
+// BC en vivo. Filas = líneas BWA, desplegables por nivel (cuenta de mapeo); columnas según la página.
+type Line = { code: string; description: string; formula: string[] | null; highlight: 'high' | 'med' | null };
+type Account = { account: string; bwa: string; level: string; description: string };
+type Data = {
+  year: number; rates: { GBP: number | null; CHF: number | null };
+  currencies: { code: string; description: string; rate: number; date: string }[];
+  lines: Line[]; accounts: Account[]; companies: string[]; cells: [string, number, string, string, number][];
+};
+
+const INTERCO = 'CRAZE Intercompany';
+const CONSOL = 'CRAZE Consolidated';
+const SALES = 'SALES REVENUES';
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTHS_ES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+const PAGES = [
+  { id: 'annual', label: 'Annual' },
+  { id: 'monthly', label: 'Monthly' },
+  { id: 'detail', label: 'Annual - Detail' },
+  { id: 'fx', label: 'Exchange Rates' },
+] as const;
+type Page = typeof PAGES[number]['id'];
+const th = 'py-2 px-2 text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap text-right';
+const td = 'py-1.5 px-2 whitespace-nowrap tabular-nums text-right';
+const ym = (y: number, m: number) => `${y}-${String(m).padStart(2, '0')}`;
+
+export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
+  const { num, date } = fmt;
+  const now = new Date();
+  const [page, setPage] = useState<Page>('annual');
+  const [year, setYear] = useState(now.getFullYear());
+  // Hasta mes (acumulado del año): por defecto el último mes cerrado
+  const [toMonth, setToMonth] = useState(now.getMonth() === 0 ? 12 : now.getMonth());
+  const [company, setCompany] = useState(CONSOL);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [reload, setReload] = useState({ n: 0, force: false });
+  const [state, setState] = useState<{ data: Data | null; loading: boolean; error: string | null }>({ data: null, loading: true, error: null });
+
+  useEffect(() => {
+    let cancelled = false;
+    setState({ data: null, loading: true, error: null });
+    fetch(`/api/controlling/bwa-pbi?year=${year}${reload.force ? '&force=1' : ''}`, { cache: 'no-store' })
+      .then(async res => {
+        const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        if (!cancelled) setState(res.ok && !data.error ? { data, loading: false, error: null } : { data: null, loading: false, error: data.error || `HTTP ${res.status}` });
+      })
+      .catch(err => !cancelled && setState({ data: null, loading: false, error: err.message }));
+    return () => { cancelled = true; };
+  }, [year, reload]);
+
+  const d = state.data;
+
+  // Índice: columna (sociedad / Intercompany / Consolidated) → cuenta → mes → importe
+  const index = useMemo(() => {
+    const idx = new Map<string, Map<string, Map<string, number>>>();
+    const put = (col: string, acc: string, m: string, v: number) => {
+      const byAcc = idx.get(col) || new Map(); idx.set(col, byAcc);
+      const byMonth = byAcc.get(acc) || new Map(); byAcc.set(acc, byMonth);
+      byMonth.set(m, (byMonth.get(m) || 0) + v);
+    };
+    for (const [c, el, acc, m, v] of d?.cells || []) {
+      put(c, acc, m, v);
+      put(el ? INTERCO : CONSOL, acc, m, v);
+    }
+    return idx;
+  }, [d]);
+
+  const accountsOf = useMemo(() => {
+    const map = new Map<string, Account[]>();
+    for (const a of d?.accounts || []) map.set(a.bwa, [...(map.get(a.bwa) || []), a]);
+    return map;
+  }, [d]);
+  const lineAccounts = (l: Line) => (l.formula || [l.code]).flatMap(c => accountsOf.get(c) || []);
+
+  const sum = (col: string, accs: Account[], months: string[]) => {
+    const byAcc = index.get(col);
+    if (!byAcc) return 0;
+    let s = 0;
+    for (const a of accs) { const bm = byAcc.get(a.account); if (bm) for (const m of months) s += bm.get(m) || 0; }
+    return s;
+  };
+  const ytd = (y: number) => Array.from({ length: toMonth }, (_, i) => ym(y, i + 1));
+  const salesLine = d?.lines.find(l => l.description === SALES);
+  const salesOf = (col: string, months: string[]) => (salesLine ? sum(col, lineAccounts(salesLine), months) : 0);
+
+  const columnsCompanies = d ? [...d.companies, INTERCO, CONSOL] : [];
+  const money = (v: number) => (Math.abs(v) < 0.005 ? '' : num(v, 0));
+  const pctTxt = (v: number | null) => (v == null || !isFinite(v) ? '' : `${num(v * 100, 1)} %`);
+  const div = (a: number, b: number) => (b ? a / b : null);
+
+  // ---------- Definición de columnas de cada página ----------
+  type Col = { key: string; label: string; sub?: string; value: (accs: Account[], line: Line | null) => number | null; kind: 'money' | 'pct'; red?: (accs: Account[], line: Line | null) => boolean };
+  const columns: Col[] = useMemo(() => {
+    if (!d) return [];
+    if (page === 'annual') {
+      const cur = ytd(year), prev = ytd(year - 1);
+      const isSales = (l: Line | null) => l?.description === SALES;
+      const pCur = (accs: Account[], l: Line | null) => (isSales(l) ? null : div(sum(company, accs, cur), salesOf(company, cur)));
+      const pPrev = (accs: Account[], l: Line | null) => (isSales(l) ? null : div(sum(company, accs, prev), salesOf(company, prev)));
+      const pDiff = (accs: Account[], l: Line | null) => { const a = pCur(accs, l), b = pPrev(accs, l); return a == null || b == null ? null : a - b; };
+      return [
+        { key: 'prev', label: 'Year -1', sub: `${year - 1}`, kind: 'money', value: accs => sum(company, accs, prev) },
+        { key: 'pprev', label: '%', kind: 'pct', value: pPrev },
+        { key: 'cur', label: 'Year', sub: `${year}`, kind: 'money', value: accs => sum(company, accs, cur) },
+        { key: 'pcur', label: '%', kind: 'pct', value: pCur },
+        { key: 'diff', label: '€ diff.', kind: 'money', value: accs => sum(company, accs, cur) - sum(company, accs, prev) },
+        { key: 'pdiff', label: '%', sub: 'p.p.', kind: 'pct', value: pDiff, red: (accs, l) => (pDiff(accs, l) ?? 0) < 0 },
+      ];
+    }
+    if (page === 'monthly') {
+      return [
+        ...MONTHS.map((m, i) => ({ key: m, label: m, kind: 'money' as const, value: (accs: Account[]) => sum(company, accs, [ym(year, i + 1)]) })),
+        { key: 'total', label: 'Total', sub: `${year}`, kind: 'money', value: accs => sum(company, accs, ytd(year).length === 12 ? ytd(year) : MONTHS.map((_, i) => ym(year, i + 1))) },
+      ];
+    }
+    // Annual - Detail: una columna por sociedad + Consolidated y su % sobre Sales Revenues
+    const cur = ytd(year);
+    return [
+      ...d.companies.map(c => ({ key: c, label: c, kind: 'money' as const, value: (accs: Account[]) => sum(c, accs, cur) })),
+      { key: 'consol', label: 'Consolidated', kind: 'money', value: accs => sum(CONSOL, accs, cur) },
+      { key: 'pconsol', label: '%', sub: 's/ Sales Rev.', kind: 'pct', value: (accs, l) => (l?.description === SALES ? null : div(sum(CONSOL, accs, cur), salesOf(CONSOL, cur))) },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d, page, year, toMonth, company, index]);
+
+  const cell = (c: Col, accs: Account[], line: Line | null) => {
+    const v = c.value(accs, line);
+    return c.kind === 'pct' ? pctTxt(v) : money(v || 0);
+  };
+
+  const exportExcel = () => {
+    if (!d) return;
+    const rows: Record<string, string | number | null>[] = [];
+    for (const l of d.lines) {
+      const accs = lineAccounts(l);
+      const row: Record<string, string | number | null> = { 'BWA Group': l.description, Level: '' };
+      columns.forEach(c => { row[`${c.label}${c.sub ? ` ${c.sub}` : ''}`] = c.value(accs, l); });
+      rows.push(row);
+      if (!l.formula) for (const a of accountsOf.get(l.code) || []) {
+        const sub: Record<string, string | number | null> = { 'BWA Group': l.description, Level: `${a.level} ${a.description}` };
+        columns.forEach(c => { sub[`${c.label}${c.sub ? ` ${c.sub}` : ''}`] = c.value([a], null); });
+        rows.push(sub);
+      }
+    }
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), PAGES.find(p => p.id === page)!.label.substring(0, 31));
+    XLSX.writeFile(wb, `BWA_${page}_${page === 'detail' ? 'empresas' : company}_${year}${page === 'monthly' ? '' : `_hasta_${toMonth}`}.xlsx`.replace(/\s+/g, '_'));
+  };
+
+  const select = 'block mt-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-900 bg-white normal-case tracking-normal';
+  const label = 'text-[11px] font-semibold uppercase tracking-wider text-gray-500';
+  const rowStyle = (l: Line) => l.highlight === 'high' ? 'bg-[#333333] text-white font-bold' : l.highlight === 'med' ? 'bg-[#E6E6E6] text-gray-900 font-bold' : 'text-gray-900';
+  const expandable = d?.lines.filter(l => !l.formula && (accountsOf.get(l.code)?.length || 0) > 0) || [];
+  const allOpen = expandable.length > 0 && expandable.every(l => open[l.code]);
+
+  return (
+    <Section title="BWA (Power BI)" source="glEntriesUnion + mappingAccounts + bwas (API custom de BC) · GBP/CHF a EUR con Currencies_Excel · igual que el Power BI BWA">
+      <div className="flex flex-wrap items-end gap-4">
+        <div className="flex bg-gray-100 rounded-lg p-1">
+          {PAGES.map(p => (
+            <button key={p.id} onClick={() => setPage(p.id)}
+              className={`px-3 py-1 rounded-md text-sm font-semibold ${page === p.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <label className={label}>
+          Año
+          <select value={year} onChange={e => setYear(Number(e.target.value))} className={select}>
+            {Array.from({ length: 5 }, (_, i) => now.getFullYear() - i).map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </label>
+        {(page === 'annual' || page === 'detail') && (
+          <label className={label}>
+            Hasta mes
+            <select value={toMonth} onChange={e => setToMonth(Number(e.target.value))} className={select}>
+              {MONTHS_ES.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+            </select>
+          </label>
+        )}
+        {(page === 'annual' || page === 'monthly') && (
+          <label className={label}>
+            CRAZE Company
+            <select value={company} onChange={e => setCompany(e.target.value)} className={select}>
+              {columnsCompanies.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
+        )}
+        <div className="ml-auto flex gap-2">
+          {page !== 'fx' && (
+            <button onClick={exportExcel} disabled={state.loading || !d}
+              className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
+              <FileDown size={16} /> Exportar Excel
+            </button>
+          )}
+          <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={state.loading} title="Volver a leer de BC"
+            className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">
+            <RefreshCw size={16} className={state.loading ? 'animate-spin' : ''} />
+          </button>
+        </div>
+      </div>
+
+      {state.error ? <ErrorBox message={state.error} />
+        : state.loading || !d ? <Loading text={`Leyendo los movimientos contables de ${year - 1} y ${year} de Business Central…`} />
+        : page === 'fx' ? (
+          <div className="rpt-card bg-white rounded-xl border border-gray-200 overflow-x-auto max-w-xl">
+            <p className="px-4 pt-4 font-bold text-gray-900">Currency Exchange Rates</p>
+            <table className="w-full text-[13px] mt-2">
+              <thead><tr className="border-b border-gray-200 bg-gray-50 text-gray-500">
+                <th className={`${th} text-left`}>Code</th><th className={`${th} text-left`}>Description</th><th className={th}>Exchange Rate Amt</th><th className={th}>Exchange Rate Date</th>
+              </tr></thead>
+              <tbody>
+                {d.currencies.map(c => (
+                  <tr key={c.code} className="border-b border-gray-100">
+                    <td className="py-2 px-2 font-semibold">{c.code}</td><td className="py-2 px-2">{c.description}</td>
+                    <td className={td}>{num(c.rate, 6)}</td><td className={td}>{date(c.date)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="px-4 py-3 text-xs text-gray-500">Importes de UK (GBP) y Group AG (CHF) × este tipo = EUR, como en el Power BI.</p>
+          </div>
+        ) : (
+          <>
+            <div className="rpt-card bg-white rounded-xl border border-gray-200 overflow-x-auto">
+              <table className="w-full text-[12.5px]">
+                <thead>
+                  <tr className="border-b border-gray-200 bg-gray-50 text-gray-500">
+                    <th className={`${th} text-left`}>
+                      <button onClick={() => setOpen(allOpen ? {} : Object.fromEntries(expandable.map(l => [l.code, true])))}
+                        className="flex items-center gap-1 uppercase hover:text-gray-900" title="Desplegar o plegar todos los niveles">
+                        {allOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />} BWA Group → Level
+                      </button>
+                    </th>
+                    {columns.map(c => (
+                      <th key={c.key} className={th}>{c.label}{c.sub && <span className="block font-normal normal-case tracking-normal">{c.sub}</span>}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {d.lines.map(l => {
+                    const accs = lineAccounts(l);
+                    const subs = l.formula ? [] : accountsOf.get(l.code) || [];
+                    return (
+                      <Fragment key={l.code}>
+                        <tr className={`border-b border-gray-100 ${rowStyle(l)} ${subs.length ? 'cursor-pointer' : ''}`} onClick={() => subs.length && setOpen(o => ({ ...o, [l.code]: !o[l.code] }))}>
+                          <td className="py-1.5 px-2 whitespace-nowrap">
+                            <span className="inline-flex items-center gap-1">
+                              {subs.length ? (open[l.code] ? <ChevronDown size={13} className="opacity-60" /> : <ChevronRight size={13} className="opacity-60" />) : <span className="w-[13px]" />}
+                              {l.description}
+                            </span>
+                          </td>
+                          {columns.map(c => (
+                            <td key={c.key} className={`${td} ${c.red?.(accs, l) ? 'bg-[#FFBABD] text-[#80292E]' : ''} ${c.kind === 'pct' && !l.highlight ? 'text-[#2B408E]' : ''}`}>{cell(c, accs, l)}</td>
+                          ))}
+                        </tr>
+                        {open[l.code] && subs.map(a => (
+                          <tr key={a.account} className="border-b border-gray-100 text-[12px] text-gray-600">
+                            <td className="py-1 px-2 pl-9 whitespace-nowrap">{a.level} {a.description}</td>
+                            {columns.map(c => <td key={c.key} className={`${td} py-1 ${c.kind === 'pct' ? 'text-[#2B408E]' : ''}`}>{cell(c, [a], null)}</td>)}
+                          </tr>
+                        ))}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-gray-500">
+              {page === 'annual' && `Acumulado de enero a ${MONTHS_ES[toMonth - 1].toLowerCase()} de ${year} frente al mismo periodo de ${year - 1}, ${company}. % = sobre Sales Revenues; el último % es la diferencia en puntos (en rojo si baja).`}
+              {page === 'monthly' && `Importe de cada mes de ${year}, ${company}.`}
+              {page === 'detail' && `Acumulado de enero a ${MONTHS_ES[toMonth - 1].toLowerCase()} de ${year} por sociedad (cada una con sus movimientos de eliminación) y consolidado (sin eliminaciones).`}
+              {' '}Importes en EUR con el signo invertido (ingresos en positivo). Haz clic en una línea para ver sus niveles.
+            </p>
+          </>
+        )}
+    </Section>
+  );
+}
