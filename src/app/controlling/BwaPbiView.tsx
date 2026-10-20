@@ -141,11 +141,11 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
     const rows: Record<string, string | number | null>[] = [];
     for (const l of d.lines) {
       const accs = lineAccounts(l);
-      const row: Record<string, string | number | null> = { 'BWA Group': l.description, Level: '' };
+      const row: Record<string, string | number | null> = { 'BWA Group': l.description, 'No.': '', Level: '', Description: '' };
       columns.forEach(c => { row[`${c.label}${c.sub ? ` ${c.sub}` : ''}`] = c.value(accs, l); });
       rows.push(row);
       if (!l.formula) for (const a of accountsOf.get(l.code) || []) {
-        const sub: Record<string, string | number | null> = { 'BWA Group': l.description, Level: `${a.level} ${a.description}` };
+        const sub: Record<string, string | number | null> = { 'BWA Group': l.description, 'No.': a.account, Level: a.level, Description: a.description };
         columns.forEach(c => { sub[`${c.label}${c.sub ? ` ${c.sub}` : ''}`] = c.value([a], null); });
         rows.push(sub);
       }
@@ -237,7 +237,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
                     <th className={`${th} text-left`}>
                       <button onClick={() => setOpen(allOpen ? {} : Object.fromEntries(expandable.map(l => [l.code, true])))}
                         className="flex items-center gap-1 uppercase hover:text-gray-900" title="Desplegar o plegar todos los niveles">
-                        {allOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />} BWA Group → Level
+                        {allOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />} BWA Group → No.
                       </button>
                     </th>
                     {columns.map(c => (
@@ -264,7 +264,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
                         </tr>
                         {open[l.code] && subs.map(a => (
                           <tr key={a.account} className="border-b border-gray-100 text-[12px] text-gray-600">
-                            <td className="py-1 px-2 pl-9 whitespace-nowrap">{a.level} {a.description}</td>
+                            <td className="py-1 px-2 pl-9 whitespace-nowrap" title={`BWA level ${a.level}`}><span className="inline-block w-16 tabular-nums">{a.account}</span>{a.description}</td>
                             {columns.map(c => <td key={c.key} className={`${td} py-1 ${c.kind === 'pct' ? 'text-[#2B408E]' : ''}`}>{cell(c, [a], null)}</td>)}
                           </tr>
                         ))}
