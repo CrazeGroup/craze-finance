@@ -23,6 +23,10 @@ export type OpenOrder = {
 
 const s = (v: any) => (v == null ? '' : String(v).trim());
 const n = (v: any) => (typeof v === 'number' ? v : parseFloat(v) || 0);
+const lastDay = (ym: string) => {
+  const [y, m] = ym.split('-').map(Number);
+  return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
+};
 const d10 = (v: any) => { const x = s(v).substring(0, 10); return x && x !== '0001-01-01' ? x : ''; };
 
 // Order Date de los pedidos archivados (todas las versiones tienen la misma)
@@ -51,7 +55,17 @@ async function openOrderHeaders(ctx: BcContext) {
   });
 }
 
+// Por trimestres en paralelo: un año entero en una sola consulta puede pasar del límite de 60 s
 async function postedInvoices(ctx: BcContext, from: string, to: string): Promise<Omit<Invoice, 'orderDate'>[]> {
+  const year = Number(from.substring(0, 4));
+  const quarters = [[1, 3], [4, 6], [7, 9], [10, 12]]
+    .map(([a, b]) => [`${year}-${String(a).padStart(2, '0')}-01`, lastDay(`${year}-${String(b).padStart(2, '0')}`)])
+    .map(([a, b]) => [a < from ? from : a, b > to ? to : b]).filter(([a, b]) => a <= b);
+  const parts = await Promise.all(quarters.map(([a, b]) => postedInvoicesRange(ctx, a, b)));
+  return parts.flat();
+}
+
+async function postedInvoicesRange(ctx: BcContext, from: string, to: string): Promise<Omit<Invoice, 'orderDate'>[]> {
   const [entries, headers] = await Promise.all([
     bcFetchAll(odataUrl(`${ctx.customApiBase}/custLedgerEntries`, {
       $filter: `documentType eq 'Invoice' and postingDate ge ${from} and postingDate le ${to}`,
@@ -68,10 +82,6 @@ async function postedInvoices(ctx: BcContext, from: string, to: string): Promise
   }));
 }
 
-const lastDay = (ym: string) => {
-  const [y, m] = ym.split('-').map(Number);
-  return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
-};
 
 // Un año: facturas de los meses fromMonth..toMonth (MM) con la Order Date de su pedido y, si includeOpen, los
 // pedidos abiertos. Se piden por separado los años de la comparativa (cada uno, una llamada < 60 s).
@@ -79,14 +89,16 @@ export async function orderIntakeYear(ctx: BcContext, year: number, fromMonth: n
   const from = `${year}-${String(fromMonth).padStart(2, '0')}-01`;
   const to = lastDay(`${year}-${String(toMonth).padStart(2, '0')}`);
   const company = ctx.companyName;
+  const live = to >= today();
   const warnings: string[] = [];
   const [invoices, archived, open] = await Promise.all([
-    cached(`order-intake:inv:${company}:${from}:${to}`, to < today() ? 12 * HOUR : 1 * HOUR, () => postedInvoices(ctx, from, to), force),
-    cached(`order-intake:archive:${company}:${year - 2}`, 6 * HOUR, () => archivedOrderDates(ctx, year - 2), force).catch(e => {
+    // Año en curso siempre en vivo; años cerrados en caché 12 h
+    live ? postedInvoices(ctx, from, to) : cached(`order-intake:inv:${company}:${from}:${to}`, 12 * HOUR, () => postedInvoices(ctx, from, to), force),
+    cached(`order-intake:archive:${company}:${year - 1}`, 6 * HOUR, () => archivedOrderDates(ctx, year - 1), force).catch(e => {
       warnings.push(`No se han podido leer los pedidos archivados (Sales Order Archives): ${e.message}`);
       return {} as Record<string, string>;
     }),
-    cached(`order-intake:open:${company}`, 1 * HOUR, () => openOrderHeaders(ctx), force),
+    openOrderHeaders(ctx),
   ]);
   const openDate = new Map(open.map(o => [o.no, o.orderDate]));
   const withDates: Invoice[] = invoices.map(i => ({

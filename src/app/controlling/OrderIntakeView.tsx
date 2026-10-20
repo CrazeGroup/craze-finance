@@ -16,6 +16,7 @@ type YearState = { year: number; data: YearData | null; error: string | null; lo
 
 const MONTHS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 const COMPARE_YEARS = 2;
+const ALL_MONTHS = Array.from({ length: 12 }, (_, i) => i + 1);
 const th = 'py-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-gray-500 whitespace-nowrap text-right';
 const td = 'py-2 px-2 whitespace-nowrap tabular-nums text-right';
 
@@ -43,23 +44,21 @@ export default function OrderIntakeView({ fmt, company }: { fmt: Fmt; company: s
   const { num, date } = fmt;
   const thisYear = new Date().getFullYear();
   const [year, setYear] = useState(thisYear);
-  const [fromMonth, setFromMonth] = useState(1);
-  const [toMonth, setToMonth] = useState(new Date().getMonth() + 1);
   const [reload, setReload] = useState({ n: 0, force: false });
   const [years, setYears] = useState<YearState[]>([]);
   const [open, setOpen] = useState<Record<number, boolean>>({});
 
   const yearList = useMemo(() => Array.from({ length: COMPARE_YEARS + 1 }, (_, i) => year - COMPARE_YEARS + i), [year]);
-  const months = useMemo(() => Array.from({ length: Math.max(0, toMonth - fromMonth + 1) }, (_, i) => fromMonth + i), [fromMonth, toMonth]);
+  // Siempre el año completo; los meses futuros solo tienen Sales Orders abiertas
+  const months = ALL_MONTHS;
   const withOpen = year === thisYear;
 
   // Un año por petición (cada una lee BC por separado y no pasa del límite de 60 s)
   useEffect(() => {
-    if (fromMonth > toMonth) return;
     let cancelled = false;
     setYears(yearList.map(y => ({ year: y, data: null, error: null, loading: true })));
     yearList.forEach(y => {
-      const params = `year=${y}&from=${fromMonth}&to=${toMonth}${y === year && withOpen ? '&open=1' : ''}${reload.force ? '&force=1' : ''}`;
+      const params = `year=${y}&from=1&to=12${y === year && withOpen ? '&open=1' : ''}${reload.force ? '&force=1' : ''}`;
       fetch(`/api/controlling/order-intake?${params}`, { cache: 'no-store' })
         .then(async res => {
           const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
@@ -70,7 +69,7 @@ export default function OrderIntakeView({ fmt, company }: { fmt: Fmt; company: s
         .catch(err => !cancelled && setYears(ys => ys.map(s => s.year === y ? { ...s, error: err.message, loading: false } : s)));
     });
     return () => { cancelled = true; };
-  }, [yearList, fromMonth, toMonth, year, withOpen, reload, company]);
+  }, [yearList, year, withOpen, reload, company]);
 
   const loading = years.some(y => y.loading);
   const current = years.find(y => y.year === year);
@@ -124,7 +123,7 @@ export default function OrderIntakeView({ fmt, company }: { fmt: Fmt; company: s
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summary), 'Resumen');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(invoices), 'Facturas');
     if (withOpen) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(orders), 'Sales Orders abiertas');
-    XLSX.writeFile(wb, `Facturacion_Order_Date_${company}_${year}_${fromMonth}-${toMonth}.xlsx`.replace(/\s+/g, '_'));
+    XLSX.writeFile(wb, `Facturacion_Order_Date_${company}_${year}.xlsx`.replace(/\s+/g, '_'));
   };
 
   const select = 'block mt-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-900 bg-white normal-case tracking-normal';
@@ -137,18 +136,6 @@ export default function OrderIntakeView({ fmt, company }: { fmt: Fmt; company: s
           Año
           <select value={year} onChange={e => setYear(Number(e.target.value))} className={select}>
             {Array.from({ length: 6 }, (_, i) => thisYear - i).map(y => <option key={y} value={y}>{y}</option>)}
-          </select>
-        </label>
-        <label className={label}>
-          Desde
-          <select value={fromMonth} onChange={e => setFromMonth(Number(e.target.value))} className={select}>
-            {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
-          </select>
-        </label>
-        <label className={label}>
-          Hasta
-          <select value={toMonth} onChange={e => setToMonth(Number(e.target.value))} className={select}>
-            {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
           </select>
         </label>
         <p className="text-xs text-gray-500 pb-2">Comparado con {year - 2} y {year - 1}</p>
@@ -164,15 +151,14 @@ export default function OrderIntakeView({ fmt, company }: { fmt: Fmt; company: s
         </div>
       </div>
 
-      {fromMonth > toMonth ? <ErrorBox message="El mes Desde es posterior a Hasta." />
-        : <>
+      {<>
           {years.filter(y => y.error).map(y => <ErrorBox key={y.year} message={`${y.year}: ${y.error}`} />)}
           {warnings.map(w => <p key={w} className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{w}</p>)}
           {loading ? <Loading text={`Leyendo facturas y pedidos de ${years.filter(y => y.loading).map(y => y.year).join(', ')} de Business Central…`} />
             : (
               <>
                 <Grid cols={4}>
-                  <Kpi label={`Facturado ${year}`} value={num(sum(current, 'billed'), 0)} sub={`${MONTHS[fromMonth - 1]} – ${MONTHS[toMonth - 1]}`} />
+                  <Kpi label={`Facturado ${year}`} value={num(sum(current, 'billed'), 0)} sub="Enero – diciembre" />
                   <Kpi label="Con Order Date del mismo mes" value={num(sum(current, 'same'), 0)}
                     sub={`${pct(sum(current, 'same'), sum(current, 'billed'))} (${year - 1}: ${pct(sum(previous, 'same'), sum(previous, 'billed'))})`} />
                   {withOpen
