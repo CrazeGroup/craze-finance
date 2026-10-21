@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { COMPANIES, Dims, EMPTY_FILTERS, Facts, Filters, makeCtx } from './engine';
 import { MultiSelect } from './ui';
@@ -42,27 +42,38 @@ export default function CommercialAnalysisPage() {
   }, [reload]);
 
   // Hechos de cada empresa para el año elegido y el anterior (una petición por empresa y año)
-  const companies = filters.companies.length ? filters.companies : COMPANIES.map(c => c.abbr);
-  const wanted = useMemo(() => companies.flatMap(c => [year, year - 1].map(y => `${c}|${y}`)), [companies, year]);
+  // (lista estable: si se recalculara en cada render, el efecto se relanzaría sin parar)
+  const companiesKey = filters.companies.join(',');
+  const wanted = useMemo(() => {
+    const companies = companiesKey ? companiesKey.split(',') : COMPANIES.map(c => c.abbr);
+    return companies.flatMap(c => [year, year - 1].map(y => `${c}|${y}`));
+  }, [companiesKey, year]);
+  const inflight = useRef(new Set<string>());
+  const forced = useRef(0);
   useEffect(() => {
-    let cancelled = false;
+    const force = reload.force && forced.current !== reload.n;
+    if (force) forced.current = reload.n;
     for (const key of wanted) {
-      if (!reload.force && loads[key] && !loads[key].error) continue;
+      if (inflight.current.has(key)) continue;
+      if (!force && loads[key]?.data) continue;
       const [company, y] = key.split('|');
-      setLoads(l => ({ ...l, [key]: { key, data: null, error: null, loading: true } }));
-      fetch(`/api/commercial/facts?company=${company}&year=${y}${reload.force ? '&force=1' : ''}`, { cache: 'no-store' })
+      inflight.current.add(key);
+      setLoads(l => ({ ...l, [key]: { key, data: l[key]?.data ?? null, error: null, loading: true } }));
+      fetch(`/api/commercial/facts?company=${company}&year=${y}${force ? '&force=1' : ''}`, { cache: 'no-store' })
         .then(async r => {
           const d = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
-          if (!cancelled) setLoads(l => ({ ...l, [key]: { key, data: r.ok && !d.error ? d : null, error: r.ok && !d.error ? null : d.error || `HTTP ${r.status}`, loading: false } }));
+          const ok = r.ok && !d.error;
+          setLoads(l => ({ ...l, [key]: { key, data: ok ? d : l[key]?.data ?? null, error: ok ? null : d.error || `HTTP ${r.status}`, loading: false } }));
         })
-        .catch(e => !cancelled && setLoads(l => ({ ...l, [key]: { key, data: null, error: e.message, loading: false } })));
+        .catch(e => setLoads(l => ({ ...l, [key]: { key, data: l[key]?.data ?? null, error: e.message, loading: false } })))
+        .finally(() => inflight.current.delete(key));
     }
-    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wanted, reload]);
 
-  const facts = wanted.map(k => loads[k]?.data).filter(Boolean) as Facts[];
-  const loading = !dims.data || wanted.some(k => !loads[k] || loads[k].loading);
+  const facts = useMemo(() => wanted.map(k => loads[k]?.data).filter(Boolean) as Facts[], [wanted, loads]);
+  const loading = !dims.data || wanted.some(k => !loads[k] || (loads[k].loading && !loads[k].data));
+  const refreshing = wanted.some(k => loads[k]?.loading);
   const errors = wanted.filter(k => loads[k]?.error).map(k => `${k.replace('|', ' ')}: ${loads[k].error}`);
   const ctx = useMemo(() => (dims.data ? makeCtx(dims.data, facts, year, filters) : null), [dims.data, facts, year, filters]);
 
@@ -102,9 +113,9 @@ export default function CommercialAnalysisPage() {
               <button key={p.id} onClick={() => changePage(p.id)} className={`px-3 py-1.5 rounded-md text-sm font-semibold ${page === p.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>{p.label}</button>
             ))}
           </div>
-          <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={loading} title="Volver a leer de BC"
+          <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={refreshing} title="Volver a leer de BC"
             className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+            <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
           </button>
         </div>
         <div className="w-full px-4 md:px-8 pb-3 flex flex-wrap items-end gap-3">
