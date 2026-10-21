@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
 import { ErrorBox, Loading, Section } from '../reporting/ui';
 import BwaAccountDrill, { type DrillSpec } from './BwaAccountDrill';
+import { parseDatev, type DatevFile } from './datevParse';
 
 // Controlling · BWA (Power BI): las páginas del Power BI "BWA" (Annual, Monthly, Annual - Detail, Exchg_Cur) leídas de
 // BC en vivo. Filas = líneas BWA, desplegables por nivel (cuenta de mapeo); columnas según la página.
@@ -24,11 +25,19 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const MONTHS_ES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 const PAGES = [
   { id: 'annual', label: 'Annual' },
+  { id: 'datev', label: 'Annual vs DATEV' },
   { id: 'monthly', label: 'Monthly' },
   { id: 'detail', label: 'Annual - Detail' },
   { id: 'fx', label: 'Exchange Rates' },
 ] as const;
 type Page = typeof PAGES[number]['id'];
+// Annual vs DATEV: apartados de la Jahresübersicht que son ingresos (se mantiene el signo; el resto son gastos y se
+// invierten, como el BWA) y línea BWA de cada apartado para las cuentas que no están en el mapeo de BC
+const DATEV_INCOME = new Set(['1020', '1040', '1045', '1090', '1322', '1323', '1324']);
+const DATEV_SECTION_LINE: [RegExp, RegExp][] = [
+  [/^(1020|1045|1090)$/, /^sales revenues$/i], [/^1040$/, /sales provision/i], [/^1060$/, /cost of goods/i], [/^1100$/, /personnel/i],
+  [/^1200$/, /marketing/i], [/^1220$/, /logistic/i], [/^1240$/, /depreciation/i], [/^(13\d\d)$/, /financial/i], [/./, /other expenses/i],
+];
 const th = 'py-2 px-2 text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap text-right';
 const td = 'py-1.5 px-2 whitespace-nowrap tabular-nums text-right';
 const ym = (y: number, m: number) => `${y}-${String(m).padStart(2, '0')}`;
@@ -59,6 +68,63 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
 
   const d = state.data;
 
+  // ---------- Annual vs DATEV: Jahresübersicht del año anterior subida por el usuario ----------
+  const [datev, setDatev] = useState<{ file: DatevFile | null; updatedAt: string | null; loading: boolean; error: string | null }>({ file: null, updatedAt: null, loading: false, error: null });
+  const [datevN, setDatevN] = useState(0);
+  const datevCompany = company === CONSOL || company === INTERCO ? 'CRAZE' : company;
+  useEffect(() => { if (page === 'datev' && (company === CONSOL || company === INTERCO)) setCompany('CRAZE'); }, [page, company]);
+  useEffect(() => {
+    if (page !== 'datev') return;
+    let cancelled = false;
+    setDatev(x => ({ ...x, loading: true, error: null }));
+    fetch(`/api/controlling/bwa-pbi/datev?company=${encodeURIComponent(datevCompany)}&year=${year - 1}`, { cache: 'no-store' })
+      .then(r => r.json()).then(j => !cancelled && setDatev({ file: j.file, updatedAt: j.updatedAt, loading: false, error: null }))
+      .catch(e => !cancelled && setDatev(x => ({ ...x, loading: false, error: e.message })));
+    return () => { cancelled = true; };
+  }, [page, datevCompany, year, datevN]);
+  const uploadDatev = async (f: File | undefined) => {
+    if (!f) return;
+    try {
+      const file = await parseDatev(f);
+      if (file.year !== year - 1) throw new Error(`El Excel es de ${file.year}; para comparar con ${year} hace falta el de ${year - 1}.`);
+      const r = await fetch('/api/controlling/bwa-pbi/datev', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: datevCompany, file }) });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+      setDatevN(n => n + 1);
+    } catch (e: any) {
+      setDatev(x => ({ ...x, error: e.message }));
+    }
+  };
+  // Cada cuenta DATEV (602000) a la cuenta de BC (6020 00): si está en el mapeo, a su línea; si no, a la línea de una
+  // cuenta mapeada con las mismas 4 primeras cifras o, si tampoco, a la del apartado DATEV (cuenta añadida "DATEV")
+  const datevMap = useMemo(() => {
+    const values = new Map<string, number[]>();
+    const extra: Account[] = [];
+    const stats = { exact: 0, prefix: 0, section: 0 };
+    if (!d || !datev.file) return { values, extra, stats };
+    const byNo = new Map(d.accounts.map(a => [a.account, a]));
+    const lineFor = (section: string) => {
+      const re = DATEV_SECTION_LINE.find(([sec]) => sec.test(section))?.[1];
+      return d.lines.find(l => !l.formula && re?.test(l.description))?.code || '';
+    };
+    for (const a of datev.file.accounts) {
+      const bc = `${a.account.substring(0, 4)} ${a.account.substring(4)}`;
+      const sign = DATEV_INCOME.has(a.section) ? 1 : -1;
+      const vals = a.values.map(v => v * sign);
+      values.set(bc, (values.get(bc) || vals.map(() => 0)).map((v, i) => v + vals[i]));
+      if (byNo.has(bc) || extra.some(x => x.account === bc)) { if (byNo.has(bc)) stats.exact++; continue; }
+      const sibling = d.accounts.find(x => x.account.substring(0, 4) === bc.substring(0, 4));
+      const bwa = sibling?.bwa || lineFor(a.section);
+      if (sibling) stats.prefix++; else stats.section++;
+      if (bwa) extra.push({ account: bc, bwa, level: 'zz', description: `${a.name || 'Cuenta DATEV'} · DATEV (${sibling ? `como ${sibling.account}` : `apartado ${a.section}`})` });
+    }
+    return { values, extra, stats };
+  }, [d, datev.file]);
+  const datevSum = (accs: Account[]) => {
+    let s = 0;
+    for (const a of accs) { const v = datevMap.values.get(a.account); if (v) for (let i = 0; i < Math.min(toMonth, v.length); i++) s += v[i]; }
+    return s;
+  };
+
   // Índice: columna (sociedad / Intercompany / Consolidated) → cuenta → mes → importe
   const index = useMemo(() => {
     const idx = new Map<string, Map<string, Map<string, number>>>();
@@ -76,9 +142,9 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
 
   const accountsOf = useMemo(() => {
     const map = new Map<string, Account[]>();
-    for (const a of d?.accounts || []) map.set(a.bwa, [...(map.get(a.bwa) || []), a]);
+    for (const a of [...(d?.accounts || []), ...(page === 'datev' ? datevMap.extra : [])]) map.set(a.bwa, [...(map.get(a.bwa) || []), a]);
     return map;
-  }, [d]);
+  }, [d, page, datevMap]);
   const lineAccounts = (l: Line) => (l.formula || [l.code]).flatMap(c => accountsOf.get(c) || []);
 
   const sum = (col: string, accs: Account[], months: string[]) => {
@@ -117,6 +183,24 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
         { key: 'pdiff', label: '%', sub: 'p.p.', kind: 'pct', value: pDiff, red: (accs, l) => (pDiff(accs, l) ?? 0) < 0 },
       ];
     }
+    if (page === 'datev') {
+      const cur = ytd(year), prev = ytd(year - 1);
+      const isSales = (l: Line | null) => l?.description === SALES;
+      const salesPrev = salesLine ? datevSum(lineAccounts(salesLine)) : 0;
+      const pCur = (accs: Account[], l: Line | null) => (isSales(l) ? null : div(sum(company, accs, cur), salesOf(company, cur)));
+      const pPrev = (accs: Account[], l: Line | null) => (isSales(l) ? null : div(datevSum(accs), salesPrev));
+      const pDiff = (accs: Account[], l: Line | null) => { const a = pCur(accs, l), b = pPrev(accs, l); return a == null || b == null ? null : a - b; };
+      return [
+        { key: 'prev', label: 'Year -1 DATEV', sub: `${year - 1}`, kind: 'money', value: accs => datevSum(accs) },
+        { key: 'pprev', label: '%', kind: 'pct', value: pPrev },
+        { key: 'cur', label: 'Year', sub: `${year}`, kind: 'money', value: accs => sum(company, accs, cur), drill: { scope: company, months: cur, label: `Year (${year})` } },
+        { key: 'pcur', label: '%', kind: 'pct', value: pCur },
+        { key: 'diff', label: '€ diff.', kind: 'money', value: accs => sum(company, accs, cur) - datevSum(accs) },
+        { key: 'pdiff', label: '%', sub: 'p.p.', kind: 'pct', value: pDiff, red: (accs, l) => (pDiff(accs, l) ?? 0) < 0 },
+        { key: 'bcprev', label: 'Year -1 BC', sub: `${year - 1}`, kind: 'money', value: accs => sum(company, accs, prev), drill: { scope: company, months: prev, label: `Year -1 BC (${year - 1})` } },
+        { key: 'gap', label: 'DATEV − BC', kind: 'money', value: accs => datevSum(accs) - sum(company, accs, prev) },
+      ];
+    }
     if (page === 'monthly') {
       return [
         ...MONTHS.map((m, i) => ({ key: m, label: m, kind: 'money' as const, value: (accs: Account[]) => sum(company, accs, [ym(year, i + 1)]), drill: { scope: company, months: [ym(year, i + 1)], label: `${m} ${year}` } })),
@@ -131,11 +215,11 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
       { key: 'pconsol', label: '%', sub: 's/ Sales Rev.', kind: 'pct', value: (accs, l) => (l?.description === SALES ? null : div(sum(CONSOL, accs, cur), salesOf(CONSOL, cur))) },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d, page, year, toMonth, company, index]);
+  }, [d, page, year, toMonth, company, index, datevMap]);
 
   // Desglose abierto por cuenta (clic en el nombre = columna principal de la página; clic en un importe = ese importe)
   const [drills, setDrills] = useState<Record<string, DrillSpec>>({});
-  const mainDrillCol = page === 'annual' ? 'cur' : page === 'monthly' ? 'total' : 'consol';
+  const mainDrillCol = page === 'annual' || page === 'datev' ? 'cur' : page === 'monthly' ? 'total' : 'consol';
   const lastDay = (ymStr: string) => { const [y, m] = ymStr.split('-').map(Number); return `${ymStr}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`; };
   const openDrill = (a: Account, c: Col | undefined) => {
     if (!c?.drill || !c.drill.months.length) return;
@@ -228,7 +312,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
             {Array.from({ length: 5 }, (_, i) => now.getFullYear() - i).map(y => <option key={y} value={y}>{y}</option>)}
           </select>
         </label>
-        {(page === 'annual' || page === 'detail') && (
+        {(page === 'annual' || page === 'datev' || page === 'detail') && (
           <label className={label}>
             Hasta mes
             <select value={toMonth} onChange={e => setToMonth(Number(e.target.value))} className={select}>
@@ -236,7 +320,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
             </select>
           </label>
         )}
-        {(page === 'annual' || page === 'monthly') && (
+        {(page === 'annual' || page === 'datev' || page === 'monthly') && (
           <label className={label}>
             CRAZE Company
             <select value={company} onChange={e => setCompany(e.target.value)} className={select}>
@@ -280,6 +364,27 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
           </div>
         ) : (
           <>
+            {page === 'datev' && (
+              <div className="rpt-card bg-white rounded-xl border border-gray-200 p-4 flex flex-wrap items-center gap-4 text-sm">
+                <div className="flex-1 min-w-[300px]">
+                  <p className="font-bold text-gray-900">Year -1 desde la Jahresübersicht de DATEV · {datevCompany} {year - 1}</p>
+                  {datev.loading ? <p className="text-gray-500">Cargando…</p>
+                    : datev.file ? (
+                      <p className="text-gray-600">
+                        {datev.file.name} · enero–{MONTHS_ES[datev.file.months - 1].toLowerCase()} {datev.file.year}
+                        {datev.updatedAt && ` · subido ${new Date(datev.updatedAt).toLocaleDateString('es-ES')}`}
+                        {' · '}{datevMap.stats.exact} cuentas con el mapeo de BC, {datevMap.stats.prefix} aproximadas por cuenta parecida y {datevMap.stats.section} por apartado DATEV
+                      </p>
+                    ) : <p className="text-amber-800">Sube la Jahresübersicht de DATEV de {year - 1} para comparar.</p>}
+                  {datev.file && toMonth > datev.file.months && <p className="text-amber-800">El Excel llega hasta {MONTHS_ES[datev.file.months - 1].toLowerCase()}: Year -1 DATEV solo suma esos meses; elige "Hasta mes" {MONTHS_ES[datev.file.months - 1]} para comparar el mismo periodo.</p>}
+                  {datev.error && <p className="text-red-700">{datev.error}</p>}
+                </div>
+                <label className="cursor-pointer inline-flex items-center gap-2 bg-gray-900 text-white font-semibold px-3 py-2 rounded-lg hover:bg-black">
+                  {datev.file ? 'Sustituir Excel DATEV' : 'Cargar Excel DATEV'}
+                  <input type="file" accept=".xlsx,.xls" className="hidden" onChange={e => { uploadDatev(e.target.files?.[0]); e.target.value = ''; }} />
+                </label>
+              </div>
+            )}
             <div className="rpt-card bg-white rounded-xl border border-gray-200 overflow-x-auto">
               <table className="w-full text-[12.5px]">
                 <thead>
@@ -339,6 +444,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
               </table>
             </div>
             <p className="text-xs text-gray-500">
+              {page === 'datev' && `Year -1 = Jahresübersicht de DATEV (cuentas DATEV 602000 = BC 6020 00, con el mapeo BWA de BC; las cuentas sin mapeo se asignan como la cuenta de BC con las mismas 4 cifras o por su apartado DATEV y aparecen marcadas "DATEV"). Gastos con el signo invertido, como el BWA. "Year -1 BC" y "DATEV − BC" muestran lo que registra BC para el mismo periodo. `}
               {page === 'annual' && `Acumulado de enero a ${MONTHS_ES[toMonth - 1].toLowerCase()} de ${year} frente al mismo periodo de ${year - 1}, ${company}. % = sobre Sales Revenues; el último % es la diferencia en puntos (en rojo si baja).`}
               {page === 'monthly' && `Importe de cada mes de ${year}, ${company}.`}
               {page === 'detail' && `Acumulado de enero a ${MONTHS_ES[toMonth - 1].toLowerCase()} de ${year} por sociedad (cada una con sus movimientos de eliminación) y consolidado (sin eliminaciones).`}
