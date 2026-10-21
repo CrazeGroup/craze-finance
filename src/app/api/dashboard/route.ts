@@ -1,8 +1,12 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import prisma from '@/lib/prisma';
+import { getBcContext } from '@/lib/bcClient';
+import { payablesReport } from '@/lib/reporting/ledgers';
+import { currentMonth } from '@/lib/reporting/period';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 export async function GET() {
   try {
@@ -82,7 +86,6 @@ export async function GET() {
     let totalCarteraVencidaAprobada = 0;
     let totalRefundsProveedor = 0;
 
-    // We'll leave China empty for now until user clarification
     let totalChina = 0;
     let totalConfirmadoChina = 0;
     let totalPendienteChina = 0;
@@ -128,7 +131,25 @@ export async function GET() {
       orderBy: { month: 'desc' }
     });
 
+    // China: en directo de BC (movimientos de proveedor abiertos con forma de pago CHINA TRF del propio movimiento,
+    // importe pendiente en divisa local; confirmado = con Scheduled Payment Date), igual que el Reporting.
+    // Se guarda 1 h y se renueva en segundo plano. Si BC falla, se queda el cálculo con los datos sincronizados.
+    let chinaSource: 'bc' | 'sync' = 'sync';
+    if (companyId !== 'ALL') {
+      try {
+        const ctx = await getBcContext(companyId);
+        const { china } = await payablesReport(ctx, companyId, currentMonth());
+        totalChina = -china.total;
+        totalConfirmadoChina = -china.conf;
+        totalPendienteChina = -china.unconf;
+        chinaSource = 'bc';
+      } catch (e) {
+        console.error('Dashboard China desde BC:', e);
+      }
+    }
+
     return NextResponse.json({
+      chinaSource,
       // Cobros
       totalCarteraClientes,
       totalEnMarkant: totalMarkant,
