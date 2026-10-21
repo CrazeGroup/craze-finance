@@ -97,7 +97,8 @@ export async function commercialFacts(abbr: CompanyAbbr, year: number, force = f
   const company = COMPANIES.find(c => c.abbr === abbr)!;
   const from = `${year}-01-01`, to = `${year}-12-31`;
   const live = to >= today();
-  return cached(`commercial:facts:${abbr}:${year}`, live ? HOUR : 12 * HOUR, async () => {
+  // Años cerrados: una vez al día (la parte "hasta hoy" del mes actual cambia cada día para el año anterior)
+  return cached(`commercial:facts:${abbr}:${year}${live ? '' : `:${today()}`}`, live ? HOUR : 24 * HOUR, async () => {
     const dims = await commercialDims();
     const itemBy = new Map(dims.items.map(i => [i.no, i]));
     const groupBy = new Map(dims.groups.map(g => [g.code, g]));
