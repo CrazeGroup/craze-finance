@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, FileDown, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, FileDown, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
 
@@ -43,6 +43,7 @@ const lineKind = (d: Doc) => d.category === 'purchase'
   ? (/credit/i.test(d.documentType) ? 'purchCrMemo' : 'purchInv')
   : d.category === 'sales' ? (/credit/i.test(d.documentType) ? 'salesCrMemo' : 'salesInv') : null;
 
+type SortKey = 'company' | 'documentNo' | 'documentType' | 'date' | 'partner' | 'externalDocNo' | 'description' | 'sourceCode' | 'amount';
 const th = 'py-1.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-gray-500 whitespace-nowrap text-left';
 const td = 'py-1.5 px-2 whitespace-nowrap';
 
@@ -54,6 +55,8 @@ export default function BwaAccountDrill({ fmt, spec, onClose }: { fmt: Fmt; spec
   const [grouping, setGrouping] = useState<Grouping>('month');
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [lines, setLines] = useState<Record<string, { loading: boolean; error?: string; lines?: Line[] }>>({});
+  // Orden de la tabla de documentos (clic en la cabecera); por defecto, importe de mayor a menor en valor absoluto
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -120,13 +123,29 @@ export default function BwaAccountDrill({ fmt, spec, onClose }: { fmt: Fmt; spec
     XLSX.writeFile(wb, `BWA_${spec.account}_${spec.scope}_${spec.from}_${spec.to}.xlsx`.replace(/\s+/g, '_'));
   };
 
-  const DocTable = ({ list }: { list: Doc[] }) => (
+  const sorted = (list: Doc[]) => {
+    if (!sort) return list;
+    const { key, dir } = sort;
+    return [...list].sort((x, y) => (key === 'amount' ? x.amount - y.amount : String(x[key] || '').localeCompare(String(y[key] || ''), 'es', { numeric: true })) * dir);
+  };
+  const clickSort = (key: SortKey) => setSort(cur => (cur?.key === key ? { key, dir: cur.dir === 1 ? -1 : 1 } : { key, dir: key === 'amount' || key === 'date' ? -1 : 1 }));
+  const Th = ({ k, label, right }: { k: SortKey; label: string; right?: boolean }) => (
+    <th className={`${th} ${right ? 'text-right' : ''} cursor-pointer select-none hover:text-gray-900`} onClick={() => clickSort(k)} title="Ordenar">
+      <span className={`inline-flex items-center gap-0.5 ${right ? 'justify-end' : ''}`}>
+        {label}{sort?.key === k && (sort.dir === 1 ? <ArrowUp size={11} /> : <ArrowDown size={11} />)}
+      </span>
+    </th>
+  );
+
+  const DocTable = ({ list: unsorted }: { list: Doc[] }) => {
+    const list = sorted(unsorted);
+    return (
     <table className="w-full text-[12px] bg-white border border-gray-200 rounded-lg">
       <thead><tr className="border-b border-gray-200">
         <th className={th} />
-        {multiCompany && <th className={th}>Sociedad</th>}
-        <th className={th}>Document No.</th><th className={th}>Tipo</th><th className={th}>Fecha</th><th className={th}>Proveedor / cliente</th>
-        <th className={th}>Nº doc. externo</th><th className={th}>Descripción</th><th className={th}>Origen</th><th className={`${th} text-right`}>Importe</th>
+        {multiCompany && <Th k="company" label="Sociedad" />}
+        <Th k="documentNo" label="Document No." /><Th k="documentType" label="Tipo" /><Th k="date" label="Fecha" /><Th k="partner" label="Proveedor / cliente" />
+        <Th k="externalDocNo" label="Nº doc. externo" /><Th k="description" label="Descripción" /><Th k="sourceCode" label="Origen" /><Th k="amount" label="Importe" right />
       </tr></thead>
       <tbody>
         {list.map(d => (
@@ -201,7 +220,8 @@ export default function BwaAccountDrill({ fmt, spec, onClose }: { fmt: Fmt; spec
         ))}
       </tbody>
     </table>
-  );
+    );
+  };
 
   return (
     <div className="bg-[#F8F9FB] border-l-4 border-[#C8186C] p-4 space-y-3 whitespace-normal">
