@@ -1,7 +1,11 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
+import { syncFromBc } from '@/lib/syncClient';
 import { RefreshCcw, CheckCircle, ChevronDown, ChevronRight, FileText, CheckCircle2, XCircle, Clock } from 'lucide-react';
+
+// Empresa activa (cookie que escribe CompanyContext)
+const getSelectedCompany = () => decodeURIComponent(document.cookie.match(/(?:^|; )craze_selected_company=([^;]*)/)?.[1] || 'CRAZE');
 
 export default function PagosPage() {
   const [rawInvoices, setRawInvoices] = useState<any[]>([]);
@@ -42,12 +46,10 @@ export default function PagosPage() {
   const handleSync = async () => {
     setSyncing(true);
     try {
-      const res = await fetch('/api/sync-bc', { method: 'POST' });
-      if (res.ok) {
-        await fetchInvoices();
-      } else {
-        console.error('Sync failed');
-      }
+      // Paso a paso por empresa (una sola llamada con todo pasa del límite de 60 s de Vercel)
+      const errors = await syncFromBc(getSelectedCompany());
+      if (errors.length) console.error('Sync errors', errors);
+      await fetchInvoices();
     } catch (error) {
       console.error('Failed to sync', error);
     } finally {

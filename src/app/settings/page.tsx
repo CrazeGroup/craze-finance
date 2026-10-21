@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { SYNC_STEPS } from '@/lib/syncSteps';
 import * as XLSX from 'xlsx';
 import { Settings, Upload, Save, Database, Key, Mail } from 'lucide-react';
 
@@ -88,12 +89,7 @@ export default function SettingsPage() {
 
     try {
       for (const comp of companiesToSync) {
-        const steps = [
-          { key: 'customers', label: 'Clientes' },
-          { key: 'invoices', label: 'Facturas' },
-          { key: 'vendors', label: 'Proveedores' },
-          { key: 'vendorInvoices', label: 'Fact. Proveedores' }
-        ];
+        const steps = SYNC_STEPS;
 
         for (const step of steps) {
           setMessage(`Sincronizando ${comp} (${step.label})... Por favor espera.`);

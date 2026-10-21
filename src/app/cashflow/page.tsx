@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Save, X, ChevronRight, ChevronDown, Download, Upload, Archive, Send, Briefcase, Calendar, Search, MailCheck } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useCompany } from '@/contexts/CompanyContext';
+import { syncFromBc } from '@/lib/syncClient';
 
 export default function CashflowPage() {
   const { selectedCompany } = useCompany();
@@ -125,7 +126,7 @@ export default function CashflowPage() {
     try {
       setSyncing(true);
       // Trigger a BC sync to get the latest invoices
-      await fetch('/api/sync-bc', { method: 'POST' });
+      await syncFromBc(selectedCompany);
       // Then refetch the cashflow
       await fetchCashflow();
     } catch (error) {

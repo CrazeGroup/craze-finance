@@ -4,28 +4,51 @@ import { useEffect, useState } from 'react';
 import { 
   Banknote, AlertCircle, TrendingDown, ArrowUpRight, 
   ArrowDownRight, CheckCircle2, Clock, Globe2, 
-  ShoppingCart, Landmark, Wallet, Undo2, PackageSearch
+  ShoppingCart, Landmark, Wallet, Undo2, PackageSearch, RefreshCw
 } from 'lucide-react';
 import Link from 'next/link';
+import { useCompany } from '@/contexts/CompanyContext';
+import { syncFromBc } from '@/lib/syncClient';
 
 export default function Dashboard() {
   const [kpis, setKpis] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const { selectedCompany } = useCompany();
+  const [syncing, setSyncing] = useState<string | null>(null);
+  const [syncErrors, setSyncErrors] = useState<string[]>([]);
+  const [lastSync, setLastSync] = useState<Record<string, string>>({});
 
-  useEffect(() => {
-    const fetchKpis = async () => {
-      try {
-        const res = await fetch('/api/dashboard', { cache: 'no-store' });
-        const data = await res.json();
-        setKpis(data);
-      } catch (error) {
-        console.error('Failed to fetch KPIs', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchKpis();
-  }, []);
+  const fetchKpis = async (force = false) => {
+    try {
+      const [res, last] = await Promise.all([
+        fetch(`/api/dashboard${force ? '?force=1' : ''}`, { cache: 'no-store' }),
+        fetch('/api/sync-bc', { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
+      ]);
+      setKpis(await res.json());
+      setLastSync(last || {});
+    } catch (error) {
+      console.error('Failed to fetch KPIs', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { fetchKpis(); }, [selectedCompany]);
+
+  // Actualizar en vivo: sincroniza con BC la empresa activa (todas en "ALL") paso a paso y recarga las cifras
+  const syncNow = async () => {
+    setSyncErrors([]);
+    const errors = await syncFromBc(selectedCompany, setSyncing);
+    setSyncing('Recalculando el dashboard…');
+    await fetchKpis(true);
+    setSyncErrors(errors);
+    setSyncing(null);
+  };
+  const lastIso = selectedCompany === 'ALL' ? Object.values(lastSync).sort()[0] : lastSync[selectedCompany];
+  const ago = (iso?: string) => {
+    if (!iso) return 'nunca';
+    const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    return min < 1 ? 'hace menos de 1 min' : min < 60 ? `hace ${min} min` : min < 48 * 60 ? `hace ${Math.round(min / 60)} h` : new Date(iso).toLocaleString('es-ES');
+  };
 
   const formatCurrency = (val: number, currencyCode: string = 'EUR') => {
     return new Intl.NumberFormat('es-ES', { style: 'currency', currency: currencyCode }).format(val || 0);
@@ -59,12 +82,28 @@ export default function Dashboard() {
     <div className="min-h-screen p-8 pb-32 overflow-y-auto">
       <div className="w-full space-y-12">
         
-        <header>
-          <h1 className="text-4xl font-black text-black tracking-tight">
-            Dashboard Contable
-          </h1>
-          <p className="text-gray-500 mt-2 font-medium">Visión global de cobros, pagos y métricas financieras.</p>
+        <header className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h1 className="text-4xl font-black text-black tracking-tight">
+              Dashboard Contable
+            </h1>
+            <p className="text-gray-500 mt-2 font-medium">Visión global de cobros, pagos y métricas financieras.</p>
+          </div>
+          <div className="text-right">
+            <button onClick={syncNow} disabled={!!syncing}
+              className="inline-flex items-center gap-2 bg-black text-white text-sm font-semibold px-4 py-2.5 rounded-lg hover:bg-gray-800 disabled:opacity-60">
+              <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} /> {syncing ? 'Actualizando…' : 'Actualizar desde BC'}
+            </button>
+            <p className="text-xs text-gray-500 mt-1.5">
+              {syncing || `Última sincronización: ${ago(lastIso)} · automática cada hora`}
+            </p>
+          </div>
         </header>
+        {syncErrors.length > 0 && (
+          <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            Algunos pasos no se han podido sincronizar: {syncErrors.join(' · ')}
+          </div>
+        )}
 
         {loading ? (
           <div className="flex justify-center items-center h-64">

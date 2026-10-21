@@ -8,7 +8,8 @@ import { currentMonth } from '@/lib/reporting/period';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-export async function GET() {
+export async function GET(req: Request) {
+  const force = new URL(req.url).searchParams.get('force') === '1';
   try {
     const cookieStore = await cookies();
     const companyId = cookieStore.get('craze_selected_company')?.value || 'CRAZE';
@@ -138,7 +139,7 @@ export async function GET() {
     if (companyId !== 'ALL') {
       try {
         const ctx = await getBcContext(companyId);
-        const { china } = await payablesReport(ctx, companyId, currentMonth());
+        const { china } = await payablesReport(ctx, companyId, currentMonth(), force);
         totalChina = -china.total;
         totalConfirmadoChina = -china.conf;
         totalPendienteChina = -china.unconf;
