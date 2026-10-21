@@ -106,6 +106,9 @@ export async function commercialFacts(abbr: CompanyAbbr, year: number, force = f
     const cutDay = Number(today().substring(8, 10));
     const cutMonth = Number(today().substring(5, 7));
     const warnings: string[] = [];
+    // Presupuesto y forecast solo de GmbH y UK (el Power BI combina budgetUnits_GmbH/_UK y forecastUnits_GmbH/_UK)
+    const plans = abbr === 'GmbH' || abbr === 'UK';
+    const none = Promise.resolve([] as any[]);
     const safe = <T,>(label: string, p: Promise<T[]>) => p.catch((e: any) => { warnings.push(`${label}: ${String(e.message).substring(0, 160)}`); return [] as T[]; });
 
     const [lm, salesLines, customers, bItems, bUnits, fItems, fUnits, fx] = await Promise.all([
@@ -118,10 +121,10 @@ export async function commercialFacts(abbr: CompanyAbbr, year: number, force = f
         $select: 'Document_Type,Sell_to_Customer_No,No,Quantity,Outstanding_Quantity,Line_Amount,Shipment_Date',
       }), ctx.token)) : Promise.resolve([] as any[]),
       safe('Clientes', bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Customer_Card_Excel`, { $select: 'No,Country_Region_Code,Customer_Group_Code_CRZ,Currency_Code' }), ctx.token)),
-      safe('Presupuesto', bcFetchAll(odataUrl(`${ctx.customApiBase}/budgetItems`, { $filter: `postingDate ge ${from} and postingDate le ${to}` }), ctx.token)),
-      safe('Presupuesto (uds.)', bcFetchAll(odataUrl(`${ctx.customApiBase}/budgetUnits`, { $filter: `postingDate ge ${from} and postingDate le ${to}` }), ctx.token)),
-      safe('Forecast', bcFetchAll(odataUrl(`${ctx.customApiBase}/forecastItems`, { $filter: `postingDate ge ${from} and postingDate le ${to}` }), ctx.token)),
-      safe('Forecast (uds.)', bcFetchAll(odataUrl(`${ctx.customApiBase}/forecastUnits`, { $filter: `postingDate ge ${from} and postingDate le ${to}` }), ctx.token)),
+      plans ? safe('Presupuesto', bcFetchAll(odataUrl(`${ctx.customApiBase}/budgetItems`, { $filter: `postingDate ge ${from} and postingDate le ${to}` }), ctx.token)) : none,
+      plans ? safe('Presupuesto (uds.)', bcFetchAll(odataUrl(`${ctx.customApiBase}/budgetUnits`, { $filter: `postingDate ge ${from} and postingDate le ${to}` }), ctx.token)) : none,
+      plans ? safe('Forecast', bcFetchAll(odataUrl(`${ctx.customApiBase}/forecastItems`, { $filter: `postingDate ge ${from} and postingDate le ${to}` }), ctx.token)) : none,
+      plans ? safe('Forecast (uds.)', bcFetchAll(odataUrl(`${ctx.customApiBase}/forecastUnits`, { $filter: `postingDate ge ${from} and postingDate le ${to}` }), ctx.token)) : none,
       rateToEur(ctx, company.currency),
     ]);
     const custBy = new Map(customers.map((c: any) => [s(c.No), { country: s(c.Country_Region_Code), group: s(c.Customer_Group_Code_CRZ) }]));
