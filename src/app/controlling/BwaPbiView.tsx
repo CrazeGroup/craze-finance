@@ -177,9 +177,13 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
     XLSX.writeFile(wb, `BWA_${page}_${page === 'detail' ? 'empresas' : company}_${year}${page === 'monthly' ? '' : `_hasta_${toMonth}`}.xlsx`.replace(/\s+/g, '_'));
   };
 
-  // Annual: principales desviaciones frente al año anterior (líneas BWA con más diferencia y sus cuentas)
+  // Annual y Annual - Detail: principales desviaciones frente al año anterior (líneas BWA con más diferencia, sus cuentas
+  // y, en Detail, qué sociedades la explican). Annual: empresa elegida; Detail: consolidado.
+  const devScope = page === 'detail' ? CONSOL : company;
+  const devDrillCol = page === 'detail' ? 'consol' : 'cur';
   const deviations = (() => {
-    if (!d || page !== 'annual') return null;
+    if (!d || (page !== 'annual' && page !== 'detail')) return null;
+    const company = devScope;
     const cur = ytd(year), prev = ytd(year - 1);
     const salesCur = salesOf(company, cur), salesPrev = salesOf(company, prev);
     const lines = d.lines.filter(l => !l.formula).map(l => {
@@ -188,7 +192,12 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
       const accounts = accs.map(a => ({ a, cur: sum(company, [a], cur), prev: sum(company, [a], prev) }))
         .map(x => ({ ...x, diff: x.cur - x.prev })).filter(x => Math.abs(x.diff) >= 1)
         .sort((x, y) => Math.abs(y.diff) - Math.abs(x.diff));
-      return { l, cur: vCur, prev: vPrev, diff: vCur - vPrev, pp: salesCur && salesPrev ? vCur / salesCur - vPrev / salesPrev : null, accounts };
+      // Por sociedad (cada una con sus movimientos, como las columnas de Detail) e Intercompany
+      const byCompany = page === 'detail'
+        ? [...d.companies, INTERCO].map(c => ({ c, diff: sum(c === INTERCO ? INTERCO : c, accs, cur) - sum(c === INTERCO ? INTERCO : c, accs, prev) }))
+          .filter(x => Math.abs(x.diff) >= 1).sort((x, y) => Math.abs(y.diff) - Math.abs(x.diff))
+        : [];
+      return { l, cur: vCur, prev: vPrev, diff: vCur - vPrev, pp: salesCur && salesPrev ? vCur / salesCur - vPrev / salesPrev : null, accounts, byCompany };
     }).filter(x => Math.abs(x.diff) >= 1).sort((x, y) => Math.abs(y.diff) - Math.abs(x.diff));
     // Las 6 líneas con más diferencia y las cuentas que explican la mayor parte (hasta 4)
     return lines.slice(0, 6).map(x => ({ ...x, accounts: x.accounts.slice(0, 4) }));
@@ -339,7 +348,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
               <div className="rpt-card bg-white rounded-xl border border-gray-200 p-5">
                 <p className="text-xs font-bold uppercase tracking-widest text-[#C8186C] mb-1">Principales desviaciones · {year} vs {year - 1}</p>
                 <p className="text-xs text-gray-500 mb-4">
-                  Enero a {MONTHS_ES[toMonth - 1].toLowerCase()}, {company}. Las 6 partidas con más diferencia en euros y las cuentas que más la explican.
+                  Enero a {MONTHS_ES[toMonth - 1].toLowerCase()}, {devScope}. Las 6 partidas con más diferencia en euros, las cuentas que más la explican{page === 'detail' ? ' y la variación de cada sociedad (cada una con sus eliminaciones, como sus columnas; consolidado = suma de sociedades − Intercompany)' : ''}.
                   En verde mejora el resultado (más ingreso o menos gasto), en rojo lo empeora. Haz clic en una cuenta para ver su desglose en la tabla.
                 </p>
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -357,7 +366,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
                         <tbody>
                           {x.accounts.map(c => (
                             <tr key={c.a.account} className="border-t border-gray-200/70 cursor-pointer hover:bg-white"
-                              onClick={() => { setOpen(o => ({ ...o, [x.l.code]: true })); openDrill(c.a, columns.find(col => col.key === 'cur')); }}
+                              onClick={() => { setOpen(o => ({ ...o, [x.l.code]: true })); openDrill(c.a, columns.find(col => col.key === devDrillCol)); }}
                               title="Ver el desglose de esta cuenta en la tabla">
                               <td className="py-1 pr-2 text-gray-700"><span className="tabular-nums text-gray-500 mr-1.5">{c.a.account}</span>{c.a.description}</td>
                               <td className={`py-1 text-right tabular-nums whitespace-nowrap font-semibold ${tone(c.diff)}`}>{c.diff > 0 ? '+' : ''}{num(c.diff, 0)}</td>
@@ -366,6 +375,19 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
                           ))}
                         </tbody>
                       </table>
+                      {x.byCompany.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-gray-200/70">
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">Por sociedad</p>
+                          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12px]">
+                            {x.byCompany.map(b => (
+                              <span key={b.c} className="whitespace-nowrap">
+                                <span className="text-gray-600">{b.c === INTERCO ? 'Intercompany' : b.c}</span>{' '}
+                                <span className={`font-semibold tabular-nums ${tone(b.diff)}`}>{b.diff > 0 ? '+' : ''}{num(b.diff, 0)}</span>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
