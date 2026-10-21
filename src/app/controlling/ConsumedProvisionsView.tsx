@@ -371,7 +371,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                                     </tr>
                                   </tbody>
                                 </table>
-                                {g.cancelledPairs > 0 && <p className="text-xs text-gray-500 mt-2">No se muestran {g.cancelledPairs} facturas con su abono que se anulan (mismo proveedor, fecha, concepto e importe).</p>}
+                                {g.cancelledPairs > 0 && <p className="text-xs text-gray-500 mt-2">No se muestran {g.cancelledPairs} facturas anuladas por su abono (abono aplicado a la factura en BC, o mismo proveedor, fecha, concepto e importe); cada pareja suma 0.</p>}
                               </td>
                             </tr>
                           )}

@@ -2,6 +2,7 @@ import { bcFetchAll, BcContext, odataUrl } from '@/lib/bcClient';
 import { cached, HOUR } from '@/lib/reporting/cache';
 import { today } from '@/lib/reporting/period';
 import { findService } from '@/lib/royalties';
+import { hiddenByPairs, vendorCancelPairs } from './cancelledDocs';
 
 // Controlling · Consumed Provisions, entre dos fechas de registro:
 // - Provisionado: asientos PROV* del periodo en las cuentas de resultados de cada provisión (PROVISION_ACCOUNTS: 4769 02,
@@ -103,8 +104,8 @@ async function generated(ctx: BcContext, from: string, to: string) {
 }
 
 export async function consumedProvisionsReport(ctx: BcContext, company: string, from: string, to: string, force = false) {
-  return cached(`ctrl:consumedProv14:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
-    const [gen, entries, vendors, provEntries, customerGroups] = await Promise.all([
+  return cached(`ctrl:consumedProv15:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
+    const [gen, entries, vendors, provEntries, customerGroups, cancelPairs] = await Promise.all([
       generated(ctx, from, to),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
         $filter: `Posting_Date ge ${from} and Posting_Date le ${to} and (${ACCOUNTS.map(a => `G_L_Account_No eq '${a}'`).join(' or ')})`,
@@ -117,6 +118,8 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
       }), ctx.token),
       // Nombres de los Customer Groups (API custom customerGroups)
       bcFetchAll(odataUrl(`${ctx.customApiBase}/customerGroups`, { $select: 'code,description' }), ctx.token).catch(() => [] as any[]),
+      // Abonos que anulan una factura entera (para no listar la pareja)
+      vendorCancelPairs(ctx, from, to).catch(() => []),
     ]);
     // Provisionado por concepto y mes (cuentas de resultados)
     const booked: Record<Key, number> = { conditions: 0, kam: 0, royalties: 0, marketing: 0, amazon: 0 };
@@ -215,12 +218,16 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
     }
 
     const concepts = CONCEPTS.map(c => {
-      const list = c.account ? docs.filter(d => Math.abs(d.byAccount[c.account] || 0) >= 0.005) : [];
-      const consumed = r2(list.reduce((s, d) => s + (d.byAccount[c.account] || 0), 0));
+      const all = c.account ? docs.filter(d => Math.abs(d.byAccount[c.account] || 0) >= 0.005) : [];
+      const consumed = r2(all.reduce((s, d) => s + (d.byAccount[c.account] || 0), 0));
+      // Factura + abono que la anula entera (los dos en esta cuenta y sumando 0): no se listan; el consumido no cambia
+      const hidden = hiddenByPairs(cancelPairs, new Map(all.map(d => [d.documentNo, d.byAccount[c.account] || 0])));
+      const list = all.filter(d => !hidden.has(d.documentNo));
       const provision = r2(booked[c.key]);
       return {
         ...c, provision, lm: r2(gen[c.key]), consumed: c.account ? consumed : null, pending: r2(provision - (c.account ? consumed : 0)),   // sin cuenta de consumo (KAM): todo pendiente
         docs: list.map(d => ({ ...d, amount: d.byAccount[c.account] })).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)),
+        cancelledPairs: hidden.size / 2,
       };
     });
     // Consumido por mes (fecha de cada movimiento) para comparar con lo generado
@@ -325,8 +332,16 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
       const memos = new Map<string, GroupDoc[]>();
       for (const x of docs) if (x.type === 'Credit Memo') memos.set(pairKey(x), [...(memos.get(pairKey(x)) || []), x]);
       const hidden = new Set<GroupDoc>();
+      // Primero las parejas de BC (abono aplicado a la factura que anula), luego la coincidencia por importe y fecha
+      const byNo = new Map(docs.filter(x => x.documentNo).map(x => [`${x.concept}|${x.documentNo}`, x]));
+      for (const p of cancelPairs) {
+        for (const c of CONCEPTS) {
+          const a = byNo.get(`${c.key}|${p.invoice}`), b = byNo.get(`${c.key}|${p.creditMemo}`);
+          if (a && b && !hidden.has(a) && !hidden.has(b) && Math.abs(a.amount + b.amount) < 0.05) { hidden.add(a); hidden.add(b); }
+        }
+      }
       for (const x of docs) {
-        if (x.type !== 'Invoice') continue;
+        if (x.type !== 'Invoice' || hidden.has(x)) continue;
         const m = memos.get(pairKey(x));
         const y = m?.find(c => !hidden.has(c) && Math.abs(c.amount + x.amount) < 0.005);
         if (y) { hidden.add(x); hidden.add(y); }

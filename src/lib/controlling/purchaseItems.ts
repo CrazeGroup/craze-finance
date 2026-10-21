@@ -1,4 +1,5 @@
 import { bcFetchAll, BcContext, odataUrl } from '@/lib/bcClient';
+import { hiddenByPairs, vendorCancelPairs } from './cancelledDocs';
 import { cached, HOUR } from '@/lib/reporting/cache';
 import { today } from '@/lib/reporting/period';
 
@@ -66,7 +67,7 @@ export async function probeSources(ctx: BcContext, from: string, to: string) {
 }
 
 export async function purchaseItemsReport(ctx: BcContext, company: string, from: string, to: string, force = false) {
-  return cached(`ctrl:purchItems3:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
+  return cached(`ctrl:purchItems4:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
     const warnings: string[] = [];
     const cm = await creditMemoServices(ctx);
     const dateFilter = (f: string) => `${f} ge ${from} and ${f} le ${to}`;
@@ -139,7 +140,7 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
 
     // Líneas normalizadas (abonos con importe y cantidad en negativo)
     type Line = Doc & { item: string; desc: string; vendor: string };
-    const lines: Line[] = [];
+    let lines: Line[] = [];
     for (const l of invLines) {
       if (str(l.type) !== 'Item' || !str(l.no) || isInventory(str(l.no))) continue;
       const h = invHeaderBy.get(str(l.documentNo));
@@ -200,6 +201,19 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
       });
     }
 
+    // Factura + abono que la anula entera (mismo artículo y proveedor, suman 0): no se muestran
+    const pairs = await vendorCancelPairs(ctx, from, to).catch(() => []);
+    const amountsByItemVendor = new Map<string, Map<string, number>>();
+    for (const l of lines) {
+      const k = `${l.item}|${l.vendor}`;
+      const m = amountsByItemVendor.get(k) || new Map<string, number>();
+      m.set(l.documentNo, (m.get(l.documentNo) || 0) + l.amount);
+      amountsByItemVendor.set(k, m);
+    }
+    const hiddenByItemVendor = new Map(Array.from(amountsByItemVendor.entries()).map(([k, m]) => [k, hiddenByPairs(pairs, m)]));
+    const cancelledPairs = Array.from(hiddenByItemVendor.values()).reduce((t, h) => t + h.size / 2, 0);
+    lines = lines.filter(l => !hiddenByItemVendor.get(`${l.item}|${l.vendor}`)?.has(l.documentNo));
+
     // Artículo → proveedor → documentos
     const byItem = new Map<string, Map<string, Line[]>>();
     for (const l of lines) {
@@ -239,7 +253,7 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
     }).filter(i => i.vendors.length).sort((a, b) => b.net - a.net);
 
     return {
-      company, from, to, items: out, excludedZero, excludedEqual, warnings,
+      company, from, to, items: out, excludedZero, excludedEqual, cancelledPairs, warnings,
       counts: { invoiceLines: lines.filter(l => l.kind === 'Factura').length, creditMemoLines: lines.filter(l => l.kind === 'Abono').length, glEntries: gl.length },
       creditMemoService: cm.header ? { header: cm.header, lines: cm.lines } : null,
     };

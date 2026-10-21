@@ -51,7 +51,7 @@ export type DrillSpec = { account: string; accountName: string; scope: string; f
 
 export default function BwaAccountDrill({ fmt, spec, onClose }: { fmt: Fmt; spec: DrillSpec; onClose: () => void }) {
   const { num, date } = fmt;
-  const [state, setState] = useState<{ entries: Entry[]; warnings: string[]; loading: boolean; error: string | null }>({ entries: [], warnings: [], loading: true, error: null });
+  const [state, setState] = useState<{ entries: Entry[]; warnings: string[]; cancelled?: number; loading: boolean; error: string | null }>({ entries: [], warnings: [], loading: true, error: null });
   const [grouping, setGrouping] = useState<Grouping>('month');
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [lines, setLines] = useState<Record<string, { loading: boolean; error?: string; lines?: Line[] }>>({});
@@ -67,7 +67,7 @@ export default function BwaAccountDrill({ fmt, spec, onClose }: { fmt: Fmt; spec
       .then(async res => {
         const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
         if (cancelled) return;
-        setState(res.ok && !data.error ? { entries: data.entries, warnings: data.warnings || [], loading: false, error: null } : { entries: [], warnings: [], loading: false, error: data.error || `HTTP ${res.status}` });
+        setState(res.ok && !data.error ? { entries: data.entries, warnings: data.warnings || [], cancelled: data.cancelledPairs || 0, loading: false, error: null } : { entries: [], warnings: [], loading: false, error: data.error || `HTTP ${res.status}` });
       })
       .catch(err => !cancelled && setState({ entries: [], warnings: [], loading: false, error: err.message }));
     return () => { cancelled = true; };
@@ -239,6 +239,7 @@ export default function BwaAccountDrill({ fmt, spec, onClose }: { fmt: Fmt; spec
           <button onClick={onClose} title="Cerrar desglose" className="p-1.5 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900"><X size={15} /></button>
         </div>
       </div>
+      {!!state.cancelled && <p className="text-xs text-gray-500">{state.cancelled} {state.cancelled === 1 ? 'factura anulada por su abono no se muestra' : 'facturas anuladas por su abono no se muestran'} (cada pareja suma 0; el total no cambia).</p>}
       {state.warnings.map(w => <p key={w} className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">{w}</p>)}
       {state.error ? <p className="text-sm text-red-700">{state.error}</p>
         : state.loading ? <p className="text-sm text-gray-500">Leyendo los movimientos de {spec.account} en Business Central…</p>

@@ -1,6 +1,7 @@
 import { bcFetchAll, BcContext, getBcContext, odataUrl } from '@/lib/bcClient';
 import { cached, HOUR } from '@/lib/reporting/cache';
 import { today } from '@/lib/reporting/period';
+import { hiddenByPairs, vendorCancelPairs } from './cancelledDocs';
 
 // Controlling · BWA (Power BI): desglose de una cuenta de mapeo (gLAccountNo2) hasta documento y artículo.
 // 1. glEntriesUnion (API custom en CRAZE, todas las sociedades): movimientos de la cuenta de mapeo en el periodo, con
@@ -40,7 +41,7 @@ async function partnerNames(ctx: BcContext) {
 
 // scope: nombre de sociedad (todos sus movimientos), CRAZE Intercompany (eliminación) o CRAZE Consolidated (el resto)
 export async function bwaAccountDetail(account2: string, scope: string, from: string, to: string, force = false) {
-  const key = `bwa-detail:${account2}:${scope}:${from}:${to}`;
+  const key = `bwa-detail2:${account2}:${scope}:${from}:${to}`;
   return cached(key, to < today() ? 12 * HOUR : HOUR, async () => {
     const crz = await getBcContext('CRAZE');
     const [union, currencies] = await Promise.all([
@@ -60,27 +61,36 @@ export async function bwaAccountDetail(account2: string, scope: string, from: st
     for (const e of rows) byCompany.set(s(e.company), [...(byCompany.get(s(e.company)) || []), e]);
     const warnings: string[] = [];
     const entries: DetailEntry[] = [];
+    let cancelled = 0;
     await Promise.all(Array.from(byCompany.entries()).map(async ([company, list]) => {
       const fx = company.includes('UK') ? rates.GBP : company.includes('AG') ? rates.CHF : null;
       const eur = (e: any) => -(fx ? Math.round(n(e.amount) * fx * 100) / 100 : n(e.amountLCY));
       let gl = new Map<number, any>();
       let names: Record<string, Record<string, string>> = {};
+      let hidden = new Set<string>();
       try {
         const ctx = await getBcContext(company);
         const accounts = Array.from(new Set(list.map(e => s(e.gLAccountNo))));
-        const [glRows, partners] = await Promise.all([
+        const [glRows, partners, pairs] = await Promise.all([
           bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
             $filter: `Posting_Date ge ${from} and Posting_Date le ${to} and (${accounts.map(a => `G_L_Account_No eq '${q(a)}'`).join(' or ')})`,
             $select: 'Entry_No,Document_Type,Document_No,Description,Source_Type,Source_No,Source_Code,External_Document_No,Bal_Account_No',
           }), ctx.token),
           partnerNames(ctx),
+          vendorCancelPairs(ctx, from, to).catch(() => []),
         ]);
         gl = new Map(glRows.map((g: any) => [n(g.Entry_No), g]));
         names = partners;
+        // Factura + abono que la anula entera (los dos en esta cuenta y sumando 0): no se muestran
+        const byDoc = new Map<string, number>();
+        for (const e of list) byDoc.set(s(e.documentNo), (byDoc.get(s(e.documentNo)) || 0) + eur(e));
+        hidden = hiddenByPairs(pairs, byDoc);
+        cancelled += hidden.size / 2;
       } catch (e: any) {
         warnings.push(`${company}: no se ha podido leer el detalle de sus movimientos (${e.message}). Se muestran solo nº de documento e importe.`);
       }
       for (const e of list) {
+        if (hidden.has(s(e.documentNo))) continue;
         const g = gl.get(n(e.entryNo));
         const sourceType = s(g?.Source_Type);
         const sourceNo = s(g?.Source_No);
@@ -94,7 +104,7 @@ export async function bwaAccountDetail(account2: string, scope: string, from: st
       }
     }));
     entries.sort((a, b) => a.date.localeCompare(b.date) || a.entryNo - b.entryNo);
-    return { account: account2, scope, from, to, entries, warnings };
+    return { account: account2, scope, from, to, entries, warnings, cancelledPairs: cancelled };
   }, force);
 }
 
