@@ -39,8 +39,9 @@ export async function commercialDims(force = false): Promise<Dims> {
   return cached('commercial:dims', 6 * HOUR, async () => {
     const ctx = await getBcContext('CRAZE');
     const [items, groups, kamGroups, kams, dims] = await Promise.all([
-      bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Item_Card_Excel`, {
-        $select: 'No,Description,GTIN,AIT_Raw_Article,AIT_Item_to_Root,AIT_Item_to_Root_Units,Product_Line_CRZ,License_CRZ,Royalty_Code_CRZ,Business_Unit_CRZ',
+      // API custom items (la página Item_Card_Excel tarda más de 30 s)
+      bcFetchAll(odataUrl(`${ctx.customApiBase}/items`, {
+        $select: 'no,description,gtin,rawArticle,itemToRoot,itemToRootUnits,line,license,businessUnit',
       }), ctx.token, 55_000),
       bcFetchAll(odataUrl(`${ctx.customApiBase}/customerGroups`, { $select: 'code,description,customerDimensionCode,salespersonCode' }), ctx.token),
       bcFetchAll(odataUrl(`${ctx.customApiBase}/salesperonCustomerGroups`, { $select: 'customerGroupCode,code,businessUnitCode' }), ctx.token).catch(() => [] as any[]),
@@ -48,11 +49,11 @@ export async function commercialDims(force = false): Promise<Dims> {
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Dimension_Values_Excel`, { $select: 'Dimension_Code,Code,Name' }), ctx.token).catch(() => [] as any[]),
     ]);
     const list: Item[] = items
-      .filter((i: any) => s(i.Product_Line_CRZ) && s(i.Business_Unit_CRZ) !== 'PUBLISHING')
+      .filter((i: any) => s(i.line) && s(i.businessUnit) !== 'PUBLISHING')
       .map((i: any) => ({
-        no: s(i.No), desc: s(i.Description), raw: s(i.AIT_Raw_Article), root: s(i.AIT_Item_to_Root),
-        rootUnits: n(i.AIT_Item_to_Root_Units) || 1, line: s(i.Product_Line_CRZ), license: s(i.License_CRZ),
-        royalty: s(i.Royalty_Code_CRZ), bu: s(i.Business_Unit_CRZ), gtin: s(i.GTIN),
+        no: s(i.no), desc: s(i.description), raw: s(i.rawArticle), root: s(i.itemToRoot),
+        rootUnits: n(i.itemToRootUnits) || 1, line: s(i.line), license: s(i.license),
+        royalty: '', bu: s(i.businessUnit), gtin: s(i.gtin),
       }));
     // Descripción del artículo base: la del artículo con ese nº (o nº + DE / EN), como Distinct_ArtNo del Power BI
     const byNo = new Map(list.map(i => [i.no, i.desc]));
@@ -109,7 +110,7 @@ export async function commercialFacts(abbr: CompanyAbbr, year: number, force = f
     const [lm, salesLines, customers, bItems, bUnits, fItems, fUnits, fx] = await Promise.all([
       safe('Facturado (LM)', bcFetchAll(odataUrl(`${ctx.customApiBase}/documentsLMComponents`, {
         $filter: `postingDate ge ${from} and postingDate le ${to}`,
-        $select: 'postingDate,sellToCustomerNo,no,quantity,lineAmount,lineAmountLCY,lineAmountEUR,component,mainItemCRZ,shipToCountryRegionCode,customerGroupCode,productLineCode',
+        $select: 'postingDate,sellToCustomerNo,no,quantity,lineAmount,lineAmountLCY,lineAmountEUR,component,mainItemCRZ,shipToCountryRegionCode,customerGroupCode,productLineCode,royaltyCode',
       }), ctx.token, 55_000)),
       live ? safe('Pedidos abiertos', bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Sales_Lines_Excel`, {
         $filter: `Document_Type ne 'Invoice' and Type eq 'Item'`,
@@ -142,7 +143,10 @@ export async function commercialFacts(abbr: CompanyAbbr, year: number, force = f
     };
     const I = (k: typeof MEASURES[number]) => MEASURES.indexOf(k);
 
+    // Royalty Code de cada artículo (de la LM; la API de artículos no lo publica)
+    const itemRoyalty: Record<string, string> = {};
     for (const l of lm) {
+      if (s(l.royaltyCode) && !itemRoyalty[s(l.no)]) itemRoyalty[s(l.no)] = s(l.royaltyCode);
       const date = d10(l.postingDate);
       if (!s(l.productLineCode)) continue;
       const cls = l.component ? 2 : l.mainItemCRZ ? 1 : 0;
@@ -180,6 +184,7 @@ export async function commercialFacts(abbr: CompanyAbbr, year: number, force = f
     return {
       company: abbr, currency: company.currency, year, cutoff: today(),
       rows: Array.from(rows.values()).map(r => r.map((v, i) => (i >= 8 ? Math.round((v as number) * 100) / 100 : v))),
+      itemRoyalty,
       counts: { lm: lm.length, salesLines: salesLines.length, budget: bItems.length, forecast: fItems.length },
       warnings,
     };
