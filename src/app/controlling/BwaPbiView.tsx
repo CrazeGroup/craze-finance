@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, FileDown, RefreshCw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
 import { ErrorBox, Loading, Section } from '../reporting/ui';
+import BwaAccountDrill, { type DrillSpec } from './BwaAccountDrill';
 
 // Controlling · BWA (Power BI): las páginas del Power BI "BWA" (Annual, Monthly, Annual - Detail, Exchg_Cur) leídas de
 // BC en vivo. Filas = líneas BWA, desplegables por nivel (cuenta de mapeo); columnas según la página.
@@ -97,7 +98,8 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
   const div = (a: number, b: number) => (b ? a / b : null);
 
   // ---------- Definición de columnas de cada página ----------
-  type Col = { key: string; label: string; sub?: string; value: (accs: Account[], line: Line | null) => number | null; kind: 'money' | 'pct'; red?: (accs: Account[], line: Line | null) => boolean };
+  // drill: sociedad y meses del importe, para el desglose de una cuenta al hacer clic en la celda
+  type Col = { key: string; label: string; sub?: string; value: (accs: Account[], line: Line | null) => number | null; kind: 'money' | 'pct'; red?: (accs: Account[], line: Line | null) => boolean; drill?: { scope: string; months: string[]; label: string } };
   const columns: Col[] = useMemo(() => {
     if (!d) return [];
     if (page === 'annual') {
@@ -107,9 +109,9 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
       const pPrev = (accs: Account[], l: Line | null) => (isSales(l) ? null : div(sum(company, accs, prev), salesOf(company, prev)));
       const pDiff = (accs: Account[], l: Line | null) => { const a = pCur(accs, l), b = pPrev(accs, l); return a == null || b == null ? null : a - b; };
       return [
-        { key: 'prev', label: 'Year -1', sub: `${year - 1}`, kind: 'money', value: accs => sum(company, accs, prev) },
+        { key: 'prev', label: 'Year -1', sub: `${year - 1}`, kind: 'money', value: accs => sum(company, accs, prev), drill: { scope: company, months: prev, label: `Year -1 (${year - 1})` } },
         { key: 'pprev', label: '%', kind: 'pct', value: pPrev },
-        { key: 'cur', label: 'Year', sub: `${year}`, kind: 'money', value: accs => sum(company, accs, cur) },
+        { key: 'cur', label: 'Year', sub: `${year}`, kind: 'money', value: accs => sum(company, accs, cur), drill: { scope: company, months: cur, label: `Year (${year})` } },
         { key: 'pcur', label: '%', kind: 'pct', value: pCur },
         { key: 'diff', label: '€ diff.', kind: 'money', value: accs => sum(company, accs, cur) - sum(company, accs, prev) },
         { key: 'pdiff', label: '%', sub: 'p.p.', kind: 'pct', value: pDiff, red: (accs, l) => (pDiff(accs, l) ?? 0) < 0 },
@@ -117,19 +119,39 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
     }
     if (page === 'monthly') {
       return [
-        ...MONTHS.map((m, i) => ({ key: m, label: m, kind: 'money' as const, value: (accs: Account[]) => sum(company, accs, [ym(year, i + 1)]) })),
-        { key: 'total', label: 'Total', sub: `${year}`, kind: 'money', value: accs => sum(company, accs, ytd(year).length === 12 ? ytd(year) : MONTHS.map((_, i) => ym(year, i + 1))) },
+        ...MONTHS.map((m, i) => ({ key: m, label: m, kind: 'money' as const, value: (accs: Account[]) => sum(company, accs, [ym(year, i + 1)]), drill: { scope: company, months: [ym(year, i + 1)], label: `${m} ${year}` } })),
+        { key: 'total', label: 'Total', sub: `${year}`, kind: 'money', value: accs => sum(company, accs, MONTHS.map((_, i) => ym(year, i + 1))), drill: { scope: company, months: MONTHS.map((_, i) => ym(year, i + 1)), label: `Año ${year}` } },
       ];
     }
     // Annual - Detail: una columna por sociedad + Consolidated y su % sobre Sales Revenues
     const cur = ytd(year);
     return [
-      ...d.companies.map(c => ({ key: c, label: c, kind: 'money' as const, value: (accs: Account[]) => sum(c, accs, cur) })),
-      { key: 'consol', label: 'Consolidated', kind: 'money', value: accs => sum(CONSOL, accs, cur) },
+      ...d.companies.map(c => ({ key: c, label: c, kind: 'money' as const, value: (accs: Account[]) => sum(c, accs, cur), drill: { scope: c, months: cur, label: `${year} hasta ${MONTHS_ES[toMonth - 1].toLowerCase()}` } })),
+      { key: 'consol', label: 'Consolidated', kind: 'money', value: accs => sum(CONSOL, accs, cur), drill: { scope: CONSOL, months: cur, label: `${year} hasta ${MONTHS_ES[toMonth - 1].toLowerCase()}` } },
       { key: 'pconsol', label: '%', sub: 's/ Sales Rev.', kind: 'pct', value: (accs, l) => (l?.description === SALES ? null : div(sum(CONSOL, accs, cur), salesOf(CONSOL, cur))) },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d, page, year, toMonth, company, index]);
+
+  // Desglose abierto por cuenta (clic en el nombre = columna principal de la página; clic en un importe = ese importe)
+  const [drills, setDrills] = useState<Record<string, DrillSpec>>({});
+  const mainDrillCol = page === 'annual' ? 'cur' : page === 'monthly' ? 'total' : 'consol';
+  const lastDay = (ymStr: string) => { const [y, m] = ymStr.split('-').map(Number); return `${ymStr}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`; };
+  const openDrill = (a: Account, c: Col | undefined) => {
+    if (!c?.drill || !c.drill.months.length) return;
+    const spec: DrillSpec = {
+      account: a.account, accountName: a.description, scope: c.drill.scope, label: c.drill.label,
+      from: `${c.drill.months[0]}-01`, to: lastDay(c.drill.months[c.drill.months.length - 1]),
+    };
+    setDrills(ds => {
+      const cur = ds[a.account];
+      const same = cur && cur.scope === spec.scope && cur.from === spec.from && cur.to === spec.to;
+      const next = { ...ds };
+      if (same) delete next[a.account]; else next[a.account] = spec;
+      return next;
+    });
+  };
+  useEffect(() => { setDrills({}); }, [page, year, toMonth, company]);
 
   const cell = (c: Col, accs: Account[], line: Line | null) => {
     const v = c.value(accs, line);
@@ -263,10 +285,24 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
                           ))}
                         </tr>
                         {open[l.code] && subs.map(a => (
-                          <tr key={a.account} className="border-b border-gray-100 text-[12px] text-gray-600">
-                            <td className="py-1 px-2 pl-9 whitespace-nowrap" title={`BWA level ${a.level}`}><span className="inline-block w-16 tabular-nums">{a.account}</span>{a.description}</td>
-                            {columns.map(c => <td key={c.key} className={`${td} py-1 ${c.kind === 'pct' ? 'text-[#2B408E]' : ''}`}>{cell(c, [a], null)}</td>)}
-                          </tr>
+                          <Fragment key={a.account}>
+                            <tr className={`border-b border-gray-100 text-[12px] text-gray-600 ${drills[a.account] ? 'bg-[#FDF2F7]' : ''}`}>
+                              <td className="py-1 px-2 pl-9 whitespace-nowrap cursor-pointer hover:text-[#C8186C]" title={`BWA level ${a.level} · clic para ver el desglose`}
+                                onClick={() => openDrill(a, columns.find(c => c.key === mainDrillCol))}>
+                                <span className="inline-block w-16 tabular-nums">{a.account}</span>{a.description}
+                              </td>
+                              {columns.map(c => (
+                                <td key={c.key} onClick={c.drill ? () => openDrill(a, c) : undefined}
+                                  title={c.drill ? `Desglose de ${c.drill.label}` : undefined}
+                                  className={`${td} py-1 ${c.kind === 'pct' ? 'text-[#2B408E]' : ''} ${c.drill ? 'cursor-pointer hover:underline hover:text-[#C8186C]' : ''}`}>{cell(c, [a], null)}</td>
+                              ))}
+                            </tr>
+                            {drills[a.account] && (
+                              <tr><td colSpan={columns.length + 1} className="p-0">
+                                <BwaAccountDrill fmt={fmt} spec={drills[a.account]} onClose={() => setDrills(ds => { const next = { ...ds }; delete next[a.account]; return next; })} />
+                              </td></tr>
+                            )}
+                          </Fragment>
                         ))}
                       </Fragment>
                     );
