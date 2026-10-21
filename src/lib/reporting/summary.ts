@@ -1,9 +1,11 @@
 import { createHash } from 'crypto';
+import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { cached } from './cache';
 
-// Puntos clave del reporting generados con IA (Gemini, igual que el resto de la app) a partir de las
+// Puntos clave del reporting generados con IA a partir de las
 // cifras ya calculadas de cada vista. Se guardan en caché por idioma y por contenido.
+// Proveedor: Claude (Anthropic) si hay ANTHROPIC_API_KEY; si no, Gemini (GEMINI_API_KEY), como el resto de la app.
 
 export type SummaryLang = 'es' | 'en' | 'de';
 export type SummaryView = 'operational' | 'management';
@@ -21,12 +23,12 @@ const VIEW_BRIEF: Record<SummaryView, string> = {
 };
 
 export async function generateSummary(view: SummaryView, lang: SummaryLang, month: string, company: string, data: unknown, force = false) {
-  if (!process.env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY no configurada');
+  const useClaude = !!process.env.ANTHROPIC_API_KEY;
+  if (!useClaude && !process.env.GEMINI_API_KEY) throw new Error('No hay ninguna IA configurada: añade ANTHROPIC_API_KEY (Claude) o GEMINI_API_KEY (Gemini) en las variables de entorno de Vercel.');
   const payload = JSON.stringify(data);
   const hash = createHash('sha1').update(`${view}|${lang}|${company}|${month}|${payload}`).digest('hex').substring(0, 16);
 
-  return cached(`sum:${hash}`, 30 * 24 * 3600 * 1000, async () => {
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY as string);
+  return cached(`sum:${useClaude ? 'claude:' : ''}${hash}`, 30 * 24 * 3600 * 1000, async () => {
     const prompt = `Eres el controller financiero de CRAZE Group (juguetes, Alemania/España). Redacta los puntos clave
 del reporting mensual para la dirección, vista "${view === 'operational' ? 'Operacional' : 'Dirección'}" (${VIEW_BRIEF[view]}),
 empresa ${company}, cierre ${month}.
@@ -42,12 +44,38 @@ Reglas:
 
 Datos (JSON):
 ${payload}`;
-    const text = await generateWithRetry(genAI, prompt);
-    const parsed = JSON.parse(text.replace(/^```json\s*|\s*```$/g, ''));
+    const text = useClaude ? await generateWithClaude(prompt) : await generateWithRetry(new GoogleGenerativeAI(process.env.GEMINI_API_KEY as string), prompt);
+    const json = text.match(/\{[\s\S]*\}/)?.[0] ?? text;
+    const parsed = JSON.parse(json.replace(/^```json\s*|\s*```$/g, ''));
     const points: string[] = Array.isArray(parsed) ? parsed : parsed.points;
     if (!Array.isArray(points) || points.length === 0) throw new Error('La IA no devolvió puntos clave');
     return { points: points.map(String), generatedAt: new Date().toISOString() };
   }, force);
+}
+
+// Claude: un único mensaje; el SDK reintenta 429/5xx. Límite de 45 s para no pasar de los 60 s de Vercel.
+// fallbacks "default": si los filtros de seguridad rechazan la petición, la API la repite con el modelo recomendado.
+async function generateWithClaude(prompt: string): Promise<string> {
+  const client = new Anthropic({ timeout: 45_000, maxRetries: 1 });
+  try {
+    const response = await client.beta.messages.create({
+      model: 'claude-opus-5-5',
+      max_tokens: 16000,
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      output_config: { effort: 'medium' },
+      messages: [{ role: 'user', content: prompt }],
+    });
+    if (response.stop_reason === 'refusal') throw new Error('La IA ha rechazado generar los puntos clave.');
+    const text = response.content.map(b => (b.type === 'text' ? b.text : '')).join('').trim();
+    if (!text) throw new Error('La IA no devolvió texto');
+    return text;
+  } catch (error) {
+    if (error instanceof Anthropic.AuthenticationError) throw new Error('La clave ANTHROPIC_API_KEY no es válida.');
+    if (error instanceof Anthropic.RateLimitError) throw new Error('La IA (Claude) está saturada. Pulsa Regenerar en unos minutos.');
+    if (error instanceof Anthropic.APIError) throw new Error(`Error de la IA (Claude ${error.status}): ${String(error.message).substring(0, 160)}`);
+    throw error;
+  }
 }
 
 // Gemini devuelve 503/429 cuando hay mucha demanda: se reintenta y, si sigue, se usa un modelo más ligero.
