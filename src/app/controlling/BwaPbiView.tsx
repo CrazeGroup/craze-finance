@@ -177,6 +177,25 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
     XLSX.writeFile(wb, `BWA_${page}_${page === 'detail' ? 'empresas' : company}_${year}${page === 'monthly' ? '' : `_hasta_${toMonth}`}.xlsx`.replace(/\s+/g, '_'));
   };
 
+  // Annual: principales desviaciones frente al año anterior (líneas BWA con más diferencia y sus cuentas)
+  const deviations = (() => {
+    if (!d || page !== 'annual') return null;
+    const cur = ytd(year), prev = ytd(year - 1);
+    const salesCur = salesOf(company, cur), salesPrev = salesOf(company, prev);
+    const lines = d.lines.filter(l => !l.formula).map(l => {
+      const accs = accountsOf.get(l.code) || [];
+      const vCur = sum(company, accs, cur), vPrev = sum(company, accs, prev);
+      const accounts = accs.map(a => ({ a, cur: sum(company, [a], cur), prev: sum(company, [a], prev) }))
+        .map(x => ({ ...x, diff: x.cur - x.prev })).filter(x => Math.abs(x.diff) >= 1)
+        .sort((x, y) => Math.abs(y.diff) - Math.abs(x.diff));
+      return { l, cur: vCur, prev: vPrev, diff: vCur - vPrev, pp: salesCur && salesPrev ? vCur / salesCur - vPrev / salesPrev : null, accounts };
+    }).filter(x => Math.abs(x.diff) >= 1).sort((x, y) => Math.abs(y.diff) - Math.abs(x.diff));
+    // Las 6 líneas con más diferencia y las cuentas que explican la mayor parte (hasta 4)
+    return lines.slice(0, 6).map(x => ({ ...x, accounts: x.accounts.slice(0, 4) }));
+  })();
+  const pctChange = (cur: number, prev: number) => (prev ? `${cur - prev >= 0 ? '+' : ''}${num(((cur - prev) / Math.abs(prev)) * 100, 1)} %` : 'nuevo');
+  const tone = (diff: number) => (diff > 0 ? 'text-emerald-700' : diff < 0 ? 'text-[#C0392B]' : 'text-gray-500');
+
   const select = 'block mt-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-900 bg-white normal-case tracking-normal';
   const label = 'text-[11px] font-semibold uppercase tracking-wider text-gray-500';
   const rowStyle = (l: Line) => l.highlight === 'high' ? 'bg-[#333333] text-white font-bold' : l.highlight === 'med' ? 'bg-[#E6E6E6] text-gray-900 font-bold' : 'text-gray-900';
@@ -316,6 +335,42 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
               {page === 'detail' && `Acumulado de enero a ${MONTHS_ES[toMonth - 1].toLowerCase()} de ${year} por sociedad (cada una con sus movimientos de eliminación) y consolidado (sin eliminaciones).`}
               {' '}Importes en EUR con el signo invertido (ingresos en positivo). Haz clic en una línea para ver sus niveles.
             </p>
+            {deviations && deviations.length > 0 && (
+              <div className="rpt-card bg-white rounded-xl border border-gray-200 p-5">
+                <p className="text-xs font-bold uppercase tracking-widest text-[#C8186C] mb-1">Principales desviaciones · {year} vs {year - 1}</p>
+                <p className="text-xs text-gray-500 mb-4">
+                  Enero a {MONTHS_ES[toMonth - 1].toLowerCase()}, {company}. Las 6 partidas con más diferencia en euros y las cuentas que más la explican.
+                  En verde mejora el resultado (más ingreso o menos gasto), en rojo lo empeora. Haz clic en una cuenta para ver su desglose en la tabla.
+                </p>
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {deviations.map(x => (
+                    <div key={x.l.code} className={`rounded-lg border p-3 ${x.diff < 0 ? 'border-red-200 bg-red-50/40' : 'border-emerald-200 bg-emerald-50/40'}`}>
+                      <div className="flex items-baseline justify-between gap-2">
+                        <p className="font-bold text-gray-900">{x.l.description}</p>
+                        <p className={`font-bold tabular-nums ${tone(x.diff)}`}>{x.diff > 0 ? '+' : ''}{num(x.diff, 0)} €</p>
+                      </div>
+                      <p className="text-xs text-gray-600 mt-0.5">
+                        {num(x.prev, 0)} → {num(x.cur, 0)} ({pctChange(x.cur, x.prev)})
+                        {x.pp != null && x.l.description !== SALES && <> · {x.pp >= 0 ? '+' : ''}{num(x.pp * 100, 1)} p.p. s/ Sales Revenues</>}
+                      </p>
+                      <table className="w-full text-[12px] mt-2">
+                        <tbody>
+                          {x.accounts.map(c => (
+                            <tr key={c.a.account} className="border-t border-gray-200/70 cursor-pointer hover:bg-white"
+                              onClick={() => { setOpen(o => ({ ...o, [x.l.code]: true })); openDrill(c.a, columns.find(col => col.key === 'cur')); }}
+                              title="Ver el desglose de esta cuenta en la tabla">
+                              <td className="py-1 pr-2 text-gray-700"><span className="tabular-nums text-gray-500 mr-1.5">{c.a.account}</span>{c.a.description}</td>
+                              <td className={`py-1 text-right tabular-nums whitespace-nowrap font-semibold ${tone(c.diff)}`}>{c.diff > 0 ? '+' : ''}{num(c.diff, 0)}</td>
+                              <td className="py-1 pl-2 text-right tabular-nums whitespace-nowrap text-gray-500">{pctChange(c.cur, c.prev)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </>
         )}
     </Section>
