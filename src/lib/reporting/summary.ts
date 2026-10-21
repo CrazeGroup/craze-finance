@@ -2,10 +2,12 @@ import { createHash } from 'crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { cached } from './cache';
+import { aiProvider, generateText } from '@/lib/ai';
 
 // Puntos clave del reporting generados con IA a partir de las
 // cifras ya calculadas de cada vista. Se guardan en caché por idioma y por contenido.
-// Proveedor: Claude (Anthropic) si hay ANTHROPIC_API_KEY; si no, Gemini (GEMINI_API_KEY), como el resto de la app.
+// Proveedor: OpenRouter si hay OPENROUTER_API_KEY (src/lib/ai.ts, como el resto de la app); si no, Claude con
+// ANTHROPIC_API_KEY; si no, Gemini (GEMINI_API_KEY).
 
 export type SummaryLang = 'es' | 'en' | 'de';
 export type SummaryView = 'operational' | 'management';
@@ -23,12 +25,13 @@ const VIEW_BRIEF: Record<SummaryView, string> = {
 };
 
 export async function generateSummary(view: SummaryView, lang: SummaryLang, month: string, company: string, data: unknown, force = false) {
-  const useClaude = !!process.env.ANTHROPIC_API_KEY;
-  if (!useClaude && !process.env.GEMINI_API_KEY) throw new Error('No hay ninguna IA configurada: añade ANTHROPIC_API_KEY (Claude) o GEMINI_API_KEY (Gemini) en las variables de entorno de Vercel.');
+  const useOpenRouter = !!process.env.OPENROUTER_API_KEY;
+  const useClaude = !useOpenRouter && !!process.env.ANTHROPIC_API_KEY;
+  if (!useOpenRouter && !useClaude && !process.env.GEMINI_API_KEY) throw new Error('No hay ninguna IA configurada: añade OPENROUTER_API_KEY (o ANTHROPIC_API_KEY / GEMINI_API_KEY) en las variables de entorno de Vercel.');
   const payload = JSON.stringify(data);
   const hash = createHash('sha1').update(`${view}|${lang}|${company}|${month}|${payload}`).digest('hex').substring(0, 16);
 
-  return cached(`sum:${useClaude ? 'claude:' : ''}${hash}`, 30 * 24 * 3600 * 1000, async () => {
+  return cached(`sum:${useOpenRouter ? `${aiProvider()}:` : useClaude ? 'claude:' : ''}${hash}`, 30 * 24 * 3600 * 1000, async () => {
     const prompt = `Eres el controller financiero de CRAZE Group (juguetes, Alemania/España). Redacta los puntos clave
 del reporting mensual para la dirección, vista "${view === 'operational' ? 'Operacional' : 'Dirección'}" (${VIEW_BRIEF[view]}),
 empresa ${company}, cierre ${month}.
@@ -44,7 +47,7 @@ Reglas:
 
 Datos (JSON):
 ${payload}`;
-    const text = useClaude ? await generateWithClaude(prompt) : await generateWithRetry(new GoogleGenerativeAI(process.env.GEMINI_API_KEY as string), prompt);
+    const text = useOpenRouter ? await generateText([prompt], { json: true, timeoutMs: 50_000 }) : useClaude ? await generateWithClaude(prompt) : await generateWithRetry(new GoogleGenerativeAI(process.env.GEMINI_API_KEY as string), prompt);
     const json = text.match(/\{[\s\S]*\}/)?.[0] ?? text;
     const parsed = JSON.parse(json.replace(/^```json\s*|\s*```$/g, ''));
     const points: string[] = Array.isArray(parsed) ? parsed : parsed.points;

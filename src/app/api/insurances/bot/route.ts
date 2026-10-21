@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import prisma from '@/lib/prisma';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { aiConfigured, AI_NOT_CONFIGURED, generateText } from '@/lib/ai';
 
 export const maxDuration = 60; // Allow 60s for OpenAI
 
@@ -16,12 +16,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Message is required' }, { status: 400 });
     }
 
-    if (!process.env.GEMINI_API_KEY) {
-      return NextResponse.json({ error: 'No se ha configurado GEMINI_API_KEY en el servidor (.env)' }, { status: 500 });
+    if (!aiConfigured()) {
+      return NextResponse.json({ error: AI_NOT_CONFIGURED }, { status: 500 });
     }
-
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
 
     const whereClause = companyId === 'ALL' ? {} : { companyId };
     
@@ -124,8 +121,7 @@ Archivos adjuntos: ${attachmentsList.length > 0 ? attachmentsList.join(', ') : '
     // The prompt text goes first
     parts.unshift(contextText);
 
-    const result = await model.generateContent(parts);
-    const reply = result.response.text();
+    const reply = await generateText(parts);
 
     return NextResponse.json({ reply });
 
