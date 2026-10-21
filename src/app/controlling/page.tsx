@@ -40,7 +40,7 @@ export default function ControllingPage() {
   return (
     <div className="rpt-root min-h-screen bg-[#F3F4F7] pb-24">
       <header className="sticky top-0 z-20 bg-white border-b border-gray-200">
-        <div className="max-w-[1500px] mx-auto px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
+        <div className="w-full px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="mr-auto">
             <p className="font-bold text-gray-900 leading-tight">Controlling</p>
             <p className="text-xs text-gray-500">{selectedCompany}</p>
@@ -55,7 +55,7 @@ export default function ControllingPage() {
           </div>
         </div>
       </header>
-      <main className="max-w-[1500px] mx-auto px-4 md:px-8 pt-6">
+      <main className="w-full px-4 md:px-8 pt-6">
         {selectedCompany === 'ALL' ? <p className="text-sm text-gray-600">{fmt.t('selectCompany')}</p>
           : report === 'purchase-items' ? <PurchaseItemsView fmt={fmt} company={selectedCompany} />
           : report === 'pl-compare' ? <PlCompareView fmt={fmt} company={selectedCompany} />

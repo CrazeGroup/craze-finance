@@ -298,7 +298,7 @@ export default function InsurancesPage() {
   };
 
   return (
-    <div className="p-8 max-w-7xl mx-auto h-[calc(100vh-2rem)] flex flex-col">
+    <div className="p-8 w-full h-[calc(100vh-2rem)] flex flex-col">
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">

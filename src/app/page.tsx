@@ -57,7 +57,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen p-8 pb-32 overflow-y-auto">
-      <div className="max-w-7xl mx-auto space-y-12">
+      <div className="w-full space-y-12">
         
         <header>
           <h1 className="text-4xl font-black text-black tracking-tight">

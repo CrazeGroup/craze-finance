@@ -35,7 +35,7 @@ export default function LogsPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 p-8">
-      <div className="max-w-6xl mx-auto space-y-8">
+      <div className="w-full space-y-8">
         <header className="mb-12">
           <h1 className="text-4xl font-extrabold text-black tracking-tight flex items-center gap-4">
             <History size={36} className="text-black" />

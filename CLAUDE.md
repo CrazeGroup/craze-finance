@@ -36,6 +36,8 @@ Env vars: `DATABASE_URL`, `DIRECT_URL` (Postgres), `JWT_SECRET`, `GEMINI_API_KEY
 
 **Audit log.** Call `logAction(action, details?)` from `src/lib/logger.ts` in mutating API routes. It records the session user and the selected company in `ActionLog`, which is shown at `/settings/logs`.
 
+**Page width.** Pages use the full width of the main area with small side padding (`w-full px-4 md:px-8`, or `p-8` on simple pages, like BWA Analytics). Don't wrap page content in `max-w-* mx-auto` containers; wide tables must not be cut off. Narrow widths are only for modals, forms (`/settings`) and text cells.
+
 **Pages are large client components.** Each module is a single `'use client'` `page.tsx` (cashflow is about 1.2k lines) that fetches from `/api/*` and holds its state locally. There is no shared data layer or component library beyond `Sidebar` and `CustomerCard`.
 
 **Other integrations.**

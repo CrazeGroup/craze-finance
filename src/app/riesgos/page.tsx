@@ -72,7 +72,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50 p-8 pb-32">
-      <div className="max-w-7xl mx-auto">
+      <div className="w-full">
         <header className="flex justify-between items-end mb-8">
           <div>
             <h1 className="text-4xl font-black text-black tracking-tight">

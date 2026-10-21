@@ -115,7 +115,7 @@ export default function DForcePage() {
   return (
     <div className="min-h-screen bg-[#F3F4F7] pb-24">
       <header className="sticky top-0 z-20 bg-white border-b border-gray-200">
-        <div className="max-w-[1800px] mx-auto px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
+        <div className="w-full px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="mr-auto">
             <p className="font-bold text-gray-900 leading-tight text-lg">D-FORCE</p>
             <p className="text-xs text-gray-500">{DFORCE_COMPANY} · Gutschrift de D-FORCE-ONE (PDF + Excel) → Sales Invoice, Sales Credit Memo y Purchase Invoice</p>
@@ -127,7 +127,7 @@ export default function DForcePage() {
         </div>
       </header>
 
-      <main className="max-w-[1800px] mx-auto px-4 md:px-8 pt-6 space-y-6">
+      <main className="w-full px-4 md:px-8 pt-6 space-y-6">
         <section className="bg-white rounded-xl border border-gray-200 p-4 flex flex-wrap items-end gap-4">
           <FilePick label="PDF de la Gutschrift" accept=".pdf" icon={<FileText size={16} />} file={pdf} onChange={setPdf} />
           <FilePick label="Excel (Curasoft DatenExport)" accept=".xlsx,.xls" icon={<FileSpreadsheet size={16} />} file={excel} onChange={setExcel} />

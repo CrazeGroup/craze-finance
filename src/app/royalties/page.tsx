@@ -169,7 +169,7 @@ export default function RoyaltiesPage() {
   return (
     <div className="min-h-screen bg-[#F3F4F7] pb-24">
       <header className="sticky top-0 z-20 bg-white border-b border-gray-200">
-        <div className="max-w-[1800px] mx-auto px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
+        <div className="w-full px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="mr-auto">
             <p className="font-bold text-gray-900 leading-tight text-lg">Royalties</p>
             <p className="text-xs text-gray-500">{selectedCompany} · {dateEs(range.from)} – {dateEs(range.to)} · importes en {cur}{cur !== localCur ? ` (1 ${localCur} = ${fxInput} EUR)` : ''} · Royalty Code de la ficha de artículo (CRAZE GmbH) · sin Main Item ni intercompañía</p>
@@ -220,7 +220,7 @@ export default function RoyaltiesPage() {
         </div>
       </header>
 
-      <main className="max-w-[1800px] mx-auto px-4 md:px-8 pt-6 space-y-6">
+      <main className="w-full px-4 md:px-8 pt-6 space-y-6">
         {selectedCompany === 'CRAZE' && <GroupSummary range={range} reload={reload} />}
         {selectedCompany === 'ALL' ? (
           <p className="text-sm text-gray-600">Selecciona una empresa concreta en el menú lateral para ver sus royalties.</p>
