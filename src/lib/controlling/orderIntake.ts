@@ -102,13 +102,14 @@ export async function orderIntakeYear(ctx: BcContext, year: number, fromMonth: n
   const live = to >= today();
   const warnings: string[] = [];
   const [invoices, archived, open] = await Promise.all([
-    // Año en curso siempre en vivo; años cerrados en caché 12 h
-    live ? postedInvoices(ctx, from, to) : cached(`order-intake:inv2:${company}:${from}:${to}`, 12 * HOUR, () => postedInvoices(ctx, from, to), force),
+    // Año en curso: se renueva cada hora (o con el botón de actualizar); años cerrados cada 12 h
+    cached(`order-intake:inv2:${company}:${from}:${to}`, live ? HOUR : 12 * HOUR, () => postedInvoices(ctx, from, to), force),
     cached(`order-intake:archive:${company}:${year - 1}`, 6 * HOUR, () => archivedOrderDates(ctx, year - 1), force).catch(e => {
       warnings.push(`No se han podido leer los pedidos archivados (Sales Order Archives): ${e.message}`);
       return {} as Record<string, string>;
     }),
-    openOrderHeaders(ctx),
+    // Pedidos abiertos: también dan la Order Date de facturas de pedidos aún no facturados del todo
+    cached(`order-intake:open:${company}`, HOUR, () => openOrderHeaders(ctx), force),
   ]);
   const openDate = new Map(open.map(o => [o.no, o.orderDate]));
   const withDates: Invoice[] = invoices.map(i => ({
