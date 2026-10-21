@@ -36,7 +36,8 @@ export type Dims = {
 };
 
 export async function commercialDims(force = false): Promise<Dims> {
-  return cached('commercial:dims', 6 * HOUR, async () => {
+  // Datos maestros: se renuevan una vez al día (o con el botón de actualizar)
+  return cached('commercial:dims', 24 * HOUR, async () => {
     const ctx = await getBcContext('CRAZE');
     const [items, groups, kamGroups, kams, dims] = await Promise.all([
       // API custom items (la página Item_Card_Excel tarda más de 30 s)
@@ -68,7 +69,7 @@ export async function commercialDims(force = false): Promise<Dims> {
       kams: Object.fromEntries(kams.map((k: any) => [s(k.Code), s(k.Name)])),
       dimensions: Object.fromEntries(dims.filter((d: any) => /customer/i.test(s(d.Dimension_Code))).map((d: any) => [s(d.Code), s(d.Name)])),
     };
-  }, force);
+  }, force, { refreshAfterMs: 24 * HOUR });
 }
 
 // ---------- Hechos ----------
@@ -97,8 +98,9 @@ export async function commercialFacts(abbr: CompanyAbbr, year: number, force = f
   const company = COMPANIES.find(c => c.abbr === abbr)!;
   const from = `${year}-01-01`, to = `${year}-12-31`;
   const live = to >= today();
-  // Años cerrados: una vez al día (la parte "hasta hoy" del mes actual cambia cada día para el año anterior)
-  return cached(`commercial:facts:${abbr}:${year}${live ? '' : `:${today()}`}`, live ? HOUR : 24 * HOUR, async () => {
+  // Guardado: el año en curso se renueva cada 6 h en segundo plano y los años cerrados una vez al día (la parte
+  // "hasta hoy" del mes actual cambia cada día para el año anterior); el botón de actualizar lo fuerza.
+  return cached(`commercial:facts:${abbr}:${year}${live ? '' : `:${today()}`}`, 24 * HOUR, async () => {
     const dims = await commercialDims();
     const itemBy = new Map(dims.items.map(i => [i.no, i]));
     const groupBy = new Map(dims.groups.map(g => [g.code, g]));
@@ -192,5 +194,5 @@ export async function commercialFacts(abbr: CompanyAbbr, year: number, force = f
       counts: { lm: lm.length, salesLines: salesLines.length, budget: bItems.length, forecast: fItems.length },
       warnings,
     };
-  }, force);
+  }, force, { refreshAfterMs: live ? 6 * HOUR : 24 * HOUR });
 }

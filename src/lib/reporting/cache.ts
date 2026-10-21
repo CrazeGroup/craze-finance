@@ -37,7 +37,8 @@ async function refreshInBackground<T>(dbKey: string, compute: () => Promise<T>) 
   }
 }
 
-export async function cached<T>(key: string, maxAgeMs: number, compute: () => Promise<T>, force = false): Promise<T> {
+// opts.refreshAfterMs: cada cuánto se renueva en segundo plano (por defecto, cada hora como mucho)
+export async function cached<T>(key: string, maxAgeMs: number, compute: () => Promise<T>, force = false, opts: { refreshAfterMs?: number } = {}): Promise<T> {
   // REPORTING_NO_CACHE=1: sin caché (scripts y pruebas sin base de datos)
   if (process.env.REPORTING_NO_CACHE === '1') return compute();
   const dbKey = PREFIX + key;
@@ -52,7 +53,7 @@ export async function cached<T>(key: string, maxAgeMs: number, compute: () => Pr
       }
       if (value !== undefined) {
         // Cachés de larga duración (p. ej. los puntos clave de la IA, por contenido) no se renuevan cada hora
-        const refreshAfter = maxAgeMs > 24 * REFRESH_EVERY ? maxAgeMs : Math.min(maxAgeMs, REFRESH_EVERY);
+        const refreshAfter = opts.refreshAfterMs ?? (maxAgeMs > 24 * REFRESH_EVERY ? maxAgeMs : Math.min(maxAgeMs, REFRESH_EVERY));
         if (Date.now() - row.updatedAt.getTime() >= refreshAfter) {
           const job = () => refreshInBackground(dbKey, compute);
           try {
