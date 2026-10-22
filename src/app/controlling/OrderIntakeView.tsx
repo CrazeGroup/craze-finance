@@ -111,14 +111,20 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
     const intakeBilled = allInvoices.filter(i => i.orderDate!.startsWith(ym)).reduce((s, i) => s + i.amount, 0);
     const opened = openOrders.filter(o => o.orderDate.startsWith(ym));
     const end = lastDayOf(ym);
-    const openMonthOrders = opened.filter(o => o.requestedDeliveryDate <= end);    // RDD dentro del mes (o antes)
-    const openLaterOrders = opened.filter(o => o.requestedDeliveryDate > end);     // RDD en meses siguientes
-    const openMonth = openMonthOrders.reduce((s, o) => s + o.pending, 0);
-    const openLater = openLaterOrders.reduce((s, o) => s + o.pending, 0);
+    const yearEnd = `${y?.year}-12-31`;
+    const pend = (list: OpenOrder[]) => list.reduce((s, o) => s + o.pending, 0);
+    // Pedidos creados en el mes: RDD dentro del mes (o antes), en meses siguientes del mismo año, o en años siguientes
+    const openMonth = pend(opened.filter(o => o.requestedDeliveryDate <= end));
+    const openNextSameYear = pend(opened.filter(o => o.requestedDeliveryDate > end && o.requestedDeliveryDate <= yearEnd));
+    const openNextYear = pend(opened.filter(o => o.requestedDeliveryDate > yearEnd));
+    // Pedidos de meses anteriores aún abiertos que deberían facturarse en este mes (RDD del mes); no forman parte del intake
+    const backlog = openOrders.filter(o => o.orderDate < `${ym}-01` && o.requestedDeliveryDate.startsWith(ym));
+    const openPrevMonths = pend(backlog);
+    const openLater = openNextSameYear + openNextYear;
     const same = intakeBilled + openMonth + openLater;
-    return { inv, billed, same, intakeBilled, byBucket, openOrders: opened, openMonth, openLater, pending: openMonth + openLater, total: same };
+    return { inv, billed, same, intakeBilled, byBucket, openOrders: opened, backlog, openMonth, openPrevMonths, openNextSameYear, openNextYear, openLater, pending: openMonth + openLater, total: same };
   };
-  const sum = (y: YearState | undefined, k: 'billed' | 'same' | 'intakeBilled' | 'openMonth' | 'openLater' | 'pending' | 'total') => months.reduce((s, m) => s + stats(y, m)[k], 0);
+  const sum = (y: YearState | undefined, k: 'billed' | 'same' | 'intakeBilled' | 'openMonth' | 'openPrevMonths' | 'openNextSameYear' | 'openNextYear' | 'openLater' | 'pending' | 'total') => months.reduce((s, m) => s + stats(y, m)[k], 0);
   const sumBucket = (y: YearState | undefined, b: Bucket) => months.reduce((s, m) => s + stats(y, m).byBucket[b], 0);
   // Crecimiento del Order Intake frente al mismo mes del año anterior (el año más antiguo no tiene con qué comparar)
   const prevOf = (y: YearState | undefined) => years.find(x => x.year === (y?.year ?? 0) - 1);
@@ -140,7 +146,9 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
         row[`${y.year} % intake vs año anterior`] = py ? (stats(py, m).same ? (st.same - stats(py, m).same) / Math.abs(stats(py, m).same) : '') : '';
         row[`${y.year} Intake ya facturado`] = st.intakeBilled;
         row[`${y.year} Abierto RDD en el mes`] = st.openMonth;
-        row[`${y.year} Abierto próximamente`] = st.openLater;
+        row[`${y.year} Abierto meses anteriores con RDD del mes`] = st.openPrevMonths;
+        row[`${y.year} Abierto próx. mismo año`] = st.openNextSameYear;
+        row[`${y.year} Abierto próx. año siguiente`] = st.openNextYear;
       });
       return row;
     });
@@ -200,7 +208,7 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                   <Kpi highlight tone="main" label={`Order Intake ${year}`} value={num(sum(current, 'same'), 0)}
                     sub={`Pedidos creados en ${year} · ${year - 1}: ${num(sum(previous, 'same'), 0)} (${pct(sum(current, 'same') - sum(previous, 'same'), sum(previous, 'same'))})`} />
                   <Kpi label="Abierto RDD en el mes" value={num(sum(current, 'openMonth'), 0)} sub="Pedidos abiertos que deberían facturarse en su mes de creación" />
-                  <Kpi label="Abierto próximamente" value={num(sum(current, 'openLater'), 0)} sub="Pedidos abiertos con entrega en meses siguientes" />
+                  <Kpi label="Abierto próximamente" value={num(sum(current, 'openLater'), 0)} sub={`${num(sum(current, 'openNextSameYear'), 0)} este año · ${num(sum(current, 'openNextYear'), 0)} el año siguiente`} />
                 </Grid>
 
                 <div className="rpt-card bg-white rounded-xl border border-gray-200 overflow-x-auto">
@@ -209,7 +217,7 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                       <tr className="bg-gray-50">
                         <th className={`${th} text-left`} />
                         {years.map(y => (
-                          <th key={y.year} colSpan={y.year === year ? 6 : 3}
+                          <th key={y.year} colSpan={y.year === year ? 8 : 3}
                             className={`py-2 px-2 text-xs font-bold text-center border-l border-gray-200 ${y.year === year ? 'text-[#C8186C]' : 'text-gray-700'}`}>
                             {y.year}
                           </th>
@@ -229,8 +237,10 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                             <th className={th} title="Crecimiento del Order Intake frente al mismo mes del año anterior">% vs {y.year - 1}</th>
                             {y.year === year && <>
                               <th className={th} title="Parte del intake ya facturada (facturas de cualquier fecha)">Ya facturado</th>
-                              <th className={th} title="Pedidos del mes abiertos con Requested Delivery Date dentro del mes">Abierto RDD mes</th>
-                              <th className={th} title="Pedidos del mes abiertos con Requested Delivery Date en meses siguientes">Abierto próx.</th>
+                              <th className={th} title="Pedidos creados en el mes, abiertos, con Requested Delivery Date dentro del mes">Abierto RDD mes</th>
+                              <th className={th} title="Pedidos de meses anteriores, abiertos, con Requested Delivery Date en este mes (no forman parte del intake del mes)">Abierto RDD mes (pedidos anteriores)</th>
+                              <th className={th} title="Pedidos creados en el mes, abiertos, con entrega en meses siguientes del mismo año">Abierto próx. mismo año</th>
+                              <th className={th} title="Pedidos creados en el mes, abiertos, con entrega el año siguiente o después">Abierto próx. año siguiente</th>
                             </>}
                           </Fragment>
                         ))}
@@ -256,7 +266,9 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                                   {y.year === year && <>
                                     <td className={`${td} text-gray-700`}>{money(st.intakeBilled)}</td>
                                     <td className={`${td} text-indigo-700`}>{money(st.openMonth)}</td>
-                                    <td className={`${td} text-indigo-500`}>{money(st.openLater)}</td>
+                                    <td className={`${td} text-amber-700`}>{money(st.openPrevMonths)}</td>
+                                    <td className={`${td} text-indigo-500`}>{money(st.openNextSameYear)}</td>
+                                    <td className={`${td} text-indigo-400`}>{money(st.openNextYear)}</td>
                                   </>}
                                 </Fragment>
                               );
@@ -272,7 +284,7 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                                     <td className={`${td} border-l border-gray-100 text-gray-600`}>{money(st.byBucket[b.id])}</td>
                                     <td className={td} />
                                     <td className={`${td} text-gray-500`}>{st.byBucket[b.id] ? pct(st.byBucket[b.id], st.billed) : ''}</td>
-                                    {y.year === year && <><td className={td} /><td className={td} /><td className={td} /></>}
+                                    {y.year === year && <><td className={td} /><td className={td} /><td className={td} /><td className={td} /><td className={td} /></>}
                                   </Fragment>
                                 );
                               })}
@@ -280,10 +292,20 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                           ))}
                           {open[m] && stats(current, m).openOrders.length > 0 && (
                             <tr className="border-b border-gray-100 bg-indigo-50/40 text-[12px]">
-                              <td colSpan={1 + years.reduce((t, y) => t + (y.year === year ? 6 : 3), 0)} className="py-2 px-2 pl-9 text-gray-600">
+                              <td colSpan={1 + years.reduce((t, y) => t + (y.year === year ? 8 : 3), 0)} className="py-2 px-2 pl-9 text-gray-600">
                                 <span className="font-semibold text-indigo-800">Sales Orders abiertas creadas en {MONTHS[m - 1].toLowerCase()} {year}:</span>{' '}
                                 {stats(current, m).openOrders.sort((a, b) => b.pending - a.pending).map((o, i) => (
                                   <span key={o.no}>{i ? ' · ' : ''}{o.no} {o.customerName} ({num(o.pending, 2)}{o.invoiced ? `, ya facturado ${num(o.invoiced, 2)}` : ''}, RDD {date(o.requestedDeliveryDate)})</span>
+                                ))}
+                              </td>
+                            </tr>
+                          )}
+                          {open[m] && stats(current, m).backlog.length > 0 && (
+                            <tr className="border-b border-gray-100 bg-amber-50/40 text-[12px]">
+                              <td colSpan={1 + years.reduce((t, y) => t + (y.year === year ? 8 : 3), 0)} className="py-2 px-2 pl-9 text-gray-600">
+                                <span className="font-semibold text-amber-800">Pedidos de meses anteriores con entrega en {MONTHS[m - 1].toLowerCase()} {year}:</span>{' '}
+                                {[...stats(current, m).backlog].sort((a, b) => b.pending - a.pending).map((o, i) => (
+                                  <span key={o.no}>{i ? ' · ' : ''}{o.no} {o.customerName} ({num(o.pending, 2)}, pedido {date(o.orderDate)}, RDD {date(o.requestedDeliveryDate)})</span>
                                 ))}
                               </td>
                             </tr>
@@ -302,7 +324,9 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                             {y.year === year && <>
                               <td className={td}>{money(sum(y, 'intakeBilled'))}</td>
                               <td className={`${td} text-indigo-700`}>{money(sum(y, 'openMonth'))}</td>
-                              <td className={`${td} text-indigo-500`}>{money(sum(y, 'openLater'))}</td>
+                              <td className={`${td} text-amber-700`}>{money(sum(y, 'openPrevMonths'))}</td>
+                              <td className={`${td} text-indigo-500`}>{money(sum(y, 'openNextSameYear'))}</td>
+                              <td className={`${td} text-indigo-400`}>{money(sum(y, 'openNextYear'))}</td>
                             </>}
                           </Fragment>
                         ))}
@@ -315,7 +339,7 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                               <td className={`${td} border-l border-gray-200`}>{money(sumBucket(y, b.id))}</td>
                               <td className={td} />
                               <td className={td}>{sumBucket(y, b.id) ? pct(sumBucket(y, b.id), sum(y, 'billed')) : ''}</td>
-                              {y.year === year && <><td className={td} /><td className={td} /><td className={td} /></>}
+                              {y.year === year && <><td className={td} /><td className={td} /><td className={td} /><td className={td} /><td className={td} /></>}
                             </Fragment>
                           ))}
                         </tr>
@@ -325,7 +349,7 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                 </div>
                 <p className="text-xs text-gray-500">
                   Importes sin IVA en la divisa de la empresa (en EUR en el consolidado). Sin intercompañía: clientes con forma de pago INTERGROUP o empresas del grupo (CRAZE …){current?.data?.intercompanyExcluded ? `, ${num(current.data.intercompanyExcluded)} documentos de ${year} excluidos` : ''}. Facturado = Posted Sales Invoices − Posted Sales Credit Memos por Posting Date (solo documentos registrados: los movimientos con * en el nº, sin documento detrás, no cuentan).
-                  &quot;Order Date del mes&quot; = Order Intake: todos los Sales Orders creados ese mes = lo ya facturado de esos pedidos (facturas de {year - 2} a {year}, cualquier mes) + lo que sigue abierto hoy, separado en &quot;Abierto RDD mes&quot; (Requested Delivery Date dentro del mes de creación) y &quot;Abierto próx.&quot; (entrega en meses siguientes). El % es el crecimiento del Order Intake frente al mismo mes del año anterior (el año más antiguo no tiene comparación). Haz clic en un mes para ver lo facturado por antigüedad del pedido y los pedidos abiertos de ese mes.
+                  &quot;Order Date del mes&quot; = Order Intake: todos los Sales Orders creados ese mes = lo ya facturado de esos pedidos (facturas de {year - 2} a {year}, cualquier mes) + lo que sigue abierto hoy, separado en &quot;Abierto RDD mes&quot; (Requested Delivery Date dentro del mes de creación), &quot;Abierto próx. mismo año&quot; y &quot;Abierto próx. año siguiente&quot;. &quot;Abierto RDD mes (pedidos anteriores)&quot; = pedidos creados en meses anteriores, aún abiertos, que deberían facturarse en este mes (no suman al intake del mes). El % es el crecimiento del Order Intake frente al mismo mes del año anterior (el año más antiguo no tiene comparación). Haz clic en un mes para ver lo facturado por antigüedad del pedido y los pedidos abiertos de ese mes.
                   {unknownCount > 0 && ` ${unknownCount} facturas de ${year} tienen un pedido que no está abierto ni archivado en BC: salen como "Pedido no encontrado".`}
                 </p>
               </>
