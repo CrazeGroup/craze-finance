@@ -97,7 +97,18 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
 
   // Facturas de todos los años cargados (un pedido de diciembre se puede facturar en enero) y Sales Orders abiertas hoy
   const allInvoices = useMemo(() => years.flatMap(y => y.data?.invoices || []).filter(i => i.kind === 'invoice' && i.orderDate), [years]);
-  const openOrders = useMemo(() => years.flatMap(y => y.data?.openOrders || []), [years]);
+  // Pendiente de cada pedido abierto = importe del pedido sin IVA − todo lo ya facturado de ese pedido en los años
+  // cargados (el servidor solo descuenta lo facturado en el año pedido)
+  const openOrders = useMemo(() => {
+    const invoicedByOrder = new Map<string, number>();
+    for (const y of years) for (const i of y.data?.invoices || []) {
+      if (i.kind === 'invoice' && i.orderNo) invoicedByOrder.set(i.orderNo, (invoicedByOrder.get(i.orderNo) || 0) + i.amount);
+    }
+    return years.flatMap(y => y.data?.openOrders || []).map(o => {
+      const invoiced = invoicedByOrder.get(o.no) ?? o.invoiced;
+      return { ...o, invoiced, pending: Math.max(0, o.amount - invoiced) };
+    }).filter(o => o.pending > 0.005);
+  }, [years]);
   const lastDayOf = (ym: string) => { const [yy, mm] = ym.split('-').map(Number); return `${ym}-${String(new Date(yy, mm, 0).getDate()).padStart(2, '0')}`; };
 
   // Cifras de un año y mes
@@ -146,9 +157,9 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
         row[`${y.year} % intake vs año anterior`] = py ? (stats(py, m).same ? (st.same - stats(py, m).same) / Math.abs(stats(py, m).same) : '') : '';
         row[`${y.year} Intake ya facturado`] = st.intakeBilled;
         row[`${y.year} Abierto RDD en el mes`] = st.openMonth;
-        row[`${y.year} Abierto meses anteriores con RDD del mes`] = st.openPrevMonths;
-        row[`${y.year} Abierto próx. mismo año`] = st.openNextSameYear;
-        row[`${y.year} Abierto próx. año siguiente`] = st.openNextYear;
+        row[`${y.year} Abierto RDD mes (meses anteriores)`] = st.openPrevMonths;
+        row[`${y.year} Abierto RDD mismo año`] = st.openNextSameYear;
+        row[`${y.year} Abierto RDD próx. año`] = st.openNextYear;
       });
       return row;
     });
@@ -238,9 +249,9 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                             {y.year === year && <>
                               <th className={th} title="Parte del intake ya facturada (facturas de cualquier fecha)">Ya facturado</th>
                               <th className={th} title="Pedidos creados en el mes, abiertos, con Requested Delivery Date dentro del mes">Abierto RDD mes</th>
-                              <th className={th} title="Pedidos de meses anteriores, abiertos, con Requested Delivery Date en este mes (no forman parte del intake del mes)">Abierto RDD mes (pedidos anteriores)</th>
-                              <th className={th} title="Pedidos creados en el mes, abiertos, con entrega en meses siguientes del mismo año">Abierto próx. mismo año</th>
-                              <th className={th} title="Pedidos creados en el mes, abiertos, con entrega el año siguiente o después">Abierto próx. año siguiente</th>
+                              <th className={th} title="Pedidos de meses anteriores, abiertos, con Requested Delivery Date en este mes (no forman parte del intake del mes)">Abierto RDD mes (meses anteriores)</th>
+                              <th className={th} title="Pedidos creados en el mes, abiertos, con entrega en meses siguientes del mismo año">Abierto RDD mismo año</th>
+                              <th className={th} title="Pedidos creados en el mes, abiertos, con entrega el año siguiente o después">Abierto RDD próx. año</th>
                             </>}
                           </Fragment>
                         ))}
@@ -349,7 +360,7 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                 </div>
                 <p className="text-xs text-gray-500">
                   Importes sin IVA en la divisa de la empresa (en EUR en el consolidado). Sin intercompañía: clientes con forma de pago INTERGROUP o empresas del grupo (CRAZE …){current?.data?.intercompanyExcluded ? `, ${num(current.data.intercompanyExcluded)} documentos de ${year} excluidos` : ''}. Facturado = Posted Sales Invoices − Posted Sales Credit Memos por Posting Date (solo documentos registrados: los movimientos con * en el nº, sin documento detrás, no cuentan).
-                  &quot;Order Date del mes&quot; = Order Intake: todos los Sales Orders creados ese mes = lo ya facturado de esos pedidos (facturas de {year - 2} a {year}, cualquier mes) + lo que sigue abierto hoy, separado en &quot;Abierto RDD mes&quot; (Requested Delivery Date dentro del mes de creación), &quot;Abierto próx. mismo año&quot; y &quot;Abierto próx. año siguiente&quot;. &quot;Abierto RDD mes (pedidos anteriores)&quot; = pedidos creados en meses anteriores, aún abiertos, que deberían facturarse en este mes (no suman al intake del mes). El % es el crecimiento del Order Intake frente al mismo mes del año anterior (el año más antiguo no tiene comparación). Haz clic en un mes para ver lo facturado por antigüedad del pedido y los pedidos abiertos de ese mes.
+                  &quot;Order Date del mes&quot; = Order Intake: todos los Sales Orders creados ese mes = lo ya facturado de esos pedidos (facturas de {year - 2} a {year}, cualquier mes) + lo que sigue abierto hoy, separado en &quot;Abierto RDD mes&quot; (Requested Delivery Date dentro del mes de creación), &quot;Abierto RDD mismo año&quot; y &quot;Abierto RDD próx. año&quot;. &quot;Abierto RDD mes (meses anteriores)&quot; = pedidos creados en meses anteriores, aún abiertos, que deberían facturarse en este mes (no suman al intake del mes). El % es el crecimiento del Order Intake frente al mismo mes del año anterior (el año más antiguo no tiene comparación). Haz clic en un mes para ver lo facturado por antigüedad del pedido y los pedidos abiertos de ese mes.
                   {unknownCount > 0 && ` ${unknownCount} facturas de ${year} tienen un pedido que no está abierto ni archivado en BC: salen como "Pedido no encontrado".`}
                 </p>
               </>
