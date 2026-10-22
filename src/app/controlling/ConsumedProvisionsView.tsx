@@ -49,6 +49,8 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
   const [state, setState] = useState<{ data: Data | null; loading: boolean; error: string | null }>({ data: null, loading: true, error: null });
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [sort, setSort] = useState<Record<string, { key: SortKey; dir: 1 | -1 }>>({});
+  // Agrupación de las facturas de cada provisión (como el desglose del BWA): mes, proveedor, origen o sin agrupar
+  const [grouping, setGrouping] = useState<'none' | 'month' | 'vendor' | 'source'>('none');
   const sortBy = (gk: string, key: SortKey) => setSort(s => {
     const cur = s[gk];
     return { ...s, [gk]: { key, dir: cur?.key === key ? (cur.dir === 1 ? -1 : 1) : key === 'amount' ? -1 : 1 } };
@@ -109,8 +111,40 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
     ].filter(g => g.docs.length);
   };
 
+  // Documentos agrupados según "Agrupar por": cada grupo se despliega con su tabla
+  const MONTHS_ES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+  const groupKeyOf = (doc: Doc) => grouping === 'month' ? (doc.firstDate || '').substring(0, 7)
+    : grouping === 'vendor' ? `${doc.vendorNo}|${doc.vendorName || doc.vendorNo || '(sin proveedor)'}`
+    : (doc.movements[0]?.source || '(sin origen)');
+  const groupLabelOf = (k: string) => grouping === 'month' ? (k ? `${MONTHS_ES[Number(k.substring(5, 7)) - 1]} ${k.substring(0, 4)}` : '(sin fecha)')
+    : grouping === 'vendor' ? `${k.split('|').slice(1).join('|')}${k.split('|')[0] ? ` · ${k.split('|')[0]}` : ''}` : k;
+  const docsTable = (gk: string, docs: Doc[], account: string) => {
+    if (grouping === 'none') return docsTableFlat(gk, docs, account);
+    const groups = new Map<string, Doc[]>();
+    for (const x of docs) groups.set(groupKeyOf(x), [...(groups.get(groupKeyOf(x)) || []), x]);
+    const list = Array.from(groups.entries()).sort((a, b) => grouping === 'month' ? a[0].localeCompare(b[0]) : Math.abs(sum(b[1])) - Math.abs(sum(a[1])));
+    return (
+      <div className="space-y-1">
+        {list.map(([k, g]) => {
+          const ok = `${gk}|grp:${grouping}:${k}`;
+          return (
+            <div key={k} className="border border-gray-200 rounded-lg bg-white">
+              <button onClick={() => toggle(ok)} className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-gray-50">
+                {open[ok] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                <span className="text-gray-800">{groupLabelOf(k)}</span>
+                <span className="ml-auto text-xs text-gray-500">{g.length} doc.</span>
+                <span className="w-36 text-right font-semibold font-mono">{num(sum(g), 2)}</span>
+              </button>
+              {open[ok] && <div className="px-2 pb-2">{docsTableFlat(ok, g, account)}</div>}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   // Tabla de documentos (ordenable) de un grupo: gk = concepto|grupo
-  const docsTable = (gk: string, docs: Doc[], account: string) => (
+  const docsTableFlat = (gk: string, docs: Doc[], account: string) => (
     <table className="w-full text-[12px] bg-white rounded-lg border border-gray-200">
       <thead>
         <tr className="border-b border-gray-200 text-left">
@@ -191,6 +225,16 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
               className="block mt-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-900 bg-white normal-case tracking-normal" />
           </label>
         ))}
+        <label className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+          Agrupar facturas por
+          <select value={grouping} onChange={e => setGrouping(e.target.value as typeof grouping)}
+            className="block mt-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-900 bg-white normal-case tracking-normal">
+            <option value="none">Sin agrupar</option>
+            <option value="month">Mes</option>
+            <option value="vendor">Proveedor</option>
+            <option value="source">Origen (Source Code)</option>
+          </select>
+        </label>
         <button onClick={exportExcel} disabled={state.loading || !d}
           className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
           <FileDown size={16} /> Exportar Excel
