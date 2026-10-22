@@ -5,6 +5,8 @@ import { ChevronDown, ChevronRight, FileDown, RefreshCw, Search } from 'lucide-r
 import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
 import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
+import CompanySelect, { useReportCompany } from './CompanySelect';
+import { fetchPurchaseItems } from './purchaseData';
 
 // Controlling · Compras por proveedor: los mismos datos que Compras por artículo (facturas y abonos de compra
 // registrados, /api/controlling/purchase-items) vistos al revés: proveedor → artículo → facturas, para validar que cada
@@ -38,7 +40,8 @@ const PAGE = 100;
 const th = 'py-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-gray-500 font-mono whitespace-nowrap';
 const td = 'py-1.5 px-2 whitespace-nowrap';
 
-export default function PurchaseVendorsView({ fmt, company }: { fmt: Fmt; company: string }) {
+export default function PurchaseVendorsView({ fmt, company: globalCompany }: { fmt: Fmt; company: string }) {
+  const [company, setCompany] = useReportCompany(globalCompany);
   const { num, date } = fmt;
   const [from, setFrom] = useState(() => `${new Date().getFullYear()}-01-01`);
   const [to, setTo] = useState(() => iso(new Date()));
@@ -53,11 +56,8 @@ export default function PurchaseVendorsView({ fmt, company }: { fmt: Fmt; compan
     if (!from || !to || from > to) return;
     let cancelled = false;
     setState({ data: null, loading: true, error: null });
-    fetch(`/api/controlling/purchase-items?from=${from}&to=${to}${reload.force ? '&force=1' : ''}`, { cache: 'no-store' })
-      .then(async res => {
-        const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        if (!cancelled) setState(res.ok && !data.error ? { data, loading: false, error: null } : { data: null, loading: false, error: data.error || `HTTP ${res.status}` });
-      })
+    fetchPurchaseItems(company, from, to, reload.force)
+      .then(data => !cancelled && setState({ data, loading: false, error: null }))
       .catch(err => !cancelled && setState({ data: null, loading: false, error: err.message }));
     return () => { cancelled = true; };
   }, [from, to, reload, company]);
@@ -167,6 +167,7 @@ export default function PurchaseVendorsView({ fmt, company }: { fmt: Fmt; compan
   return (
     <Section title="Compras por proveedor" source="Facturas y abonos de compra registrados (como Compras por artículo) · proveedor → artículo → facturas">
       <div className="flex flex-wrap items-end gap-4">
+        <CompanySelect value={company} onChange={setCompany} />
         {([['Desde', from, setFrom], ['Hasta', to, setTo]] as const).map(([label, value, set]) => (
           <label key={label} className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
             {label}

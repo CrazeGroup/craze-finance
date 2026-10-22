@@ -10,13 +10,14 @@ export const dynamic = 'force-dynamic';
 const SLOTS = ['A', 'B'] as const;
 const key = (company: string, slot: string) => `controlling:pl:${company}:${slot}`;
 
-async function company() {
+async function company(req?: Request) {
   const cookieStore = await cookies();
-  return cookieStore.get('craze_selected_company')?.value || 'CRAZE';
+  const param = req ? new URL(req.url).searchParams.get('company') : null;   // ?company= (selector del informe)
+  return param || cookieStore.get('craze_selected_company')?.value || 'CRAZE';
 }
 
-export async function GET() {
-  const c = await company();
+export async function GET(req: Request) {
+  const c = await company(req);
   const rows = await prisma.apiConfig.findMany({ where: { key: { in: SLOTS.map(s => key(c, s)) } } });
   const out: Record<string, unknown> = { A: null, B: null };
   for (const r of rows) {
@@ -29,7 +30,7 @@ export async function POST(req: Request) {
   try {
     const { slot, file } = await req.json();
     if (!SLOTS.includes(slot) || !file?.rows?.length) return NextResponse.json({ error: 'Datos no válidos' }, { status: 400 });
-    const c = await company();
+    const c = await company(req);
     const config = JSON.stringify(file);
     await prisma.apiConfig.upsert({ where: { key: key(c, slot) }, update: { config }, create: { key: key(c, slot), url: '', config } });
     await logAction('Controlling: Excel P&L cargado', `Periodo ${slot}: ${file.name} (${file.rows.length} filas)`);
@@ -42,7 +43,7 @@ export async function POST(req: Request) {
 export async function DELETE(req: Request) {
   const slot = new URL(req.url).searchParams.get('slot') || '';
   if (!SLOTS.includes(slot as any)) return NextResponse.json({ error: 'Periodo no válido' }, { status: 400 });
-  const c = await company();
+  const c = await company(req);
   await prisma.apiConfig.deleteMany({ where: { key: key(c, slot) } });
   await logAction('Controlling: Excel P&L eliminado', `Periodo ${slot}`);
   return NextResponse.json({ ok: true });

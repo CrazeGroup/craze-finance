@@ -1,5 +1,6 @@
 'use client';
 
+import CompanySelect, { useReportCompany } from './CompanySelect';
 import { useEffect, useMemo, useState } from 'react';
 import { Trash2, Upload } from 'lucide-react';
 import type { Fmt } from '../reporting/i18n';
@@ -40,7 +41,8 @@ const store = {
   set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* sin almacenamiento */ } },
 };
 
-export default function PlCompareView({ fmt, company }: { fmt: Fmt; company: string }) {
+export default function PlCompareView({ fmt, company: globalCompany }: { fmt: Fmt; company: string }) {
+  const [company, setCompany] = useReportCompany(globalCompany, false);
   const { num, pct, date } = fmt;
   const [files, setFiles] = useState<Record<Slot, PlFile | null>>({ A: null, B: null });
   const [loading, setLoading] = useState(true);
@@ -53,7 +55,7 @@ export default function PlCompareView({ fmt, company }: { fmt: Fmt; company: str
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetch('/api/controlling/pl', { cache: 'no-store' }).then(r => r.json()).then(d => {
+    fetch(`/api/controlling/pl?company=${encodeURIComponent(company)}`, { cache: 'no-store' }).then(r => r.json()).then(d => {
       if (cancelled) return;
       setFiles({ A: d.A || null, B: d.B || null });
       try { setMapping(JSON.parse(store.get(mapKey) || '{}')); } catch { setMapping({}); }
@@ -73,7 +75,7 @@ export default function PlCompareView({ fmt, company }: { fmt: Fmt; company: str
     setError(null);
     try {
       const parsed = parsePl(await file.arrayBuffer(), file.name);
-      const res = await fetch('/api/controlling/pl', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slot, file: parsed }) });
+      const res = await fetch(`/api/controlling/pl?company=${encodeURIComponent(company)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slot, file: parsed }) });
       const r = await res.json();
       if (!res.ok || r.error) throw new Error(r.error || `HTTP ${res.status}`);
       setFiles(f => ({ ...f, [slot]: parsed }));
@@ -82,7 +84,7 @@ export default function PlCompareView({ fmt, company }: { fmt: Fmt; company: str
     }
   };
   const remove = async (slot: Slot) => {
-    await fetch(`/api/controlling/pl?slot=${slot}`, { method: 'DELETE' });
+    await fetch(`/api/controlling/pl?company=${encodeURIComponent(company)}&slot=${slot}`, { method: 'DELETE' });
     setFiles(f => ({ ...f, [slot]: null }));
   };
   const setMap = (bLabel: string, aLabel: string) => {
@@ -129,6 +131,7 @@ export default function PlCompareView({ fmt, company }: { fmt: Fmt; company: str
 
   return (
     <Section title="Comparación de BWA año a año" source={`Excel Profit & Loss subidos · ${company} · meses comparados: ${monthText}`}>
+      <div className="flex"><CompanySelect value={company} onChange={setCompany} allowConsolidated={false} /></div>
       <Grid>
         {(['A', 'B'] as Slot[]).map(slot => {
           const f = files[slot];

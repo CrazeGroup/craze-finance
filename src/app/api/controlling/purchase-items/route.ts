@@ -15,7 +15,7 @@ export async function GET(req: Request) {
     const from = searchParams.get('from'), to = searchParams.get('to');
     if (!isDate(from) || !isDate(to) || from > to) return NextResponse.json({ error: 'Fechas no válidas' }, { status: 400 });
     const cookieStore = await cookies();
-    const company = cookieStore.get('craze_selected_company')?.value || 'CRAZE';
+    const company = new URL(req.url).searchParams.get('company') || cookieStore.get('craze_selected_company')?.value || 'CRAZE';   // ?company= (selector del informe) o la empresa del menú
     if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
     const ctx = await getBcContext(company);
     if (searchParams.get('probe') === '1') return NextResponse.json(await probeSources(ctx, from, to));

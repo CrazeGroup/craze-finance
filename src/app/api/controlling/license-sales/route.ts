@@ -16,7 +16,7 @@ const isDate = (d: string | null): d is string => !!d && /^\d{4}-\d{2}-\d{2}$/.t
 export async function GET(req: Request) {
   try {
     const cookieStore = await cookies();
-    const company = cookieStore.get('craze_selected_company')?.value || 'CRAZE';
+    const company = new URL(req.url).searchParams.get('company') || cookieStore.get('craze_selected_company')?.value || 'CRAZE';   // ?company= (selector del informe) o la empresa del menú
     if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
 
     const { searchParams } = new URL(req.url);
@@ -41,7 +41,7 @@ export async function GET(req: Request) {
       return Object.fromEntries(rows.map((g: any) => [str(g.code), str(g.description)]));
     }, force).catch(() => ({} as Record<string, string>)) : {};
     return NextResponse.json({
-      from, to, company, currency: r.currency, ratesSource: r.ratesSource, amountField: r.amountField, shipCountryField: r.shipCountryField,
+      from, to, company, currency: r.currency, eurRate: r.fx?.rate ?? (r.currency === 'EUR' ? 1 : null), ratesSource: r.ratesSource, amountField: r.amountField, shipCountryField: r.shipCountryField,
       byCode, breakdown: r.breakdown, groupNames, lines: r.stats.lines, ic: r.stats.ic, itemsError: r.itemsError,
     });
   } catch (error: any) {

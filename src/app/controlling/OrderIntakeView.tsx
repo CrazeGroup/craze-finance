@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, FileDown, RefreshCw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
 import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
+import CompanySelect, { CONSOLIDATED, REPORT_COMPANIES, useReportCompany } from './CompanySelect';
 
 // Controlling · Facturación según Order Date: lo facturado cada mes (desglosable por antigüedad del pedido) y el Order
 // Intake del mes = todos los Sales Orders creados ese mes (Order Date): lo ya facturado de esos pedidos (facturas de
@@ -12,7 +13,7 @@ import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
 // Comparado con los mismos meses de los 2 años anteriores (solo facturas: histórico).
 type Invoice = { kind: 'invoice' | 'credit'; no: string; postingDate: string; customerNo: string; customerName: string; amount: number; orderNo: string; orderDate: string | null };
 type OpenOrder = { no: string; customerNo: string; customerName: string; orderDate: string; requestedDeliveryDate: string; amount: number; invoiced: number; pending: number; currency: string };
-type YearData = { year: number; from: string; to: string; invoices: Invoice[]; openOrders: OpenOrder[]; warnings: string[] };
+type YearData = { year: number; from: string; to: string; currency?: string; eurRate?: number; invoices: Invoice[]; openOrders: OpenOrder[]; intercompanyExcluded?: number; warnings: string[] };
 type YearState = { year: number; data: YearData | null; error: string | null; loading: boolean };
 
 const MONTHS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
@@ -43,8 +44,9 @@ function bucketOf(i: Invoice): Bucket {
 }
 const month = (date: string) => Number(date.substring(5, 7));
 
-export default function OrderIntakeView({ fmt, company }: { fmt: Fmt; company: string }) {
+export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: Fmt; company: string }) {
   const { num, date } = fmt;
+  const [company, setCompany] = useReportCompany(globalCompany);
   const thisYear = new Date().getFullYear();
   const [year, setYear] = useState(thisYear);
   const [reload, setReload] = useState({ n: 0, force: false });
@@ -59,16 +61,31 @@ export default function OrderIntakeView({ fmt, company }: { fmt: Fmt; company: s
   useEffect(() => {
     let cancelled = false;
     setYears(yearList.map(y => ({ year: y, data: null, error: null, loading: true })));
-    yearList.forEach(y => {
+    // Una empresa o, en consolidado, todas sumadas en EUR (tipo de Currencies_Excel, como el BWA)
+    const one = async (co: string, y: number): Promise<YearData> => {
       // Las Sales Orders abiertas (de hoy) se piden con el año elegido y sirven para todos los años
-      const params = `year=${y}&from=1&to=12${y === year ? '&open=1' : ''}${reload.force ? '&force=1' : ''}`;
-      fetch(`/api/controlling/order-intake?${params}`, { cache: 'no-store' })
-        .then(async res => {
-          const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-          if (cancelled) return;
-          setYears(ys => ys.map(s => s.year !== y ? s : res.ok && !data.error
-            ? { ...s, data, loading: false } : { ...s, error: data.error || `HTTP ${res.status}`, loading: false }));
+      const params = `company=${encodeURIComponent(co)}&year=${y}&from=1&to=12${y === year ? '&open=1' : ''}${reload.force ? '&force=1' : ''}`;
+      const res = await fetch(`/api/controlling/order-intake?${params}`, { cache: 'no-store' });
+      const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      if (!res.ok || data.error) throw new Error(`${co}: ${data.error || `HTTP ${res.status}`}`);
+      return data;
+    };
+    yearList.forEach(y => {
+      const load = company === CONSOLIDATED
+        ? Promise.allSettled(REPORT_COMPANIES.map(co => one(co, y))).then(settled => {
+          const parts = settled.flatMap(r => (r.status === 'fulfilled' ? [r.value] : []));
+          const failed = settled.flatMap(r => (r.status === 'rejected' ? [`No incluida en el consolidado: ${r.reason?.message || r.reason}`] : []));
+          if (!parts.length) throw new Error(failed.join(' · '));
+          return {
+          year: y, from: `${y}-01-01`, to: `${y}-12-31`, currency: 'EUR',
+          invoices: parts.flatMap(p => p.invoices.map(i => ({ ...i, amount: i.amount * (p.eurRate || 1) }))),
+          openOrders: parts.flatMap(p => p.openOrders.map(o => ({ ...o, amount: o.amount * (p.eurRate || 1), invoiced: o.invoiced * (p.eurRate || 1), pending: o.pending * (p.eurRate || 1) }))),
+          intercompanyExcluded: parts.reduce((t, p) => t + (p.intercompanyExcluded || 0), 0),
+          warnings: [...failed, ...parts.flatMap(p => p.warnings)],
+          };
         })
+        : one(company, y);
+      load.then(data => !cancelled && setYears(ys => ys.map(s => s.year !== y ? s : { ...s, data, loading: false })))
         .catch(err => !cancelled && setYears(ys => ys.map(s => s.year === y ? { ...s, error: err.message, loading: false } : s)));
     });
     return () => { cancelled = true; };
@@ -153,7 +170,8 @@ export default function OrderIntakeView({ fmt, company }: { fmt: Fmt; company: s
             {Array.from({ length: 6 }, (_, i) => thisYear - i).map(y => <option key={y} value={y}>{y}</option>)}
           </select>
         </label>
-        <p className="text-xs text-gray-500 pb-2">Comparado con {year - 2} y {year - 1}</p>
+        <CompanySelect value={company} onChange={setCompany} />
+        <p className="text-xs text-gray-500 pb-2">Comparado con {year - 2} y {year - 1}{company === CONSOLIDATED ? ' · consolidado en EUR' : ''}</p>
         <div className="ml-auto flex gap-2">
           <button onClick={exportExcel} disabled={loading || !months.length}
             className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
@@ -186,7 +204,7 @@ export default function OrderIntakeView({ fmt, company }: { fmt: Fmt; company: s
                       <tr className="bg-gray-50">
                         <th className={`${th} text-left`} />
                         {years.map(y => (
-                          <th key={y.year} colSpan={6}
+                          <th key={y.year} colSpan={y.year === year ? 6 : 3}
                             className={`py-2 px-2 text-xs font-bold text-center border-l border-gray-200 ${y.year === year ? 'text-[#C8186C]' : 'text-gray-700'}`}>
                             {y.year}
                           </th>
@@ -204,9 +222,11 @@ export default function OrderIntakeView({ fmt, company }: { fmt: Fmt; company: s
                             <th className={`${th} border-l border-gray-200`}>Facturado</th>
                             <th className={th} title="Order Intake: todos los Sales Orders con Order Date en este mes (ya facturado + abierto)">Order Date del mes</th>
                             <th className={th} title="Order Intake sobre lo facturado del mes">%</th>
-                            <th className={th} title="Parte del intake ya facturada (facturas de cualquier fecha)">Ya facturado</th>
-                            <th className={th} title="Pedidos del mes abiertos con Requested Delivery Date dentro del mes">Abierto RDD mes</th>
-                            <th className={th} title="Pedidos del mes abiertos con Requested Delivery Date en meses siguientes">Abierto próx.</th>
+                            {y.year === year && <>
+                              <th className={th} title="Parte del intake ya facturada (facturas de cualquier fecha)">Ya facturado</th>
+                              <th className={th} title="Pedidos del mes abiertos con Requested Delivery Date dentro del mes">Abierto RDD mes</th>
+                              <th className={th} title="Pedidos del mes abiertos con Requested Delivery Date en meses siguientes">Abierto próx.</th>
+                            </>}
                           </Fragment>
                         ))}
                       </tr>
@@ -228,9 +248,11 @@ export default function OrderIntakeView({ fmt, company }: { fmt: Fmt; company: s
                                   <td className={`${td} border-l border-gray-100 text-gray-700`}>{money(st.billed)}</td>
                                   <td className={`${td} font-bold text-[#C8186C]`}>{money(st.same)}</td>
                                   <td className={`${td} text-gray-500`}>{pct(st.same, st.billed)}</td>
-                                  <td className={`${td} text-gray-700`}>{money(st.intakeBilled)}</td>
-                                  <td className={`${td} text-indigo-700`}>{money(st.openMonth)}</td>
-                                  <td className={`${td} text-indigo-500`}>{money(st.openLater)}</td>
+                                  {y.year === year && <>
+                                    <td className={`${td} text-gray-700`}>{money(st.intakeBilled)}</td>
+                                    <td className={`${td} text-indigo-700`}>{money(st.openMonth)}</td>
+                                    <td className={`${td} text-indigo-500`}>{money(st.openLater)}</td>
+                                  </>}
                                 </Fragment>
                               );
                             })}
@@ -245,7 +267,7 @@ export default function OrderIntakeView({ fmt, company }: { fmt: Fmt; company: s
                                     <td className={`${td} border-l border-gray-100 text-gray-600`}>{money(st.byBucket[b.id])}</td>
                                     <td className={td} />
                                     <td className={`${td} text-gray-500`}>{st.byBucket[b.id] ? pct(st.byBucket[b.id], st.billed) : ''}</td>
-                                    <td className={td} /><td className={td} /><td className={td} />
+                                    {y.year === year && <><td className={td} /><td className={td} /><td className={td} /></>}
                                   </Fragment>
                                 );
                               })}
@@ -253,7 +275,7 @@ export default function OrderIntakeView({ fmt, company }: { fmt: Fmt; company: s
                           ))}
                           {open[m] && stats(current, m).openOrders.length > 0 && (
                             <tr className="border-b border-gray-100 bg-indigo-50/40 text-[12px]">
-                              <td colSpan={1 + years.length * 6} className="py-2 px-2 pl-9 text-gray-600">
+                              <td colSpan={1 + years.reduce((t, y) => t + (y.year === year ? 6 : 3), 0)} className="py-2 px-2 pl-9 text-gray-600">
                                 <span className="font-semibold text-indigo-800">Sales Orders abiertas creadas en {MONTHS[m - 1].toLowerCase()} {year}:</span>{' '}
                                 {stats(current, m).openOrders.sort((a, b) => b.pending - a.pending).map((o, i) => (
                                   <span key={o.no}>{i ? ' · ' : ''}{o.no} {o.customerName} ({num(o.pending, 2)}{o.invoiced ? `, ya facturado ${num(o.invoiced, 2)}` : ''}, RDD {date(o.requestedDeliveryDate)})</span>
@@ -272,9 +294,11 @@ export default function OrderIntakeView({ fmt, company }: { fmt: Fmt; company: s
                             <td className={`${td} border-l border-gray-200`}>{money(sum(y, 'billed'))}</td>
                             <td className={`${td} text-[#C8186C]`}>{money(sum(y, 'same'))}</td>
                             <td className={td}>{pct(sum(y, 'same'), sum(y, 'billed'))}</td>
-                            <td className={td}>{money(sum(y, 'intakeBilled'))}</td>
-                            <td className={`${td} text-indigo-700`}>{money(sum(y, 'openMonth'))}</td>
-                            <td className={`${td} text-indigo-500`}>{money(sum(y, 'openLater'))}</td>
+                            {y.year === year && <>
+                              <td className={td}>{money(sum(y, 'intakeBilled'))}</td>
+                              <td className={`${td} text-indigo-700`}>{money(sum(y, 'openMonth'))}</td>
+                              <td className={`${td} text-indigo-500`}>{money(sum(y, 'openLater'))}</td>
+                            </>}
                           </Fragment>
                         ))}
                       </tr>
@@ -286,7 +310,7 @@ export default function OrderIntakeView({ fmt, company }: { fmt: Fmt; company: s
                               <td className={`${td} border-l border-gray-200`}>{money(sumBucket(y, b.id))}</td>
                               <td className={td} />
                               <td className={td}>{sumBucket(y, b.id) ? pct(sumBucket(y, b.id), sum(y, 'billed')) : ''}</td>
-                              <td className={td} /><td className={td} /><td className={td} />
+                              {y.year === year && <><td className={td} /><td className={td} /><td className={td} /></>}
                             </Fragment>
                           ))}
                         </tr>
@@ -295,7 +319,7 @@ export default function OrderIntakeView({ fmt, company }: { fmt: Fmt; company: s
                   </table>
                 </div>
                 <p className="text-xs text-gray-500">
-                  Importes sin IVA en la divisa de la empresa. Facturado = Posted Sales Invoices − Posted Sales Credit Memos por Posting Date (solo documentos registrados: los movimientos con * en el nº, sin documento detrás, no cuentan).
+                  Importes sin IVA en la divisa de la empresa (en EUR en el consolidado). Sin intercompañía: clientes con forma de pago INTERGROUP o empresas del grupo (CRAZE …){current?.data?.intercompanyExcluded ? `, ${num(current.data.intercompanyExcluded)} documentos de ${year} excluidos` : ''}. Facturado = Posted Sales Invoices − Posted Sales Credit Memos por Posting Date (solo documentos registrados: los movimientos con * en el nº, sin documento detrás, no cuentan).
                   &quot;Order Date del mes&quot; = Order Intake: todos los Sales Orders creados ese mes = lo ya facturado de esos pedidos (facturas de {year - 2} a {year}, cualquier mes) + lo que sigue abierto hoy, separado en &quot;Abierto RDD mes&quot; (Requested Delivery Date dentro del mes de creación) y &quot;Abierto próx.&quot; (entrega en meses siguientes). El % es el intake sobre lo facturado del mes. Haz clic en un mes para ver lo facturado por antigüedad del pedido y los pedidos abiertos de ese mes.
                   {unknownCount > 0 && ` ${unknownCount} facturas de ${year} tienen un pedido que no está abierto ni archivado en BC: salen como "Pedido no encontrado".`}
                 </p>

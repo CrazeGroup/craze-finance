@@ -5,6 +5,8 @@ import { ChevronDown, ChevronRight, FileDown, RefreshCw, Search } from 'lucide-r
 import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
 import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
+import CompanySelect, { useReportCompany } from './CompanySelect';
+import { fetchPurchaseItems } from './purchaseData';
 
 // Controlling · Compras por artículo (facturas y abonos de compra registrados): artículo → proveedores → documentos.
 type GlAcc = { no: string; name: string; amount: number };
@@ -32,7 +34,8 @@ function setupAccounts(setup: Item['setup'], k: 'purch' | 'crMemo') {
   return setup.filter(s => s[k]).map(s => `${s[k]} (${s.bus || 'sin grupo'})`).join(' · ');
 }
 
-export default function PurchaseItemsView({ fmt, company }: { fmt: Fmt; company: string }) {
+export default function PurchaseItemsView({ fmt, company: globalCompany }: { fmt: Fmt; company: string }) {
+  const [company, setCompany] = useReportCompany(globalCompany);
   const { num, date } = fmt;
   const [from, setFrom] = useState(() => `${new Date().getFullYear()}-01-01`);
   const [to, setTo] = useState(() => iso(new Date()));
@@ -46,12 +49,8 @@ export default function PurchaseItemsView({ fmt, company }: { fmt: Fmt; company:
     if (!from || !to || from > to) return;
     let cancelled = false;
     setState({ data: null, loading: true, error: null });
-    fetch(`/api/controlling/purchase-items?from=${from}&to=${to}${reload.force ? '&force=1' : ''}`, { cache: 'no-store' })
-      .then(async res => {
-        const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        if (cancelled) return;
-        setState(res.ok && !data.error ? { data, loading: false, error: null } : { data: null, loading: false, error: data.error || `HTTP ${res.status}` });
-      })
+    fetchPurchaseItems(company, from, to, reload.force)
+      .then(data => !cancelled && setState({ data, loading: false, error: null }))
       .catch(err => !cancelled && setState({ data: null, loading: false, error: err.message }));
     return () => { cancelled = true; };
   }, [from, to, reload, company]);
@@ -95,6 +94,7 @@ export default function PurchaseItemsView({ fmt, company }: { fmt: Fmt; company:
   return (
     <Section title="Compras por artículo" source="Facturas (122/123) y abonos (124/125) de compra registrados · configuración contable actual (252) · cuenta histórica de G/L Entries (17)">
       <div className="flex flex-wrap items-end gap-4">
+        <CompanySelect value={company} onChange={setCompany} />
         {([['Desde', from, setFrom], ['Hasta', to, setTo]] as const).map(([label, value, set]) => (
           <label key={label} className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
             {label}

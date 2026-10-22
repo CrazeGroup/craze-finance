@@ -1,4 +1,5 @@
-import { bcFetchAll, BcContext, odataUrl } from '@/lib/bcClient';
+import prisma from '@/lib/prisma';
+import { bcFetchAll, BcContext, getBcContext, odataUrl } from '@/lib/bcClient';
 import { cached, HOUR } from '@/lib/reporting/cache';
 import { today } from '@/lib/reporting/period';
 
@@ -29,6 +30,24 @@ const lastDay = (ym: string) => {
   return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
 };
 const d10 = (v: any) => { const x = s(v).substring(0, 10); return x && x !== '0001-01-01' ? x : ''; };
+
+// Intercompañía (no cuenta): clientes con forma de pago INTERGROUP o cuyo nombre empieza por "CRAZE" (empresas del grupo)
+async function isIntercompanyFn(company: string) {
+  const ic = await prisma.customer.findMany({ where: { companyId: company, paymentMethod: 'INTERGROUP' }, select: { bcId: true } }).catch(() => [] as { bcId: string | null }[]);
+  const set = new Set(ic.map(c => c.bcId).filter(Boolean) as string[]);
+  return (customerNo: string, name: string) => set.has(customerNo) || /^craze\b/i.test(name.trim());
+}
+
+// Divisa local de la empresa y su tipo a EUR (Currencies_Excel de CRAZE, como el BWA) para el consolidado
+const companyCurrency = (company: string) => (/\bUK\b/i.test(company) ? 'GBP' : /\bAG\b/i.test(company) ? 'CHF' : 'EUR');
+async function eurRate(currency: string) {
+  if (currency === 'EUR') return 1;
+  return cached(`order-intake:fx:${currency}`, 6 * HOUR, async () => {
+    const crz = await getBcContext('CRAZE');
+    const rows = await bcFetchAll(odataUrl(`${crz.odataCompanyBase}/Currencies_Excel`, { $select: 'Code,ExchangeRateAmt' }), crz.token);
+    return n(rows.find((r: any) => r.Code === currency && r.ExchangeRateAmt)?.ExchangeRateAmt) || 1;
+  });
+}
 
 // Order Date de los pedidos archivados (todas las versiones tienen la misma)
 async function archivedOrderDates(ctx: BcContext, sinceYear: number) {
@@ -116,15 +135,21 @@ export async function orderIntakeYear(ctx: BcContext, year: number, fromMonth: n
     ...i, orderDate: i.orderNo ? (openDate.get(i.orderNo) || archived[i.orderNo] || null) : null,
   }));
 
+  // Sin intercompañía (pedidos y facturas a CRAZE Toys, Group AG…)
+  const isIc = await isIntercompanyFn(company);
+  const icCount = withDates.filter(i => isIc(i.customerNo, i.customerName)).length;
+  const external = withDates.filter(i => !isIc(i.customerNo, i.customerName));
+
   let openOrders: OpenOrder[] = [];
   if (includeOpen) {
     // Lo ya facturado de cada pedido abierto (parcialmente facturado) en el año
     const invoicedByOrder: Record<string, number> = {};
-    for (const i of withDates) if (i.kind === 'invoice' && i.orderNo) invoicedByOrder[i.orderNo] = (invoicedByOrder[i.orderNo] || 0) + i.amount;
-    openOrders = open.filter(o => o.orderDate && o.requestedDeliveryDate).map(o => {
+    for (const i of external) if (i.kind === 'invoice' && i.orderNo) invoicedByOrder[i.orderNo] = (invoicedByOrder[i.orderNo] || 0) + i.amount;
+    openOrders = open.filter(o => o.orderDate && o.requestedDeliveryDate && !isIc(o.customerNo, o.customerName)).map(o => {
       const invoiced = invoicedByOrder[o.no] || 0;
       return { ...o, invoiced, pending: Math.max(0, o.amount - invoiced) };
     }).filter(o => o.pending > 0.005);
   }
-  return { year, from, to, invoices: withDates, openOrders, warnings };
+  const currency = companyCurrency(company);
+  return { year, from, to, company, currency, eurRate: await eurRate(currency).catch(() => 1), invoices: external, openOrders, intercompanyExcluded: icCount, warnings };
 }

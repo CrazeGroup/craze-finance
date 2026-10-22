@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, FileDown, RefreshCw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
 import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
+import CompanySelect, { CONSOLIDATED, REPORT_COMPANIES, useReportCompany } from './CompanySelect';
 
 // Controlling · Ventas por licencia: venta (Turnover de la LM, como Royalties) por Royalty Code de la empresa activa,
 // del 1 de enero a la fecha elegida, comparada con el mismo periodo de años anteriores.
@@ -36,7 +37,8 @@ const measureLabel = (k: MeasureKey) => MEASURES.find(m => m.id === k)!.label;
 const th = 'py-2 px-3 text-[10px] font-semibold uppercase tracking-wider text-gray-500 whitespace-nowrap';
 const td = 'py-2 px-3 whitespace-nowrap tabular-nums';
 
-export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: string }) {
+export default function LicenseSalesView({ fmt, company: globalCompany }: { fmt: Fmt; company: string }) {
+  const [company, setCompany] = useReportCompany(globalCompany);
   const { num, date } = fmt;
   const [to, setTo] = useState(defaultTo);
   const [yearsBack, setYearsBack] = useState(2);
@@ -60,14 +62,43 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
   useEffect(() => {
     let cancelled = false;
     setYears(periods.map(p => ({ ...p, data: null, error: null, loading: true })));
+    const one = async (co: string, p: { from: string; to: string }) => {
+      const res = await fetch(`/api/controlling/license-sales?company=${encodeURIComponent(co)}&from=${p.from}&to=${p.to}${reload.force ? '&force=1' : ''}`, { cache: 'no-store' });
+      const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      if (!res.ok || data.error) throw new Error(`${co}: ${data.error || `HTTP ${res.status}`}`);
+      return data;
+    };
+    // Consolidado: todas las empresas en EUR (tipo de Currencies_Excel de CRAZE, como Royalties)
+    const scale = (agg: Record<string, any>, r: number) => Object.fromEntries(Object.entries(agg || {}).map(([k, v]: [string, any]) =>
+      [k, { ...v, turnover: (v.turnover || 0) * r, amount: (v.amount || 0) * r, provision: (v.provision || 0) * r }]));
+    const merge = (into: Record<string, any>, add: Record<string, any>) => {
+      for (const [k, v] of Object.entries(add)) {
+        const c = (into[k] ||= { turnover: 0, amount: 0, qty: 0, provision: 0 });
+        c.turnover += v.turnover || 0; c.amount += v.amount || 0; c.qty += v.qty || 0; c.provision += v.provision || 0;
+      }
+      return into;
+    };
     periods.forEach(p => {
-      fetch(`/api/controlling/license-sales?from=${p.from}&to=${p.to}${reload.force ? '&force=1' : ''}`, { cache: 'no-store' })
-        .then(async res => {
-          const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-          if (cancelled) return;
-          setYears(ys => ys.map(y => y.year !== p.year ? y : res.ok && !data.error
-            ? { ...y, data, loading: false } : { ...y, error: data.error || `HTTP ${res.status}`, loading: false }));
+      const load = company === CONSOLIDATED
+        ? Promise.allSettled(REPORT_COMPANIES.map(co => one(co, p))).then(settled => {
+          const parts = settled.flatMap(r => (r.status === 'fulfilled' ? [r.value] : []));
+          if (!parts.length) throw new Error(settled.map(r => (r.status === 'rejected' ? String(r.reason?.message || r.reason) : '')).join(' · '));
+          const byCode: Record<string, any> = {};
+          const breakdown: Record<string, { ship: Record<string, any>; group: Record<string, any> }> = {};
+          const groupNames: Record<string, string> = {};
+          for (const d of parts) {
+            const r = d.eurRate || 1;
+            merge(byCode, scale(d.byCode, r));
+            for (const [code, b] of Object.entries(d.breakdown || {}) as [string, any][]) {
+              const t = (breakdown[code] ||= { ship: {}, group: {} });
+              merge(t.ship, scale(b.ship, r)); merge(t.group, scale(b.group, r));
+            }
+            Object.assign(groupNames, d.groupNames || {});
+          }
+          return { ...parts[0], currency: 'EUR', byCode, breakdown, groupNames, amountField: parts.some(d => d.amountField) ? 'Amount' : null, ratesSource: parts.every(d => d.ratesSource === 'bc') ? 'bc' : 'lm' };
         })
+        : one(company, p);
+      load.then(data => !cancelled && setYears(ys => ys.map(y => y.year !== p.year ? y : { ...y, data, loading: false })))
         .catch(err => !cancelled && setYears(ys => ys.map(y => y.year === p.year ? { ...y, error: err.message, loading: false } : y)));
     });
     return () => { cancelled = true; };
@@ -234,6 +265,7 @@ export default function LicenseSalesView({ fmt, company }: { fmt: Fmt; company: 
   return (
     <Section title="Ventas por licencia" source="AIT Documents LM Components (60000) · Royalty Code de la ficha de artículo en CRAZE GmbH · sin Main Item ni ventas intercompañía (igual que Royalties)">
       <div className="flex flex-wrap items-end gap-4">
+        <CompanySelect value={company} onChange={setCompany} />
         <label className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
           Del 1 de enero hasta
           <input type="date" value={to} onChange={e => e.target.value && setTo(e.target.value)}
