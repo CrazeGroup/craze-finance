@@ -120,6 +120,10 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
   };
   const sum = (y: YearState | undefined, k: 'billed' | 'same' | 'intakeBilled' | 'openMonth' | 'openLater' | 'pending' | 'total') => months.reduce((s, m) => s + stats(y, m)[k], 0);
   const sumBucket = (y: YearState | undefined, b: Bucket) => months.reduce((s, m) => s + stats(y, m).byBucket[b], 0);
+  // Crecimiento del Order Intake frente al mismo mes del año anterior (el año más antiguo no tiene con qué comparar)
+  const prevOf = (y: YearState | undefined) => years.find(x => x.year === (y?.year ?? 0) - 1);
+  const growth = (cur: number, prev: number | null) => (prev ? `${cur - prev >= 0 ? '+' : ''}${num(((cur - prev) / Math.abs(prev)) * 100, 1)} %` : '—');
+  const growthTone = (cur: number, prev: number | null) => (!prev ? 'text-gray-400' : cur >= prev ? 'text-emerald-700' : 'text-[#C0392B]');
   const pct = (part: number, whole: number) => (whole ? `${num((part / whole) * 100, 1)} %` : '—');
   const money = (v: number) => (v ? num(v, 2) : '—');
   const warnings = Array.from(new Set(years.flatMap(y => y.data?.warnings || [])));
@@ -132,7 +136,8 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
         const st = stats(y, m);
         row[`${y.year} Facturado`] = st.billed;
         row[`${y.year} Order Intake (pedidos con Order Date del mes)`] = st.same;
-        row[`${y.year} % intake s/ facturado`] = st.billed ? st.same / st.billed : 0;
+        const py = prevOf(y);
+        row[`${y.year} % intake vs año anterior`] = py ? (stats(py, m).same ? (st.same - stats(py, m).same) / Math.abs(stats(py, m).same) : '') : '';
         row[`${y.year} Intake ya facturado`] = st.intakeBilled;
         row[`${y.year} Abierto RDD en el mes`] = st.openMonth;
         row[`${y.year} Abierto próximamente`] = st.openLater;
@@ -221,7 +226,7 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                           <Fragment key={y.year}>
                             <th className={`${th} border-l border-gray-200`}>Facturado</th>
                             <th className={th} title="Order Intake: todos los Sales Orders con Order Date en este mes (ya facturado + abierto)">Order Date del mes</th>
-                            <th className={th} title="Order Intake sobre lo facturado del mes">%</th>
+                            <th className={th} title="Crecimiento del Order Intake frente al mismo mes del año anterior">% vs {y.year - 1}</th>
                             {y.year === year && <>
                               <th className={th} title="Parte del intake ya facturada (facturas de cualquier fecha)">Ya facturado</th>
                               <th className={th} title="Pedidos del mes abiertos con Requested Delivery Date dentro del mes">Abierto RDD mes</th>
@@ -247,7 +252,7 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                                 <Fragment key={y.year}>
                                   <td className={`${td} border-l border-gray-100 text-gray-700`}>{money(st.billed)}</td>
                                   <td className={`${td} font-bold text-[#C8186C]`}>{money(st.same)}</td>
-                                  <td className={`${td} text-gray-500`}>{pct(st.same, st.billed)}</td>
+                                  {(() => { const py = prevOf(y); const p = py ? stats(py, m).same : null; return <td className={`${td} ${growthTone(st.same, p)}`}>{growth(st.same, p)}</td>; })()}
                                   {y.year === year && <>
                                     <td className={`${td} text-gray-700`}>{money(st.intakeBilled)}</td>
                                     <td className={`${td} text-indigo-700`}>{money(st.openMonth)}</td>
@@ -293,7 +298,7 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                           <Fragment key={y.year}>
                             <td className={`${td} border-l border-gray-200`}>{money(sum(y, 'billed'))}</td>
                             <td className={`${td} text-[#C8186C]`}>{money(sum(y, 'same'))}</td>
-                            <td className={td}>{pct(sum(y, 'same'), sum(y, 'billed'))}</td>
+                            {(() => { const py = prevOf(y); const p = py ? sum(py, 'same') : null; return <td className={`${td} ${growthTone(sum(y, 'same'), p)}`}>{growth(sum(y, 'same'), p)}</td>; })()}
                             {y.year === year && <>
                               <td className={td}>{money(sum(y, 'intakeBilled'))}</td>
                               <td className={`${td} text-indigo-700`}>{money(sum(y, 'openMonth'))}</td>
@@ -320,7 +325,7 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                 </div>
                 <p className="text-xs text-gray-500">
                   Importes sin IVA en la divisa de la empresa (en EUR en el consolidado). Sin intercompañía: clientes con forma de pago INTERGROUP o empresas del grupo (CRAZE …){current?.data?.intercompanyExcluded ? `, ${num(current.data.intercompanyExcluded)} documentos de ${year} excluidos` : ''}. Facturado = Posted Sales Invoices − Posted Sales Credit Memos por Posting Date (solo documentos registrados: los movimientos con * en el nº, sin documento detrás, no cuentan).
-                  &quot;Order Date del mes&quot; = Order Intake: todos los Sales Orders creados ese mes = lo ya facturado de esos pedidos (facturas de {year - 2} a {year}, cualquier mes) + lo que sigue abierto hoy, separado en &quot;Abierto RDD mes&quot; (Requested Delivery Date dentro del mes de creación) y &quot;Abierto próx.&quot; (entrega en meses siguientes). El % es el intake sobre lo facturado del mes. Haz clic en un mes para ver lo facturado por antigüedad del pedido y los pedidos abiertos de ese mes.
+                  &quot;Order Date del mes&quot; = Order Intake: todos los Sales Orders creados ese mes = lo ya facturado de esos pedidos (facturas de {year - 2} a {year}, cualquier mes) + lo que sigue abierto hoy, separado en &quot;Abierto RDD mes&quot; (Requested Delivery Date dentro del mes de creación) y &quot;Abierto próx.&quot; (entrega en meses siguientes). El % es el crecimiento del Order Intake frente al mismo mes del año anterior (el año más antiguo no tiene comparación). Haz clic en un mes para ver lo facturado por antigüedad del pedido y los pedidos abiertos de ese mes.
                   {unknownCount > 0 && ` ${unknownCount} facturas de ${year} tienen un pedido que no está abierto ni archivado en BC: salen como "Pedido no encontrado".`}
                 </p>
               </>
