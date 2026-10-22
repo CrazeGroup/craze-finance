@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
 import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
 import CompanySelect, { CONSOLIDATED, REPORT_COMPANIES, useReportCompany } from './CompanySelect';
+import { ResizeTh, useColumnWidths } from './ResizableColumns';
 
 // Controlling · Facturación según Order Date: lo facturado cada mes (desglosable por antigüedad del pedido) y el Order
 // Intake del mes = todos los Sales Orders creados ese mes (Order Date): lo ya facturado de esos pedidos (facturas de
@@ -19,8 +20,8 @@ type YearState = { year: number; data: YearData | null; error: string | null; lo
 const MONTHS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 const COMPARE_YEARS = 2;
 const ALL_MONTHS = Array.from({ length: 12 }, (_, i) => i + 1);
-const th = 'py-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-gray-500 whitespace-nowrap text-right';
-const td = 'py-2 px-2 whitespace-nowrap tabular-nums text-right';
+const th = 'py-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-gray-500 text-right';
+const td = 'py-2 px-2 whitespace-nowrap tabular-nums text-right overflow-hidden text-ellipsis';
 
 // Antigüedad del pedido respecto al mes de la factura (comparable entre años)
 const BUCKETS = [
@@ -52,6 +53,11 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
   const [reload, setReload] = useState({ n: 0, force: false });
   const [years, setYears] = useState<YearState[]>([]);
   const [open, setOpen] = useState<Record<number, boolean>>({});
+  // Anchos de columna ajustables (por tipo de columna y antigüedad del año: o0 = año elegido)
+  const { widths, setWidth, reset: resetWidths } = useColumnWidths('crz-order-intake-widths', {
+    mes: 240, billed: 120, intake: 120, pct: 80, ya: 110, rdd: 105, rddPrev: 130, same: 115, next: 110,
+  });
+  const colW = (y: number, role: string) => widths[`o${year - y}:${role}`] ?? widths[role];
 
   const yearList = useMemo(() => Array.from({ length: COMPARE_YEARS + 1 }, (_, i) => year - COMPARE_YEARS + i), [year]);
   // Siempre el año completo; los meses futuros solo tienen Sales Orders abiertas
@@ -197,6 +203,8 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
         <CompanySelect value={company} onChange={setCompany} />
         <p className="text-xs text-gray-500 pb-2">Comparado con {year - 2} y {year - 1}{company === CONSOLIDATED ? ' · consolidado en EUR' : ''}</p>
         <div className="ml-auto flex gap-2">
+          <button onClick={resetWidths} title="Volver a los anchos de columna por defecto"
+            className="px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm text-gray-600 hover:text-gray-900">Anchos por defecto</button>
           <button onClick={exportExcel} disabled={loading || !months.length}
             className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
             <FileDown size={16} /> Exportar Excel
@@ -223,7 +231,13 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                 </Grid>
 
                 <div className="rpt-card bg-white rounded-xl border border-gray-200 overflow-x-auto">
-                  <table className="w-full text-[13px]">
+                  <table className="text-[13px]" style={{ tableLayout: 'fixed', width: widths.mes + years.reduce((t, y) => t + (y.year === year
+                    ? ['billed', 'intake', 'pct', 'ya', 'rdd', 'rddPrev', 'same', 'next'] : ['billed', 'intake', 'pct']).reduce((a, r) => a + colW(y.year, r), 0), 0), minWidth: '100%' }}>
+                    <colgroup>
+                      <col style={{ width: widths.mes }} />
+                      {years.flatMap(y => (y.year === year ? ['billed', 'intake', 'pct', 'ya', 'rdd', 'rddPrev', 'same', 'next'] : ['billed', 'intake', 'pct'])
+                        .map(r => <col key={`${y.year}-${r}`} style={{ width: colW(y.year, r) }} />))}
+                    </colgroup>
                     <thead>
                       <tr className="bg-gray-50">
                         <th className={`${th} text-left`} />
@@ -235,24 +249,29 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                         ))}
                       </tr>
                       <tr className="border-b border-gray-200 bg-gray-50">
-                        <th className={`${th} text-left`}>
+                        <ResizeTh id="mes" width={widths.mes} onResize={setWidth} className={`${th} text-left`}>
                           <button onClick={() => setOpen(months.every(m => open[m]) ? {} : Object.fromEntries(months.map(m => [m, true])))}
                             className="flex items-center gap-1 uppercase hover:text-gray-900" title="Desplegar o plegar todos los meses">
                             {months.length > 0 && months.every(m => open[m]) ? <ChevronDown size={12} /> : <ChevronRight size={12} />} Mes
                           </button>
-                        </th>
+                        </ResizeTh>
                         {years.map(y => (
                           <Fragment key={y.year}>
-                            <th className={`${th} border-l border-gray-200`}>Facturado</th>
-                            <th className={th} title="Order Intake: todos los Sales Orders con Order Date en este mes (ya facturado + abierto)">Order Date del mes</th>
-                            <th className={th} title="Crecimiento del Order Intake frente al mismo mes del año anterior">% vs {y.year - 1}</th>
-                            {y.year === year && <>
-                              <th className={th} title="Parte del intake ya facturada (facturas de cualquier fecha)">Ya facturado</th>
-                              <th className={th} title="Pedidos creados en el mes, abiertos, con Requested Delivery Date dentro del mes">Abierto RDD mes</th>
-                              <th className={th} title="Pedidos de meses anteriores, abiertos, con Requested Delivery Date en este mes (no forman parte del intake del mes)">Abierto RDD mes (meses anteriores)</th>
-                              <th className={th} title="Pedidos creados en el mes, abiertos, con entrega en meses siguientes del mismo año">Abierto RDD mismo año</th>
-                              <th className={th} title="Pedidos creados en el mes, abiertos, con entrega el año siguiente o después">Abierto RDD próx. año</th>
-                            </>}
+                            {([
+                              ['billed', 'Facturado', ''],
+                              ['intake', 'Order Date del mes', 'Order Intake: todos los Sales Orders con Order Date en este mes (ya facturado + abierto)'],
+                              ['pct', `% vs ${y.year - 1}`, 'Crecimiento del Order Intake frente al mismo mes del año anterior'],
+                              ...(y.year === year ? [
+                                ['ya', 'Ya facturado', 'Parte del intake ya facturada (facturas de cualquier fecha)'],
+                                ['rdd', 'Abierto RDD mes', 'Pedidos creados en el mes, abiertos, con Requested Delivery Date dentro del mes'],
+                                ['rddPrev', 'Abierto RDD mes (meses anteriores)', 'Pedidos de meses anteriores, abiertos, con Requested Delivery Date en este mes (no forman parte del intake del mes)'],
+                                ['same', 'Abierto RDD mismo año', 'Pedidos creados en el mes, abiertos, con entrega en meses siguientes del mismo año'],
+                                ['next', 'Abierto RDD próx. año', 'Pedidos creados en el mes, abiertos, con entrega el año siguiente o después'],
+                              ] : []),
+                            ] as [string, string, string][]).map(([role, label, title]) => (
+                              <ResizeTh key={role} id={`o${year - y.year}:${role}`} width={colW(y.year, role)} onResize={setWidth}
+                                className={`${th} ${role === 'billed' ? 'border-l border-gray-200' : ''}`} title={title || undefined}>{label}</ResizeTh>
+                            ))}
                           </Fragment>
                         ))}
                       </tr>
@@ -287,7 +306,7 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                           </tr>
                           {open[m] && BUCKETS.map(b => (
                             <tr key={`${m}-${b.id}`} className="border-b border-gray-100 bg-gray-50/60 text-[12px]">
-                              <td className="py-1.5 px-2 pl-9 text-gray-600 whitespace-nowrap">{b.label}</td>
+                              <td className="py-1.5 px-2 pl-9 text-gray-600 whitespace-nowrap overflow-hidden text-ellipsis" title={b.label}>{b.label}</td>
                               {years.map(y => {
                                 const st = stats(y, m);
                                 return (
