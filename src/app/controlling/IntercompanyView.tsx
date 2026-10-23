@@ -19,7 +19,8 @@ type Row = {
   issues: string[];
 };
 type Orphan = { target: string; no: string; vendorInvoiceNo: string; postingDate: string; invoiceDate: string; vendor: string; currency: string; amount: number; source?: string };
-type Data = { rows: Row[]; orphanPurchases: Orphan[]; warnings: string[] };
+type Excluded = { invoiceNo: string; creditMemoNo: string; target: string; postingDate: string; externalDocNo: string; creditMemoAmount: number; source?: string };
+type Data = { rows: Row[]; orphanPurchases: Orphan[]; excludedCredited?: Excluded[]; warnings: string[] };
 
 const MONTHS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 const GROUPINGS = [
@@ -53,7 +54,7 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
       const res = await fetch(`/api/controlling/intercompany?company=${encodeURIComponent(co)}&from=${from}&to=${to}${reload.force ? '&force=1' : ''}`, { cache: 'no-store' });
       const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
       if (!res.ok || data.error) throw new Error(`${co}: ${data.error || `HTTP ${res.status}`}`);
-      return { ...data, orphanPurchases: data.orphanPurchases.map((o: Orphan) => ({ ...o, source: co })) };
+      return { ...data, orphanPurchases: data.orphanPurchases.map((o: Orphan) => ({ ...o, source: co })), excludedCredited: (data.excludedCredited || []).map((x: Excluded) => ({ ...x, source: co })) };
     };
     // Consolidado: las facturas emitidas por todas las empresas
     const load = company === CONSOLIDATED
@@ -61,7 +62,7 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
         const parts = settled.flatMap(r => (r.status === 'fulfilled' ? [r.value] : []));
         const failed = settled.flatMap(r => (r.status === 'rejected' ? [`No incluida: ${r.reason?.message || r.reason}`] : []));
         if (!parts.length) throw new Error(failed.join(' · '));
-        return { rows: parts.flatMap(p => p.rows), orphanPurchases: parts.flatMap(p => p.orphanPurchases), warnings: [...failed, ...parts.flatMap(p => p.warnings)] };
+        return { rows: parts.flatMap(p => p.rows), orphanPurchases: parts.flatMap(p => p.orphanPurchases), excludedCredited: parts.flatMap(p => p.excludedCredited || []), warnings: [...failed, ...parts.flatMap(p => p.warnings)] };
       })
       : one(company);
     load.then(data => !cancelled && setState({ data, loading: false, error: null }))
@@ -257,9 +258,15 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
                 <p className="px-4 py-2 text-xs text-gray-500">Pueden ser facturas de venta de otro periodo, abonos o un Vendor Invoice No. que no coincide con el nº de la venta.</p>
               </div>
             )}
+            {(d.excludedCredited || []).length > 0 && (
+              <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+                <span className="font-semibold">Excluidas (factura a importe 0 abonada): </span>
+                {(d.excludedCredited || []).map((x, i) => <span key={`${x.source}|${x.invoiceNo}`}>{i ? ' · ' : ''}{x.invoiceNo} ↔ abono {x.creditMemoNo} ({x.target}, ext. {x.externalDocNo || '–'})</span>)}
+              </p>
+            )}
             <p className="text-xs text-gray-500">
               Se emparejan por nº: la factura de compra debe llevar como Vendor Invoice No. el nº de la factura de venta (un punto final de más se da por bueno). En las compras de Craze Entertainment, el foilbag de GmbH registrado como AA-00049 se da por bueno. Divisa en blanco = divisa local de cada empresa (CRAZE, Iberia y Entertainment EUR, UK GBP, Group AG CHF).
-              Fecha = fecha de factura (Document Date) de las dos. Artículos y cantidades por nº de artículo. Drop shipment (CRAZE → UK / Group AG): la venta final se busca por nº o por External Document No.; haz clic en una factura para ver la comparación de líneas. Los abonos todavía no se comparan.
+              Fecha = fecha de factura (Document Date) de las dos. Artículos y cantidades por nº de artículo. Drop shipment (CRAZE → UK / Group AG): la venta final se busca por nº o por External Document No.; haz clic en una factura para ver la comparación de líneas. Los abonos todavía no se comparan; las facturas a importe 0 abonadas (abono con el mismo nº de factura o el mismo External Document No.) se excluyen junto con su abono.
             </p>
           </>
         )}

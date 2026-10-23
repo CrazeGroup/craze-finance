@@ -79,38 +79,31 @@ export type IcRow = {
 };
 
 export async function intercompanyReport(source: string, from: string, to: string, force = false) {
-  return cached(`intercompany5:${source}:${from}:${to}`, to < today() ? 12 * HOUR : HOUR, async () => {
+  return cached(`intercompany6:${source}:${from}:${to}`, to < today() ? 12 * HOUR : HOUR, async () => {
     const ctx = await getBcContext(source);
     const sales = (await bcFetchAll(odataUrl(`${ctx.apiBase}/salesInvoices`, {
       $filter: `postingDate ge ${from} and postingDate le ${to}`,
       $select: 'number,externalDocumentNumber,invoiceDate,postingDate,customerNumber,customerName,currencyCode,totalAmountExcludingTax,status',
     }), ctx.token)).filter((x: any) => s(x.status) !== 'Draft');
     const icAll = sales.map((x: any) => ({ x, target: groupCompanyOf(s(x.customerName)) })).filter(r => r.target && r.target !== source) as { x: any; target: string }[];
-    // Facturas a importe 0 que luego se han abonado (abono de venta que apunta a la factura): se excluyen con su abono
+    // Facturas a importe 0 que luego se han abonado: se excluyen de la lista junto con su abono
     const memos = (await bcFetchAll(odataUrl(`${ctx.apiBase}/salesCreditMemos`, {
       $filter: `postingDate ge ${from} and postingDate le ${shift(to, 120)}`,
       $select: 'number,invoiceNumber,externalDocumentNumber,customerName,postingDate,totalAmountExcludingTax,status',
     }), ctx.token).catch(() => [] as any[])).filter((m: any) => s(m.status) !== 'Draft' && groupCompanyOf(s(m.customerName)));
-    // Referencias de los abonos en los movimientos de cliente (Applies-to Doc. No. / Corrected Invoice No.)
-    const memoEntries = memos.length ? await bcFetchAll(odataUrl(`${ctx.customApiBase}/custLedgerEntries`, {
-      $filter: `documentType eq 'Credit Memo' and postingDate ge ${from} and postingDate le ${shift(to, 120)}`,
-      $select: 'documentNo,appliesToDocNo,correctedInvoiceNoBCT,closedByEntryNo,entryNo,amount',
-    }), ctx.token).catch(() => [] as any[]) : [];
-    const memoLines = memos.length ? await linesOf(ctx, 'salesCrMemoLines', memos.map((m: any) => s(m.number))) : new Map<string, Line[]>();
-    const debugMemos = memos.map((m: any) => {
-      const e = memoEntries.find((x: any) => s(x.documentNo) === s(m.number));
-      return { no: s(m.number), customer: s(m.customerName), date: d10(m.postingDate), amount: n(m.totalAmountExcludingTax), invoiceNumber: s(m.invoiceNumber), ext: s(m.externalDocumentNumber),
-        appliesTo: s(e?.appliesToDocNo), corrected: s(e?.correctedInvoiceNoBCT), lines: (memoLines.get(s(m.number)) || []).slice(0, 4) };
-    });
+    // Un abono se relaciona con la factura por su nº (invoiceNumber) o por el mismo External Document No. y empresa
     const creditedBy = new Map<string, any>();
     for (const m of memos) {
-      const e = memoEntries.find((x: any) => s(x.documentNo) === s(m.number));
-      for (const ref of [s(m.invoiceNumber), s(m.externalDocumentNumber), s(e?.appliesToDocNo), s(e?.correctedInvoiceNoBCT)]) if (ref && !creditedBy.has(norm(ref))) creditedBy.set(norm(ref), m);
+      const target = groupCompanyOf(s(m.customerName));
+      if (s(m.invoiceNumber)) creditedBy.set(`no:${norm(m.invoiceNumber)}`, m);
+      if (s(m.externalDocumentNumber)) creditedBy.set(`ext:${target}|${norm(m.externalDocumentNumber)}`, m);
     }
-    const excluded: { invoiceNo: string; creditMemoNo: string; target: string; postingDate: string }[] = [];
+    const excluded: { invoiceNo: string; creditMemoNo: string; target: string; postingDate: string; externalDocNo: string; creditMemoAmount: number }[] = [];
     const ic = icAll.filter(r => {
-      const m = Math.abs(n(r.x.totalAmountExcludingTax)) < 0.005 ? creditedBy.get(norm(r.x.number)) : null;
-      if (m) excluded.push({ invoiceNo: s(r.x.number), creditMemoNo: s(m.number), target: r.target, postingDate: d10(r.x.postingDate) });
+      const m = Math.abs(n(r.x.totalAmountExcludingTax)) < 0.005
+        ? creditedBy.get(`no:${norm(r.x.number)}`) || (s(r.x.externalDocumentNumber) ? creditedBy.get(`ext:${r.target}|${norm(r.x.externalDocumentNumber)}`) : null)
+        : null;
+      if (m) excluded.push({ invoiceNo: s(r.x.number), creditMemoNo: s(m.number), target: r.target, postingDate: d10(r.x.postingDate), externalDocNo: s(r.x.externalDocumentNumber), creditMemoAmount: n(m.totalAmountExcludingTax) });
       return !m;
     });
     const warnings: string[] = [];
@@ -208,6 +201,6 @@ export async function intercompanyReport(source: string, from: string, to: strin
       target: t, no: s(p.number), vendorInvoiceNo: s(p.vendorInvoiceNumber), postingDate: d10(p.postingDate), invoiceDate: d10(p.invoiceDate),
       vendor: s(p.vendorName), currency: s(p.currencyCode) || lcyOf(t), amount: n(p.totalAmountExcludingTax),
     })));
-    return { source, from, to, rows, orphanPurchases, excludedCredited: excluded, debugMemos, warnings };
+    return { source, from, to, rows, orphanPurchases, excludedCredited: excluded, warnings };
   }, force);
 }
