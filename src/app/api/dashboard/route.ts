@@ -4,6 +4,7 @@ import prisma from '@/lib/prisma';
 import { getBcContext } from '@/lib/bcClient';
 import { payablesReport } from '@/lib/reporting/ledgers';
 import { currentMonth } from '@/lib/reporting/period';
+import { purchaseNotes } from '@/lib/purchaseNotes';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -149,6 +150,17 @@ export async function GET(req: Request) {
       }
     }
 
+    // Notas de compra sin leer (Notes de BC en facturas/abonos de compra; null si BC no las publica)
+    let unreadPurchaseNotes: number | null = null;
+    if (companyId !== 'ALL') {
+      try {
+        const notes = await purchaseNotes(await getBcContext(companyId));
+        unreadPurchaseNotes = notes.filter(n => !n.read).length;
+      } catch (e) {
+        console.error('Dashboard notas de compra:', e);
+      }
+    }
+
     return NextResponse.json({
       chinaSource,
       // Cobros
@@ -168,6 +180,9 @@ export async function GET(req: Request) {
       totalChina,
       totalConfirmadoChina,
       totalPendienteChina,
+
+      // Notas de compra
+      unreadPurchaseNotes,
 
       // Refunds & Returns
       totalRefundsAbiertosCliente: totalRefundsCliente,

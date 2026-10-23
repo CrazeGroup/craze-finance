@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { 
   Banknote, AlertCircle, TrendingDown, ArrowUpRight, 
   ArrowDownRight, CheckCircle2, Clock, Globe2, 
-  ShoppingCart, Landmark, Wallet, Undo2, PackageSearch, RefreshCw
+  ShoppingCart, Landmark, Wallet, Undo2, PackageSearch, RefreshCw, MessageSquareText
 } from 'lucide-react';
 import Link from 'next/link';
 import { useCompany } from '@/contexts/CompanyContext';
@@ -223,6 +223,27 @@ export default function Dashboard() {
                   icon={<Clock size={24} />} 
 
                 />
+              </div>
+            </div>
+
+            {/* NOTAS DE COMPRA */}
+            <div>
+              <h2 className="text-xl font-bold text-black mb-4 flex items-center gap-2 border-b border-gray-200 pb-2">
+                <MessageSquareText className="text-gray-700" />
+                Notas de compra
+              </h2>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Link href="/notas-compra" className="bg-white border border-gray-200 p-6 rounded-xl shadow-sm hover:shadow-md hover:border-gray-300 transition-all group">
+                  <div className="flex justify-between items-start mb-4">
+                    <div className={`p-3 rounded-lg ${kpis?.unreadPurchaseNotes ? 'bg-amber-50 text-amber-700' : 'bg-gray-50 text-gray-700'}`}><MessageSquareText size={24} /></div>
+                    <ArrowUpRight size={20} className="text-gray-400 group-hover:text-black group-hover:scale-110 transition-transform" />
+                  </div>
+                  <p className="text-xs text-gray-500 font-bold mb-1 uppercase tracking-wider">Notas sin leer</p>
+                  <h3 className="text-2xl font-black text-black tracking-tight">{kpis?.unreadPurchaseNotes ?? '—'}</h3>
+                  <p className="text-xs text-gray-500 mt-2">
+                    {kpis?.unreadPurchaseNotes == null ? 'No disponible (BC no publica las Notes)' : 'Facturas y abonos de compra'}
+                  </p>
+                </Link>
               </div>
             </div>
 
