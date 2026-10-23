@@ -52,6 +52,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
     { href: '/controlling', label: 'Controlling', module: 'controlling' },
     { href: '/royalties', label: 'Royalties', module: 'royalties' },
     { href: '/commercial', label: 'Commercial Analysis', module: 'commercial' },
+    { href: '/intercompany', label: 'Intercompany', module: 'intercompany' },
     { href: '/payment-proposal', label: 'Payment Proposal', module: 'payment_proposal' },
     // Solo para Craze Entertainment
     ...(selectedCompany === 'Craze Entertainment' ? [{ href: '/dforce', label: 'D-FORCE', module: 'dforce' }] : []),

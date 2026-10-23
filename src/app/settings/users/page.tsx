@@ -17,6 +17,7 @@ const MODULES = [
   { id: 'controlling', label: 'Controlling' },
   { id: 'royalties', label: 'Royalties' },
   { id: 'commercial', label: 'Commercial Analysis' },
+  { id: 'intercompany', label: 'Intercompany' },
   { id: 'payment_proposal', label: 'Payment Proposal' },
   { id: 'dforce', label: 'D-FORCE (Craze Entertainment)' },
   { id: 'seguros', label: 'Seguros' },

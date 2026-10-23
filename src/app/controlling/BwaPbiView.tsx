@@ -40,6 +40,8 @@ const DATEV_ACCOUNT_OVERRIDES: Record<string, string> = {
   '6040 00': '6036 00', '6069 00': '6072 00', '6113 00': '6110 00', '6140 00': '6110 00',
   // Marketing / Other: representación, bewirtung, gastos no deducibles, viajes
   '6630 00': '6600 00', '6640 00': '6650 00', '6645 00': '6600 00', '6660 00': '6600 00',
+  // Ventas: comisiones Amazon Sellercentral y envíos B2C
+  '6770 10': '6770 00', '6800 12': '6800 00',
 };
 const DATEV_INCOME = new Set(['1020', '1040', '1045', '1090', '1322', '1323', '1324']);
 const DATEV_SECTION_LINE: [RegExp, RegExp][] = [
