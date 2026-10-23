@@ -27,7 +27,7 @@ const q = (s: string) => s.replace(/'/g, "''");
 
 export const CONCEPTS = [
   { key: 'conditions', label: 'Provision Conditions', account: 'PROV-KONDITIONS' },
-  { key: 'kam', label: 'Provision KAM', account: '' },
+  { key: 'kam', label: 'Provision KAM', account: 'PROV-KAM' },
   { key: 'royalties', label: 'Provision Royalties', account: 'PROV-ROYALTIES' },
   { key: 'marketing', label: 'Provision Marketing (sin Amazon)', account: 'PROV-MARKETING' },
   { key: 'amazon', label: 'Provision Amazon Promotion', account: 'PROV-AMZPROM' },
@@ -104,7 +104,7 @@ async function generated(ctx: BcContext, from: string, to: string) {
 }
 
 export async function consumedProvisionsReport(ctx: BcContext, company: string, from: string, to: string, force = false) {
-  return cached(`ctrl:consumedProv15:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
+  return cached(`ctrl:consumedProv16:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
     const [gen, entries, vendors, provEntries, customerGroups, cancelPairs] = await Promise.all([
       generated(ctx, from, to),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
