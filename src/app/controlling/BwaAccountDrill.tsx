@@ -73,11 +73,12 @@ export default function BwaAccountDrill({ fmt, spec, onClose }: { fmt: Fmt; spec
     return () => { cancelled = true; };
   }, [spec.account, spec.scope, spec.from, spec.to]);
 
-  // Documentos: movimientos agrupados por sociedad + nº de documento
+  // Documentos: movimientos agrupados por sociedad + nº de documento + mes de registro (un asiento registrado en
+  // varios meses, p. ej. un diario con una línea por mes, sale en cada mes con sus movimientos de ese mes)
   const docs = useMemo(() => {
     const map = new Map<string, Doc>();
     for (const e of state.entries) {
-      const key = `${e.company}|${e.documentNo || `#${e.entryNo}`}`;
+      const key = `${e.company}|${e.documentNo || `#${e.entryNo}`}|${e.date.substring(0, 7)}`;
       const d = map.get(key) || {
         key, company: e.company, documentNo: e.documentNo, documentType: e.documentType, date: e.date,
         partner: e.sourceName || e.sourceNo, partnerNo: e.sourceNo, externalDocNo: e.externalDocNo, description: e.description,
