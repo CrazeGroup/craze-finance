@@ -27,6 +27,17 @@ export async function GET(req: Request) {
     const cookieStore = await cookies();
     const company = cookieStore.get('craze_selected_company')?.value || 'CRAZE';
     const ctx = await getBcContext(company === 'ALL' ? 'CRAZE' : company);
+    // ?sample=<servicio OData>[&filter=&select=&top=]: filas de ejemplo de un servicio (diagnóstico, solo lectura)
+    const sample = searchParams.get('sample');
+    if (sample) {
+      const params = new URLSearchParams({ $top: searchParams.get('top') || '5' });
+      if (searchParams.get('filter')) params.set('$filter', searchParams.get('filter')!);
+      if (searchParams.get('select')) params.set('$select', searchParams.get('select')!);
+      const base = searchParams.get('api') === 'custom' ? ctx.customApiBase : searchParams.get('api') === 'v2' ? ctx.apiBase : ctx.odataCompanyBase;
+      const res = await fetch(`${base}/${encodeURIComponent(sample)}?${params}`, { headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json' } });
+      const body = await res.json().catch(async () => ({ error: await res.text() }));
+      return NextResponse.json({ company: ctx.companyName, status: res.status, rows: body.value ?? body });
+    }
     const odataRoot = ctx.odataCompanyBase.replace(/\/Company\(.*$/, '');
     const customRoot = ctx.customApiBase.replace(/\/companies\(.*$/, '');
     const [odata, custom, v2] = await Promise.all([names(odataRoot, ctx.token), names(customRoot, ctx.token), names(ctx.apiBase.replace(/\/companies\(.*$/, ''), ctx.token)]);
