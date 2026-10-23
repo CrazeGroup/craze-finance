@@ -33,6 +33,14 @@ const PAGES = [
 type Page = typeof PAGES[number]['id'];
 // Annual vs DATEV: apartados de la Jahresübersicht que son ingresos (se mantiene el signo; el resto son gastos y se
 // invierten, como el BWA) y línea BWA de cada apartado para las cuentas que no están en el mapeo de BC
+// Cuentas DATEV que se suman a una cuenta concreta de BC (agrupación indicada por Controlling)
+const DATEV_ACCOUNT_OVERRIDES: Record<string, string> = {
+  // Personnel: sueldos y salarios → 6000 00
+  '6010 00': '6000 00', '6020 00': '6000 00', '6020 10': '6000 00', '6021 00': '6000 00', '6023 00': '6000 00', '6027 00': '6000 00', '6030 00': '6000 00',
+  '6040 00': '6036 00', '6069 00': '6072 00', '6113 00': '6110 00', '6140 00': '6110 00',
+  // Marketing / Other: representación, bewirtung, gastos no deducibles, viajes
+  '6630 00': '6600 00', '6640 00': '6650 00', '6645 00': '6600 00', '6660 00': '6600 00',
+};
 const DATEV_INCOME = new Set(['1020', '1040', '1045', '1090', '1322', '1323', '1324']);
 const DATEV_SECTION_LINE: [RegExp, RegExp][] = [
   [/^(1020|1045|1090)$/, /^sales revenues$/i], [/^1040$/, /sales provision/i], [/^1060$/, /cost of goods/i], [/^1100$/, /personnel/i],
@@ -99,7 +107,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
   const datevMap = useMemo(() => {
     const values = new Map<string, number[]>();
     const extra: Account[] = [];
-    const stats = { exact: 0, prefix: 0, section: 0 };
+    const stats = { exact: 0, manual: 0, prefix: 0, section: 0 };
     if (!d || !datev.file) return { values, extra, stats };
     const byNo = new Map(d.accounts.map(a => [a.account, a]));
     const lineFor = (section: string) => {
@@ -107,11 +115,15 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
       return d.lines.find(l => !l.formula && re?.test(l.description))?.code || '';
     };
     for (const a of datev.file.accounts) {
-      const bc = `${a.account.substring(0, 4)} ${a.account.substring(4)}`;
+      const own = `${a.account.substring(0, 4)} ${a.account.substring(4)}`;
+      // Agrupación manual a una cuenta de BC (si esa cuenta está en el mapeo)
+      const target = DATEV_ACCOUNT_OVERRIDES[own];
+      const bc = target && byNo.has(target) ? target : own;
+      if (bc !== own) stats.manual++;
       const sign = DATEV_INCOME.has(a.section) ? 1 : -1;
       const vals = a.values.map(v => v * sign);
       values.set(bc, (values.get(bc) || vals.map(() => 0)).map((v, i) => v + vals[i]));
-      if (byNo.has(bc) || extra.some(x => x.account === bc)) { if (byNo.has(bc)) stats.exact++; continue; }
+      if (byNo.has(bc) || extra.some(x => x.account === bc)) { if (byNo.has(bc) && bc === own) stats.exact++; continue; }
       const sibling = d.accounts.find(x => x.account.substring(0, 4) === bc.substring(0, 4));
       const bwa = sibling?.bwa || lineFor(a.section);
       if (sibling) stats.prefix++; else stats.section++;
@@ -373,7 +385,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
                       <p className="text-gray-600">
                         {datev.file.name} · enero–{MONTHS_ES[datev.file.months - 1].toLowerCase()} {datev.file.year}
                         {datev.updatedAt && ` · subido ${new Date(datev.updatedAt).toLocaleDateString('es-ES')}`}
-                        {' · '}{datevMap.stats.exact} cuentas con el mapeo de BC, {datevMap.stats.prefix} aproximadas por cuenta parecida y {datevMap.stats.section} por apartado DATEV
+                        {' · '}{datevMap.stats.exact} cuentas con el mapeo de BC, {datevMap.stats.manual} agrupadas en otra cuenta de BC, {datevMap.stats.prefix} aproximadas por cuenta parecida y {datevMap.stats.section} por apartado DATEV
                       </p>
                     ) : <p className="text-amber-800">Sube la Jahresübersicht de DATEV de {year - 1} para comparar.</p>}
                   {datev.file && toMonth > datev.file.months && <p className="text-amber-800">El Excel llega hasta {MONTHS_ES[datev.file.months - 1].toLowerCase()}: Year -1 DATEV solo suma esos meses; elige "Hasta mes" {MONTHS_ES[datev.file.months - 1]} para comparar el mismo periodo.</p>}
