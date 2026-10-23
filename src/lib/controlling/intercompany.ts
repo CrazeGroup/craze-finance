@@ -32,7 +32,7 @@ const chunk = <T,>(list: T[], size: number) => Array.from({ length: Math.ceil(li
 
 type Line = { no: string; description: string; quantity: number; amount: number };
 // Líneas de varios documentos (filtro por nº en bloques), agrupadas por documento
-async function linesOf(ctx: BcContext, entity: 'salesInvoiceLines' | 'purchInvLines', docs: string[]) {
+async function linesOf(ctx: BcContext, entity: 'salesInvoiceLines' | 'purchInvLines' | 'salesCrMemoLines', docs: string[]) {
   const out = new Map<string, Line[]>();
   const parts = chunk(Array.from(new Set(docs.filter(Boolean))), 25);
   for (let i = 0; i < parts.length; i += 6) {
@@ -79,7 +79,7 @@ export type IcRow = {
 };
 
 export async function intercompanyReport(source: string, from: string, to: string, force = false) {
-  return cached(`intercompany4:${source}:${from}:${to}`, to < today() ? 12 * HOUR : HOUR, async () => {
+  return cached(`intercompany5:${source}:${from}:${to}`, to < today() ? 12 * HOUR : HOUR, async () => {
     const ctx = await getBcContext(source);
     const sales = (await bcFetchAll(odataUrl(`${ctx.apiBase}/salesInvoices`, {
       $filter: `postingDate ge ${from} and postingDate le ${to}`,
@@ -91,8 +91,22 @@ export async function intercompanyReport(source: string, from: string, to: strin
       $filter: `postingDate ge ${from} and postingDate le ${shift(to, 120)}`,
       $select: 'number,invoiceNumber,externalDocumentNumber,customerName,postingDate,totalAmountExcludingTax,status',
     }), ctx.token).catch(() => [] as any[])).filter((m: any) => s(m.status) !== 'Draft' && groupCompanyOf(s(m.customerName)));
+    // Referencias de los abonos en los movimientos de cliente (Applies-to Doc. No. / Corrected Invoice No.)
+    const memoEntries = memos.length ? await bcFetchAll(odataUrl(`${ctx.customApiBase}/custLedgerEntries`, {
+      $filter: `documentType eq 'Credit Memo' and postingDate ge ${from} and postingDate le ${shift(to, 120)}`,
+      $select: 'documentNo,appliesToDocNo,correctedInvoiceNoBCT,closedByEntryNo,entryNo,amount',
+    }), ctx.token).catch(() => [] as any[]) : [];
+    const memoLines = memos.length ? await linesOf(ctx, 'salesCrMemoLines', memos.map((m: any) => s(m.number))) : new Map<string, Line[]>();
+    const debugMemos = memos.map((m: any) => {
+      const e = memoEntries.find((x: any) => s(x.documentNo) === s(m.number));
+      return { no: s(m.number), customer: s(m.customerName), date: d10(m.postingDate), amount: n(m.totalAmountExcludingTax), invoiceNumber: s(m.invoiceNumber), ext: s(m.externalDocumentNumber),
+        appliesTo: s(e?.appliesToDocNo), corrected: s(e?.correctedInvoiceNoBCT), lines: (memoLines.get(s(m.number)) || []).slice(0, 4) };
+    });
     const creditedBy = new Map<string, any>();
-    for (const m of memos) for (const ref of [s(m.invoiceNumber), s(m.externalDocumentNumber)]) if (ref && !creditedBy.has(norm(ref))) creditedBy.set(norm(ref), m);
+    for (const m of memos) {
+      const e = memoEntries.find((x: any) => s(x.documentNo) === s(m.number));
+      for (const ref of [s(m.invoiceNumber), s(m.externalDocumentNumber), s(e?.appliesToDocNo), s(e?.correctedInvoiceNoBCT)]) if (ref && !creditedBy.has(norm(ref))) creditedBy.set(norm(ref), m);
+    }
     const excluded: { invoiceNo: string; creditMemoNo: string; target: string; postingDate: string }[] = [];
     const ic = icAll.filter(r => {
       const m = Math.abs(n(r.x.totalAmountExcludingTax)) < 0.005 ? creditedBy.get(norm(r.x.number)) : null;
@@ -194,6 +208,6 @@ export async function intercompanyReport(source: string, from: string, to: strin
       target: t, no: s(p.number), vendorInvoiceNo: s(p.vendorInvoiceNumber), postingDate: d10(p.postingDate), invoiceDate: d10(p.invoiceDate),
       vendor: s(p.vendorName), currency: s(p.currencyCode) || lcyOf(t), amount: n(p.totalAmountExcludingTax),
     })));
-    return { source, from, to, rows, orphanPurchases, excludedCredited: excluded, warnings };
+    return { source, from, to, rows, orphanPurchases, excludedCredited: excluded, debugMemos, warnings };
   }, force);
 }
