@@ -25,6 +25,8 @@ const d10 = (v: any) => { const x = s(v).substring(0, 10); return x && x !== '00
 const lcyOf = (company: string) => IC_COMPANIES.find(c => c.name === company)?.lcy || 'EUR';
 // Empresa del grupo a la que corresponde un cliente / proveedor por su nombre (solo nombres que empiezan por "CRAZE")
 export const groupCompanyOf = (name: string) => (/^craze\b/i.test(name.trim()) ? IC_COMPANIES.find(c => c.re.test(name))?.name || null : null);
+// Nº de documento normalizado para emparejar (sin espacios ni puntuación final, en mayúsculas)
+const norm = (v: any) => s(v).toUpperCase().replace(/[\s.,;]+$/g, '').replace(/^\s+/, '');
 const shift = (date: string, days: number) => { const d = new Date(`${date}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().substring(0, 10); };
 const chunk = <T,>(list: T[], size: number) => Array.from({ length: Math.ceil(list.length / size) }, (_, i) => list.slice(i * size, i * size + size));
 
@@ -67,7 +69,7 @@ export type IcRow = {
 };
 
 export async function intercompanyReport(source: string, from: string, to: string, force = false) {
-  return cached(`intercompany:${source}:${from}:${to}`, to < today() ? 12 * HOUR : HOUR, async () => {
+  return cached(`intercompany2:${source}:${from}:${to}`, to < today() ? 12 * HOUR : HOUR, async () => {
     const ctx = await getBcContext(source);
     const sales = (await bcFetchAll(odataUrl(`${ctx.apiBase}/salesInvoices`, {
       $filter: `postingDate ge ${from} and postingDate le ${to}`,
@@ -88,24 +90,31 @@ export async function intercompanyReport(source: string, from: string, to: strin
           $filter: `postingDate ge ${shift(from, -45)} and postingDate le ${shift(to, 90)}`,
           $select: 'number,vendorInvoiceNumber,invoiceDate,postingDate,vendorNumber,vendorName,currencyCode,totalAmountExcludingTax,status',
         }), tctx.token)).filter((p: any) => s(p.status) !== 'Draft' && groupCompanyOf(s(p.vendorName)) === source);
-        const purchases = new Map(purch.map((p: any) => [s(p.vendorInvoiceNumber), p]));
+        const purchases = new Map(purch.map((p: any) => [norm(p.vendorInvoiceNumber), p]));
         const mine = ic.filter(r => r.target === t);
-        const matchedNos = mine.map(r => purchases.get(s(r.x.number))?.number).filter(Boolean) as string[];
-        const salesNos = new Set(mine.map(r => s(r.x.number)));
+        const matchedNos = mine.map(r => purchases.get(norm(r.x.number))?.number).filter(Boolean) as string[];
+        const salesNos = new Set(mine.map(r => norm(r.x.number)));
         // Compras al origen dentro del periodo sin factura de venta del origen en el periodo
-        const unmatched = purch.filter((p: any) => d10(p.postingDate) >= from && d10(p.postingDate) <= to && !salesNos.has(s(p.vendorInvoiceNumber)));
-        const finalsNos = DROP_SHIP_TARGETS.includes(t) && source === 'CRAZE' ? mine.map(r => s(r.x.externalDocumentNumber)).filter(Boolean) : [];
+        const unmatched = purch.filter((p: any) => d10(p.postingDate) >= from && d10(p.postingDate) <= to && !salesNos.has(norm(p.vendorInvoiceNumber)));
+        // Drop shipment: la venta final se busca por nº de factura o por su External Document No. (= el de GmbH)
         const finals = new Map<string, any>();
-        for (const c of chunk(Array.from(new Set(finalsNos)), 25)) {
-          const rows = await bcFetchAll(odataUrl(`${tctx.apiBase}/salesInvoices`, {
-            $filter: c.map(no => `number eq '${q(no)}'`).join(' or '),
-            $select: 'number,postingDate,customerName,currencyCode,totalAmountExcludingTax,status',
-          }), tctx.token);
-          for (const r of rows) finals.set(s(r.number), r);
+        if (DROP_SHIP_TARGETS.includes(t) && source === 'CRAZE' && mine.length) {
+          const tSales = (await bcFetchAll(odataUrl(`${tctx.apiBase}/salesInvoices`, {
+            $filter: `postingDate ge ${shift(from, -45)} and postingDate le ${shift(to, 90)}`,
+            $select: 'number,externalDocumentNumber,postingDate,customerName,currencyCode,totalAmountExcludingTax,status',
+          }), tctx.token)).filter((r: any) => s(r.status) !== 'Draft' && !groupCompanyOf(s(r.customerName)));
+          const byNo = new Map(tSales.map((r: any) => [norm(r.number), r]));
+          const byExt = new Map<string, any>();
+          for (const r of tSales) if (norm(r.externalDocumentNumber) && !byExt.has(norm(r.externalDocumentNumber))) byExt.set(norm(r.externalDocumentNumber), r);
+          for (const r of mine) {
+            const ext = norm(r.x.externalDocumentNumber);
+            const f = ext ? byNo.get(ext) || byExt.get(ext) : null;
+            if (f) finals.set(norm(r.x.number), f);
+          }
         }
         const [purchLines, finalLines] = await Promise.all([
           linesOf(tctx, 'purchInvLines', matchedNos),
-          finals.size ? linesOf(tctx, 'salesInvoiceLines', Array.from(finals.keys())) : Promise.resolve(new Map<string, Line[]>()),
+          finals.size ? linesOf(tctx, 'salesInvoiceLines', Array.from(finals.values()).map((f: any) => s(f.number))) : Promise.resolve(new Map<string, Line[]>()),
         ]);
         byTarget.set(t, { purchases, unmatched, purchLines, finals, finalLines });
       } catch (e: any) {
@@ -119,7 +128,7 @@ export async function intercompanyReport(source: string, from: string, to: strin
       const currency = s(x.currencyCode) || lcyOf(source);
       const amount = n(x.totalAmountExcludingTax);
       const issues: string[] = [];
-      const p = tg?.purchases.get(no);
+      const p = tg?.purchases.get(norm(no));
       let purchase: IcRow['purchase'] = null;
       let lines: IcRow['lines'] = [];
       if (!tg) issues.push(`No se ha podido leer ${target}`);
@@ -129,6 +138,7 @@ export async function intercompanyReport(source: string, from: string, to: strin
           no: s(p.number), vendorInvoiceNo: s(p.vendorInvoiceNumber), postingDate: d10(p.postingDate), invoiceDate: d10(p.invoiceDate),
           vendor: s(p.vendorName), currency: s(p.currencyCode) || lcyOf(target), amount: n(p.totalAmountExcludingTax),
         };
+        if (purchase.vendorInvoiceNo !== no) issues.push(`Vendor Invoice No. escrito distinto (${purchase.vendorInvoiceNo})`);
         if (Math.abs(purchase.amount - amount) > 0.05) issues.push(`Importe distinto (${amount.toFixed(2)} vs ${purchase.amount.toFixed(2)})`);
         if (purchase.currency !== currency) issues.push(`Divisa distinta (${currency} vs ${purchase.currency})`);
         if (purchase.invoiceDate !== d10(x.invoiceDate)) issues.push(`Fecha distinta (${d10(x.invoiceDate)} vs ${purchase.invoiceDate})`);
@@ -139,12 +149,12 @@ export async function intercompanyReport(source: string, from: string, to: strin
       let final: IcRow['final'] = null;
       if (source === 'CRAZE' && DROP_SHIP_TARGETS.includes(target) && tg) {
         const ext = s(x.externalDocumentNumber);
-        const f = ext ? tg.finals.get(ext) : null;
+        const f = tg.finals.get(norm(no));
         if (!ext) issues.push('Sin External Document No. (factura final del drop shipment)');
-        else if (!f) issues.push(`No existe en ${target} la factura de venta final ${ext}`);
+        else if (!f) issues.push(`Sin factura de venta final en ${target} con nº o External Document No. ${ext}`);
         const cmp = compareLines(salesLines.get(no), f ? tg.finalLines.get(s(f.number)) : []);
         final = {
-          no: ext, customer: s(f?.customerName), postingDate: d10(f?.postingDate), currency: s(f?.currencyCode) || lcyOf(target),
+          no: f ? s(f.number) : ext, customer: s(f?.customerName), postingDate: d10(f?.postingDate), currency: s(f?.currencyCode) || lcyOf(target),
           amount: n(f?.totalAmountExcludingTax), found: !!f, lines: cmp.rows,
         };
         if (f && !cmp.ok) issues.push('Artículos o cantidades distintos en la venta final');
