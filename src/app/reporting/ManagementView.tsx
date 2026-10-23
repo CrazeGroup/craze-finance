@@ -265,7 +265,7 @@ export function BwaSection({ fmt, bwa, company, month }: { fmt: Fmt; bwa: Loaded
                 <Table
                   cols={[{ label: '' }, ...d.columns.map((c: string) => ({ label: colLabel(fmt, c), align: 'right' as const, mono: true }))]}
                   rows={d.lines.filter((l: any) => KEY_LINES.includes(l.code)).map((l: any) =>
-                    [<span key="l" className={l.code === '1380' ? 'font-bold' : ''}>{l.description}</span>, ...d.columns.map((c: string) => <Neg key={c} v={l.values[c].ytd} text={short(l.values[c].ytd)} />)])}
+                    [<span key="l" className={l.code === '1380' ? 'font-bold' : ''}>{l.code} - {l.description}</span>, ...d.columns.map((c: string) => <Neg key={c} v={l.values[c].ytd} text={short(l.values[c].ytd)} />)])}
                 />
               </Card>
             )}
@@ -287,7 +287,7 @@ export function BwaSection({ fmt, bwa, company, month }: { fmt: Fmt; bwa: Loaded
                 rowClass={i => (d.lines[i].bold ? 'bg-gray-100 font-semibold' : '')}
                 rows={d.lines.map((l: any) => {
                   const v = l.values[selected]?.[period] || 0;
-                  return [l.description, <Neg key="v" v={v} text={eur(v)} />, pct(share(v, salesOf(selected, period)))];
+                  return [`${l.code} - ${l.description}`, <Neg key="v" v={v} text={eur(v)} />, pct(share(v, salesOf(selected, period)))];
                 })}
               />
             </Card>
@@ -299,7 +299,7 @@ export function BwaSection({ fmt, bwa, company, month }: { fmt: Fmt; bwa: Loaded
                   const cur = l.values[yoyCompany]?.ytd || 0;
                   const prev = l.values[yoyCompany]?.prevYtd || 0;
                   const delta = cur - prev;
-                  return [l.description, <Neg key="c" v={cur} text={short(cur)} />, <Neg key="p" v={prev} text={short(prev)} />,
+                  return [`${l.code} - ${l.description}`, <Neg key="c" v={cur} text={short(cur)} />, <Neg key="p" v={prev} text={short(prev)} />,
                     <Signed key="d" v={delta} text={(delta > 0 ? '+' : '') + short(delta)} />,
                     <Signed key="dp" v={delta} text={prev ? pct(share(delta, Math.abs(prev))) : '–'} />];
                 })}

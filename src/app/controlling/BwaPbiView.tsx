@@ -48,6 +48,8 @@ const DATEV_SECTION_LINE: [RegExp, RegExp][] = [
   [/^(1020|1045|1090)$/, /^sales revenues$/i], [/^1040$/, /sales provision/i], [/^1060$/, /cost of goods/i], [/^1100$/, /personnel/i],
   [/^1200$/, /marketing/i], [/^1220$/, /logistic/i], [/^1240$/, /depreciation/i], [/^(13\d\d)$/, /financial/i], [/./, /other expenses/i],
 ];
+// Nombre de una línea BWA con su número de BWA group: "1020 - SALES REVENUES"
+const lineName = (l: { code: string; description: string }) => `${l.code} - ${l.description}`;
 const th = 'py-2 px-2 text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap text-right';
 const td = 'py-1.5 px-2 whitespace-nowrap tabular-nums text-right';
 const ym = (y: number, m: number) => `${y}-${String(m).padStart(2, '0')}`;
@@ -261,11 +263,11 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
     const rows: Record<string, string | number | null>[] = [];
     for (const l of d.lines) {
       const accs = lineAccounts(l);
-      const row: Record<string, string | number | null> = { 'BWA Group': l.description, 'No.': '', Level: '', Description: '' };
+      const row: Record<string, string | number | null> = { 'BWA Group': lineName(l), 'No.': '', Level: '', Description: '' };
       columns.forEach(c => { row[`${c.label}${c.sub ? ` ${c.sub}` : ''}`] = c.value(accs, l); });
       rows.push(row);
       if (!l.formula) for (const a of accountsOf.get(l.code) || []) {
-        const sub: Record<string, string | number | null> = { 'BWA Group': l.description, 'No.': a.account, Level: a.level, Description: a.description };
+        const sub: Record<string, string | number | null> = { 'BWA Group': lineName(l), 'No.': a.account, Level: a.level, Description: a.description };
         columns.forEach(c => { sub[`${c.label}${c.sub ? ` ${c.sub}` : ''}`] = c.value([a], null); });
         rows.push(sub);
       }
@@ -424,7 +426,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
                           <td className="py-1.5 px-2 whitespace-nowrap">
                             <span className="inline-flex items-center gap-1">
                               {subs.length ? (open[l.code] ? <ChevronDown size={13} className="opacity-60" /> : <ChevronRight size={13} className="opacity-60" />) : <span className="w-[13px]" />}
-                              {l.description}
+                              {lineName(l)}
                             </span>
                           </td>
                           {columns.map(c => (
@@ -475,7 +477,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
                   {deviations.map(x => (
                     <div key={x.l.code} className={`rounded-lg border p-3 ${x.diff < 0 ? 'border-red-200 bg-red-50/40' : 'border-emerald-200 bg-emerald-50/40'}`}>
                       <div className="flex items-baseline justify-between gap-2">
-                        <p className="font-bold text-gray-900">{x.l.description}</p>
+                        <p className="font-bold text-gray-900">{lineName(x.l)}</p>
                         <p className={`font-bold tabular-nums ${tone(x.diff)}`}>{x.diff > 0 ? '+' : ''}{num(x.diff, 0)} €</p>
                       </div>
                       <p className="text-xs text-gray-600 mt-0.5">
