@@ -79,7 +79,7 @@ export type IcRow = {
 };
 
 export async function intercompanyReport(source: string, from: string, to: string, force = false) {
-  return cached(`intercompany6:${source}:${from}:${to}`, to < today() ? 12 * HOUR : HOUR, async () => {
+  return cached(`intercompany7:${source}:${from}:${to}`, to < today() ? 12 * HOUR : HOUR, async () => {
     const ctx = await getBcContext(source);
     const sales = (await bcFetchAll(odataUrl(`${ctx.apiBase}/salesInvoices`, {
       $filter: `postingDate ge ${from} and postingDate le ${to}`,
@@ -96,7 +96,8 @@ export async function intercompanyReport(source: string, from: string, to: strin
     for (const m of memos) {
       const target = groupCompanyOf(s(m.customerName));
       if (s(m.invoiceNumber)) creditedBy.set(`no:${norm(m.invoiceNumber)}`, m);
-      if (s(m.externalDocumentNumber)) creditedBy.set(`ext:${target}|${norm(m.externalDocumentNumber)}`, m);
+      // Por External Document No. solo los abonos que no indican otra factura (los que sí, abonan esa otra factura)
+      if (s(m.externalDocumentNumber) && !s(m.invoiceNumber)) creditedBy.set(`ext:${target}|${norm(m.externalDocumentNumber)}`, m);
     }
     const excluded: { invoiceNo: string; creditMemoNo: string; target: string; postingDate: string; externalDocNo: string; creditMemoAmount: number }[] = [];
     const ic = icAll.filter(r => {
