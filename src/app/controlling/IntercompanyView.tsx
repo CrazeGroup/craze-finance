@@ -10,7 +10,7 @@ import CompanySelect, { CONSOLIDATED, REPORT_COMPANIES, useReportCompany } from 
 // Controlling · Intercompany: facturas de venta entre empresas del grupo frente a su factura de compra en la otra
 // empresa (mismo nº, importe, divisa, fecha, artículos y cantidades) y, en las ventas de CRAZE GmbH a UK / Group AG
 // (drop shipment), la factura de venta final al cliente. Datos: /api/controlling/intercompany (una petición por empresa).
-type Cmp = { no: string; description: string; a: number; b: number };
+type Cmp = { no: string; description: string; a: number; b: number; equivalent?: string };
 type Row = {
   source: string; target: string; invoiceNo: string; postingDate: string; invoiceDate: string; customer: string; currency: string; amount: number; externalDocNo: string;
   purchase: null | { no: string; vendorInvoiceNo: string; postingDate: string; invoiceDate: string; vendor: string; currency: string; amount: number };
@@ -112,12 +112,14 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
           {items.map(no => {
             const l = r.lines.find(x => x.no === no), f = r.final?.lines.find(x => x.no === no);
             const sale = l?.a ?? f?.a ?? 0, purch = l?.b ?? 0, fin = f?.b ?? 0;
-            const bad = Math.abs(sale - purch) > 0.0001 || (r.final && r.final.found && Math.abs(sale - fin) > 0.0001);
+            const eq = l?.equivalent;
+            const bad = !eq && (Math.abs(sale - purch) > 0.0001 || (r.final && r.final.found && Math.abs(sale - fin) > 0.0001));
             return (
               <tr key={no} className={`border-b border-gray-100 ${bad ? 'bg-red-50' : ''}`}>
-                <td className={`${td} font-mono font-semibold`}>{no}</td><td className={td}>{l?.description || f?.description}</td>
+                <td className={`${td} font-mono font-semibold`}>{no}</td>
+                <td className={td}>{l?.description || f?.description}{eq && <span className="ml-2 text-[11px] text-emerald-700 font-semibold">✓ {eq}</span>}</td>
                 <td className={`${td} text-right font-mono`}>{num(sale)}</td>
-                <td className={`${td} text-right font-mono ${Math.abs(sale - purch) > 0.0001 ? 'text-[#C0392B] font-semibold' : ''}`}>{r.purchase ? num(purch) : '–'}</td>
+                <td className={`${td} text-right font-mono ${!eq && Math.abs(sale - purch) > 0.0001 ? 'text-[#C0392B] font-semibold' : ''}`}>{r.purchase ? num(purch) : '–'}</td>
                 {r.final && <td className={`${td} text-right font-mono ${r.final.found && Math.abs(sale - fin) > 0.0001 ? 'text-[#C0392B] font-semibold' : ''}`}>{r.final.found ? num(fin) : '–'}</td>}
               </tr>
             );
@@ -256,7 +258,7 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
               </div>
             )}
             <p className="text-xs text-gray-500">
-              Se emparejan por nº: la factura de compra debe llevar como Vendor Invoice No. el nº de la factura de venta (se ignoran espacios y un punto final, pero se marca). Divisa en blanco = divisa local de cada empresa (CRAZE, Iberia y Entertainment EUR, UK GBP, Group AG CHF).
+              Se emparejan por nº: la factura de compra debe llevar como Vendor Invoice No. el nº de la factura de venta (un punto final de más se da por bueno). En las compras de Craze Entertainment, el foilbag de GmbH registrado como AA-00049 se da por bueno. Divisa en blanco = divisa local de cada empresa (CRAZE, Iberia y Entertainment EUR, UK GBP, Group AG CHF).
               Fecha = fecha de factura (Document Date) de las dos. Artículos y cantidades por nº de artículo. Drop shipment (CRAZE → UK / Group AG): la venta final se busca por nº o por External Document No.; haz clic en una factura para ver la comparación de líneas. Los abonos todavía no se comparan.
             </p>
           </>

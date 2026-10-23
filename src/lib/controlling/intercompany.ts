@@ -52,24 +52,34 @@ async function linesOf(ctx: BcContext, entity: 'salesInvoiceLines' | 'purchInvLi
 
 // Cantidad por artículo (suma de líneas) y diferencias entre dos documentos
 const qtyByItem = (lines: Line[] = []) => lines.reduce((m, l) => m.set(l.no, (m.get(l.no) || 0) + l.quantity), new Map<string, number>());
-function compareLines(a: Line[] = [], b: Line[] = []) {
+// Equivalencias aceptadas: en la compra de Craze Entertainment el foilbag de GmbH ("PACKAGING - Empty Foilbag …")
+// se registra como AA-00049 (Packaging/Foilbag, cantidad 1)
+const FOILBAG = /foil\s*bag/i;
+const FOILBAG_ITEM = 'AA-00049';
+function compareLines(a: Line[] = [], b: Line[] = [], allowFoilbag = false) {
   const qa = qtyByItem(a), qb = qtyByItem(b);
   const items = Array.from(new Set([...qa.keys(), ...qb.keys()])).sort();
-  const rows = items.map(no => ({ no, description: (a.find(l => l.no === no) || b.find(l => l.no === no))?.description || '', a: qa.get(no) || 0, b: qb.get(no) || 0 }));
-  return { rows, ok: rows.every(r => Math.abs(r.a - r.b) < 0.0001) };
+  const foilbagEquivalent = allowFoilbag && qb.has(FOILBAG_ITEM) && a.some(l => FOILBAG.test(l.description) && !qb.has(l.no));
+  const rows = items.map(no => {
+    const description = (a.find(l => l.no === no) || b.find(l => l.no === no))?.description || '';
+    const equivalent = foilbagEquivalent && (no === FOILBAG_ITEM || (FOILBAG.test(description) && !qb.has(no)));
+    return { no, description, a: qa.get(no) || 0, b: qb.get(no) || 0, ...(equivalent ? { equivalent: `Foilbag = ${FOILBAG_ITEM}` } : {}) };
+  });
+  return { rows, ok: rows.every(r => r.equivalent || Math.abs(r.a - r.b) < 0.0001) };
 }
 
 export type IcRow = {
+  // (líneas: equivalent = equivalencia aceptada, p. ej. foilbag = AA-00049)
   source: string; target: string; invoiceNo: string; postingDate: string; invoiceDate: string; customer: string;
   currency: string; amount: number; externalDocNo: string;
   purchase: null | { no: string; vendorInvoiceNo: string; postingDate: string; invoiceDate: string; vendor: string; currency: string; amount: number };
-  lines: { no: string; description: string; a: number; b: number }[];
+  lines: { no: string; description: string; a: number; b: number; equivalent?: string }[];
   final: null | { no: string; customer: string; postingDate: string; currency: string; amount: number; found: boolean; lines: { no: string; description: string; a: number; b: number }[] };
   issues: string[];
 };
 
 export async function intercompanyReport(source: string, from: string, to: string, force = false) {
-  return cached(`intercompany2:${source}:${from}:${to}`, to < today() ? 12 * HOUR : HOUR, async () => {
+  return cached(`intercompany3:${source}:${from}:${to}`, to < today() ? 12 * HOUR : HOUR, async () => {
     const ctx = await getBcContext(source);
     const sales = (await bcFetchAll(odataUrl(`${ctx.apiBase}/salesInvoices`, {
       $filter: `postingDate ge ${from} and postingDate le ${to}`,
@@ -138,11 +148,12 @@ export async function intercompanyReport(source: string, from: string, to: strin
           no: s(p.number), vendorInvoiceNo: s(p.vendorInvoiceNumber), postingDate: d10(p.postingDate), invoiceDate: d10(p.invoiceDate),
           vendor: s(p.vendorName), currency: s(p.currencyCode) || lcyOf(target), amount: n(p.totalAmountExcludingTax),
         };
-        if (purchase.vendorInvoiceNo !== no) issues.push(`Vendor Invoice No. escrito distinto (${purchase.vendorInvoiceNo})`);
+        // Un punto final de más (factura corregida al introducirla) se da por bueno
+        if (purchase.vendorInvoiceNo.replace(/\.+$/, '') !== no) issues.push(`Vendor Invoice No. escrito distinto (${purchase.vendorInvoiceNo})`);
         if (Math.abs(purchase.amount - amount) > 0.05) issues.push(`Importe distinto (${amount.toFixed(2)} vs ${purchase.amount.toFixed(2)})`);
         if (purchase.currency !== currency) issues.push(`Divisa distinta (${currency} vs ${purchase.currency})`);
         if (purchase.invoiceDate !== d10(x.invoiceDate)) issues.push(`Fecha distinta (${d10(x.invoiceDate)} vs ${purchase.invoiceDate})`);
-        const cmp = compareLines(salesLines.get(no), tg.purchLines.get(purchase.no));
+        const cmp = compareLines(salesLines.get(no), tg.purchLines.get(purchase.no), target === 'Craze Entertainment');
         lines = cmp.rows;
         if (!cmp.ok) issues.push('Artículos o cantidades distintos en la compra');
       }
