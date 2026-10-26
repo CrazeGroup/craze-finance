@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Save, X, ChevronRight, ChevronDown, Download, Upload, Archive, Send, Briefcase, Calendar, Search, MailCheck } from 'lucide-react';
+import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Save, X, ChevronRight, ChevronDown, Download, Upload, Archive, Send, Briefcase, Calendar, Search, MailCheck, AlertTriangle } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useCompany } from '@/contexts/CompanyContext';
 import { syncFromBc } from '@/lib/syncClient';
@@ -30,6 +30,19 @@ export default function CashflowPage() {
   const [selectedEntries, setSelectedEntries] = useState<any[]>([]);
   const [draggedItem, setDraggedItem] = useState<any>(null);
   const [consolidatedCurrency, setConsolidatedCurrency] = useState('EUR');
+  // Mínimo del saldo consolidado (por empresa, en la divisa en que se fijó)
+  const [minBalance, setMinBalance] = useState<{ amount: number; currency: string } | null>(null);
+  const [editingMin, setEditingMin] = useState(false);
+  const [minDraft, setMinDraft] = useState('');
+
+  // Divisa predeterminada de la empresa: CHF en Group AG, EUR en el resto
+  const homeCurrency = selectedCompany === 'CRAZE Group AG' ? 'CHF' : 'EUR';
+  useEffect(() => {
+    setCurrentCurrency(homeCurrency);
+    setConsolidatedCurrency(homeCurrency);
+    setEditingMin(false);
+    fetch('/api/cashflow/min-balance', { cache: 'no-store' }).then(r => r.json()).then(setMinBalance).catch(() => setMinBalance(null));
+  }, [selectedCompany]); // eslint-disable-line react-hooks/exhaustive-deps
   
   const getCurrencySymbol = (curr: string) => {
     switch (curr) {
@@ -120,7 +133,20 @@ export default function CashflowPage() {
 
   useEffect(() => {
     fetchCashflow();
-  }, [showArchived, currentCurrency]);
+  }, [showArchived, currentCurrency, selectedCompany]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveMinBalance = async () => {
+    const amount = minDraft.trim() === '' ? null : parseFloat(minDraft.replace(/\./g, '').replace(',', '.'));
+    if (amount !== null && !isFinite(amount)) { alert('Importe no válido'); return; }
+    const res = await fetch('/api/cashflow/min-balance', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount, currency: consolidatedCurrency }),
+    });
+    const d = await res.json();
+    if (!res.ok) { alert(d.error || 'No se pudo guardar el mínimo'); return; }
+    setMinBalance(d);
+    setEditingMin(false);
+  };
 
   const handleSync = async () => {
     try {
@@ -620,6 +646,16 @@ export default function CashflowPage() {
     return { ...e, excludedAmount: excluded, balance: runningBalance };
   });
 
+  // Mínimo de saldo: importes pasados a la divisa del mínimo con los tipos del día (base EUR)
+  const toMinCurrency = (value: number, from: string) =>
+    minBalance ? (value / (exchangeRates[from] || 1)) * (exchangeRates[minBalance.currency] || 1) : value;
+  const belowMin = (balance: number) => !!minBalance && toMinCurrency(balance, currentCurrency) < minBalance.amount;
+  const consolidatedInMin = totalEurSum !== null && minBalance ? totalEurSum * (exchangeRates[minBalance.currency] || 1) : null;
+  const consolidatedBelowMin = consolidatedInMin !== null && minBalance !== null && consolidatedInMin < minBalance.amount;
+  const firstBelowMin = minBalance ? balancedEntries.find(e => belowMin(e.balance)) : undefined;
+  const belowMinCount = minBalance ? balancedEntries.filter(e => belowMin(e.balance)).length : 0;
+  const fmtMoney = (v: number, curr: string) => `${getCurrencySymbol(curr)}${v.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
   // Líneas visibles: filtro de tipo + buscador de texto (descripción, cliente y nº de las facturas agrupadas)
   const searchTerm = search.trim().toLowerCase();
   const visibleEntries = balancedEntries.filter(e =>
@@ -807,8 +843,45 @@ export default function CashflowPage() {
               </span>
             </div>
           )}
+          <div className={`px-4 py-2 rounded-lg border flex items-center gap-3 ${consolidatedBelowMin ? 'bg-red-500/10 border-red-500/40' : 'bg-white border-gray-200'}`}>
+            <span className={`font-bold text-sm uppercase tracking-wider whitespace-nowrap ${consolidatedBelowMin ? 'text-red-800' : 'text-gray-700'}`}>Min. Saldo Consolidado</span>
+            {editingMin ? (
+              <>
+                <input autoFocus value={minDraft} onChange={e => setMinDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') saveMinBalance(); if (e.key === 'Escape') setEditingMin(false); }}
+                  placeholder={`Importe en ${consolidatedCurrency} (vacío = sin mínimo)`} className="w-56 border border-gray-300 rounded px-2 py-1 text-sm" />
+                <button onClick={saveMinBalance} className="p-1.5 text-emerald-700 hover:bg-emerald-500/10 rounded" title="Guardar"><Save size={16} /></button>
+                <button onClick={() => setEditingMin(false)} className="p-1.5 text-gray-500 hover:bg-gray-100 rounded" title="Cancelar"><X size={16} /></button>
+              </>
+            ) : (
+              <>
+                <span className={`font-black text-lg ${consolidatedBelowMin ? 'text-red-700' : 'text-gray-900'}`}>
+                  {minBalance ? fmtMoney(minBalance.amount, minBalance.currency) : '—'}
+                </span>
+                <button onClick={() => { setMinDraft(minBalance ? String(minBalance.amount).replace('.', ',') : ''); setEditingMin(true); }}
+                  className="p-1.5 text-gray-500 hover:text-black hover:bg-gray-100 rounded" title={`Fijar el mínimo (en ${consolidatedCurrency}, la divisa del saldo consolidado)`}>
+                  <Edit2 size={14} />
+                </button>
+              </>
+            )}
+          </div>
           </div>
         </div>
+
+        {minBalance && (consolidatedBelowMin || firstBelowMin) && (
+          <div className="flex items-start gap-3 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
+            <AlertTriangle size={18} className="mt-0.5 shrink-0" />
+            <div className="space-y-0.5">
+              {consolidatedBelowMin && consolidatedInMin !== null && (
+                <p className="font-bold">El saldo consolidado ({fmtMoney(consolidatedInMin, minBalance.currency)}) está por debajo del mínimo de {fmtMoney(minBalance.amount, minBalance.currency)}.</p>
+              )}
+              {firstBelowMin && (
+                <p>
+                  Cuenta {currentCurrency}: el saldo baja del mínimo el <b>{new Date(firstBelowMin.date).toLocaleDateString('es-ES')}</b> ({fmtMoney(firstBelowMin.balance, currentCurrency)}) · {belowMinCount} movimiento(s) por debajo, marcados en la tabla.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="rounded-2xl border border-gray-200 bg-gray-50 backdrop-blur-md shadow-2xl overflow-hidden">
           {loading ? (
@@ -930,7 +1003,12 @@ export default function CashflowPage() {
                               <div className="text-[11px] text-amber-700 font-semibold">−{getCurrencySymbol(currentCurrency)}{entry.excludedAmount.toLocaleString('es-ES', { minimumFractionDigits: 2 })} reclamado, fuera del saldo</div>
                             )}
                           </td>
-                          <td className="p-4 text-right">
+                          <td className={`p-4 text-right ${belowMin(entry.balance) ? 'bg-red-50' : ''}`}>
+                            {belowMin(entry.balance) && (
+                              <span className="inline-flex items-center gap-1 mr-2 bg-red-500/15 text-red-700 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-red-500/30" title={`Por debajo del mínimo de ${fmtMoney(minBalance!.amount, minBalance!.currency)}`}>
+                                <AlertTriangle size={11} /> Bajo mínimo
+                              </span>
+                            )}
                             <span className={entry.balance <= -1000000 ? 'text-purple-600 font-black text-lg' : entry.balance < 0 ? 'text-red-600 font-bold text-base' : 'text-emerald-600 font-bold text-base'}>
                               {getCurrencySymbol(currentCurrency)}{entry.balance.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
                             </span>
