@@ -21,14 +21,14 @@ export async function POST(req: Request) {
     }
     const [ctx, cfg] = await Promise.all([getBcContext(company), customsConfig()]);
 
-    // No duplicar: solo los tipos que aún no existen con ese nº AT/C
+    // No duplicar: solo los tipos que aún no existen con ese nº AT/C (force: el usuario confirmó crearlas de nuevo)
     const existing = await existingInvoices(ctx, body.atc, cfg);
-    const invoices = body.invoices.filter(i => !existing.some(e => e.kind === i.kind));
+    const invoices = body.force ? body.invoices : body.invoices.filter(i => !existing.some(e => e.kind === i.kind));
     if (!invoices.length) return NextResponse.json({ error: `Ya existen en BC: ${existing.map(e => e.no).join(', ')}`, existing }, { status: 409 });
 
     const result = await createInvoices(ctx, { ...body, invoices }, cfg);
     if (result.created.length) {
-      await logAction('Aduanas: facturas creadas en BC', `${body.atc} · ${result.created.map(c => `${c.kind.toUpperCase()} ${c.no} ${c.amount}`).join(' · ')}`);
+      await logAction('Aduanas: facturas creadas en BC', `${body.atc}${body.force ? ' (ya existían)' : ''} · ${result.created.map(c => `${c.kind.toUpperCase()} ${c.no} ${c.amount}`).join(' · ')}`);
     }
     return NextResponse.json(result, { status: result.error ? 502 : 200 });
   } catch (error: any) {

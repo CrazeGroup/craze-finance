@@ -109,7 +109,7 @@ export async function existingInvoices(ctx: BcContext, atc: string, cfg: Customs
 }
 
 export type InvoiceInput = { kind: 'zoll' | 'eust'; amount: number; dueDate: string };
-export type CreateInput = { atc: string; date: string; description: string; invoices: InvoiceInput[] };
+export type CreateInput = { atc: string; date: string; description: string; invoices: InvoiceInput[]; force?: boolean };
 
 async function bc(method: string, url: string, token: string, body?: any) {
   const res = await fetch(url, {

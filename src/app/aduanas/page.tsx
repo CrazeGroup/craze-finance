@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { AlertCircle, CheckCircle2, FileText, Landmark, RefreshCw, Upload } from 'lucide-react';
+import { AlertCircle, CheckCircle2, FileText, Landmark, RefreshCw, Upload, X } from 'lucide-react';
 import { useCompany } from '@/contexts/CompanyContext';
 
 type Existing = { no: string; kind: 'zoll' | 'eust' | 'otro'; posted: boolean; date: string };
@@ -57,15 +57,19 @@ export default function AduanasPage() {
   const create = async (d: Doc) => {
     const f = forms[d.file];
     if (!f.atc || !f.date || !f.description.trim()) { setStatus(s => ({ ...s, [d.file]: { error: 'Rellena el nº AT/C, la fecha y la descripción.' } })); return; }
+    // Si ya existen en BC, se pueden crear de nuevo tras confirmarlo (no las creadas ya en esta sesión)
+    const force = !pending(d);
+    if (force && !confirm(`Las facturas de ${f.atc} ya existen en BC (${d.existing.map(e => e.no).join(', ')}). ¿Crearlas de nuevo?`)) return;
     setStatus(s => ({ ...s, [d.file]: { ...s[d.file], saving: true, error: null } }));
     try {
+      const made = (k: 'zoll' | 'eust') => !!status[d.file]?.created?.some(c => c.kind === k);
       const invoices = (['zoll', 'eust'] as const)
-        .filter(k => !has(d, k))
+        .filter(k => (force ? !made(k) : !has(d, k)))
         .map(k => ({ kind: k, amount: toNum(f[k]), dueDate: k === 'zoll' ? f.zollDue : f.eustDue }))
         .filter(i => i.amount > 0);
       const res = await fetch('/api/customs/create', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ atc: f.atc.trim(), date: f.date, description: f.description.trim(), invoices }),
+        body: JSON.stringify({ atc: f.atc.trim(), date: f.date, description: f.description.trim(), invoices, force }),
       });
       const json = await res.json();
       setStatus(s => ({ ...s, [d.file]: { created: [...(s[d.file]?.created || []), ...(json.created || [])], error: json.error || null } }));
@@ -74,6 +78,13 @@ export default function AduanasPage() {
     }
   };
   const createAll = async () => { for (const d of docs.filter(pending)) await create(d); };
+  // Quitar una declaración de la lista (no se envía a BC)
+  const remove = (file: string) => {
+    setDocs(l => l.filter(d => d.file !== file));
+    setFiles(l => l.filter(f => f.name !== file));
+    setForms(({ [file]: _f, ...rest }) => rest);
+    setStatus(({ [file]: _s, ...rest }) => rest);
+  };
 
   return (
     <div className="min-h-screen bg-[#F3F4F7] pb-24">
@@ -126,6 +137,7 @@ export default function AduanasPage() {
                 <span className="font-bold text-gray-900">{d.atc || 'Sin nº AT/C'}</span>
                 <span className="text-xs text-gray-500">Registriernr. {d.registration || '—'} · LRN {d.lrn || '—'} · {d.file}</span>
                 <span className="ml-auto text-sm text-gray-600">Total Abgaben: <b>{d.total != null ? fmt(d.total) : '—'} €</b></span>
+                <button onClick={() => remove(d.file)} title="Quitar de la lista (no se envía a BC)" className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"><X size={16} /></button>
               </div>
               <div className="p-4 space-y-3">
                 <div className="flex flex-wrap gap-3 items-end">
@@ -170,13 +182,13 @@ export default function AduanasPage() {
                 {st.error && <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{st.error}</p>}
                 {/* Siempre visible; desactivado cuando ya no queda nada por crear (las dos facturas existen en BC) */}
                 <div className="flex items-center gap-3">
-                  <button onClick={() => create(d)} disabled={st.saving || !pending(d)}
-                    title={pending(d) ? 'Crea las Purchase Invoices en BC, sin registrar' : 'Las facturas de esta declaración ya están en BC'}
+                  <button onClick={() => create(d)} disabled={st.saving || (!pending(d) && !!st.created?.length)}
+                    title={pending(d) ? 'Crea las Purchase Invoices en BC, sin registrar' : 'Ya existen en BC: pide confirmación y las crea de nuevo'}
                     className="inline-flex items-center gap-2 bg-indigo-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed">
                     {st.saving && <RefreshCw size={14} className="animate-spin" />} Enviar a BC
-                    {pending(d) && ` (${rows.filter(r => !has(d, r.kind) && toNum(f[r.amount]) > 0).map(r => r.label).join(' + ')})`}
+                    {pending(d) ? ` (${rows.filter(r => !has(d, r.kind) && toNum(f[r.amount]) > 0).map(r => r.label).join(' + ')})` : !st.created?.length ? ' de nuevo' : ''}
                   </button>
-                  {!pending(d) && <span className="text-xs text-gray-500">Ya están en BC: no se vuelven a crear.</span>}
+                  {!pending(d) && !st.created?.length && <span className="text-xs text-gray-500">Ya están en BC: se crearán otra vez si lo confirmas.</span>}
                 </div>
               </div>
             </section>
