@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { AlertCircle, ArrowDown, ArrowUp, Download, RefreshCw, Search } from 'lucide-react';
 import { useCompany } from '@/contexts/CompanyContext';
 
 type Row = {
-  code: string; country: string; item: string; desc: string;
+  company?: string; code: string; country: string; item: string; desc: string;
   qty: number; turnover: number; price: number; provision: number; rate: number; lines: number;
   turnoverFob: number; domestic: number | null; fob: number | null;
 };
@@ -18,9 +18,11 @@ type Report = {
   stats: { lines: number; ic: { lines: number; turnover: number; provision: number }; noItemCard: string[]; noRate: string[];
     excluded: { codes: string[]; lines: number; turnover: number } };
 };
-type SortKey = 'code' | 'country' | 'item' | 'desc' | 'qty' | 'turnover' | 'price' | 'provision' | 'domestic' | 'fob';
+type SortKey = 'company' | 'code' | 'country' | 'item' | 'desc' | 'qty' | 'turnover' | 'price' | 'provision' | 'domestic' | 'fob';
 
 const NOT_APPLIED = 'NON-ROYALTY';
+// Empresas del grupo (GROUP_COMPANIES de src/lib/royalties.ts)
+const GROUP = ['CRAZE', 'Craze Iberia SL', 'Craze UK', 'CRAZE Group AG', 'Craze Entertainment'];
 const iso = (d: Date) => d.toISOString().substring(0, 10);
 
 // Trimestre natural: offset 0 = el actual, -1 = el anterior
@@ -39,6 +41,7 @@ const pctOrDash = (v: number | null) => (v == null ? '—' : pct(v));
 const dateEs = (d: string) => d.split('-').reverse().join('/');
 
 const COLUMNS: { key: SortKey; label: string; num?: boolean }[] = [
+  { key: 'company', label: 'Empresa' },
   { key: 'code', label: 'Royalty Code' },
   { key: 'country', label: 'País fact.' },
   { key: 'item', label: 'Nº' },
@@ -57,9 +60,13 @@ export default function RoyaltiesPage() {
   const { selectedCompany } = useCompany();
   const [range, setRange] = useState(() => quarter(-1));
   const [reload, setReload] = useState({ n: 0, force: false });
-  const [data, setData] = useState<Report | null>(null);
+  // Empresas del informe (una o varias; todas = CRAZE Consolidated, en EUR). Arranca con la del menú.
+  const [companies, setCompanies] = useState<string[]>([]);
+  useEffect(() => { setCompanies(selectedCompany === 'ALL' ? GROUP : [selectedCompany]); }, [selectedCompany]);
+  const multi = companies.length > 1;
+  const [reports, setReports] = useState<Record<string, Report>>({});
+  const [errors, setErrors] = useState<Record<string, { message: string; details?: any }>>({});
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<{ message: string; details?: any } | null>(null);
 
   const [codeFilter, setCodeFilter] = useState('');
   const [countryFilter, setCountryFilter] = useState('');
@@ -68,37 +75,72 @@ export default function RoyaltiesPage() {
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 } | null>(null);
   // Conversión a EUR (UK en GBP, AG en CHF): tipo de BC, editable
   const [inEur, setInEur] = useState(false);
-  const [fxInput, setFxInput] = useState('');
 
+  // Cada empresa se pide por separado (cada llamada a BC dentro de los 60 s de Vercel); se guardan por empresa y periodo
+  const keyOf = (c: string) => `${c}|${range.from}|${range.to}`;
+  const forcedRun = useRef(0);   // el botón de actualizar fuerza BC una sola vez, no en cada cambio de empresas
   useEffect(() => {
-    if (selectedCompany === 'ALL' || !range.from || !range.to || range.from > range.to) return;
+    if (!companies.length || !range.from || !range.to || range.from > range.to) return;
+    const force = reload.force && forcedRun.current !== reload.n;
+    forcedRun.current = reload.n;
+    const missing = companies.filter(c => force || (!reports[keyOf(c)] && !errors[keyOf(c)]));
+    if (!missing.length) return;
     let cancelled = false;
     setLoading(true);
-    setError(null);
-    fetch(`/api/royalties?from=${range.from}&to=${range.to}${reload.force ? '&force=1' : ''}`)
-      .then(async res => {
+    Promise.all(missing.map(async c => {
+      try {
+        const res = await fetch(`/api/royalties?company=${encodeURIComponent(c)}&from=${range.from}&to=${range.to}${force ? '&force=1' : ''}`);
         const json = await res.json();
-        if (cancelled) return;
-        if (!res.ok) { setError({ message: json.error || 'Error al cargar los royalties', details: json.details }); setData(null); }
-        else setData(json);
-      })
-      .catch(e => { if (!cancelled) setError({ message: e.message }); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [selectedCompany, range, reload]);
+        return res.ok ? { c, report: json as Report } : { c, error: { message: json.error || 'Error al cargar los royalties', details: json.details } };
+      } catch (e: any) {
+        return { c, error: { message: e.message as string } };
+      }
+    })).then(results => {
+      if (cancelled) return;
+      setReports(prev => { const next = { ...prev }; results.forEach(r => { if (r.report) next[keyOf(r.c)] = r.report; else delete next[keyOf(r.c)]; }); return next; });
+      setErrors(prev => { const next = { ...prev }; results.forEach(r => { if (r.error) next[keyOf(r.c)] = r.error; else delete next[keyOf(r.c)]; }); return next; });
+      setLoading(false);
+    });
+    return () => { cancelled = true; setLoading(false); };
+  }, [companies, range, reload]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const loaded = companies.map(c => reports[keyOf(c)]).filter(Boolean) as Report[];
+  const failed = companies.filter(c => errors[keyOf(c)]).map(c => ({ company: c, ...errors[keyOf(c)] }));
+  const data = loaded[0] || null;
+
+  // Tipos de cambio a EUR (Currencies_Excel de CRAZE GmbH), editables por divisa
+  const [fxInputs, setFxInputs] = useState<Record<string, string>>({});
   useEffect(() => {
-    setFxInput(data?.fx?.rate ? String(data.fx.rate).replace('.', ',') : '');
-  }, [data?.fx?.rate]);
-  const localCur = data?.currency || 'EUR';
-  const fxRate = parseFloat(fxInput.replace(',', '.'));
-  const canConvert = localCur !== 'EUR' && fxRate > 0;
-  const factor = inEur && canConvert ? fxRate : 1;
-  const cur = inEur && canConvert ? 'EUR' : localCur;
+    setFxInputs(prev => {
+      const next = { ...prev };
+      loaded.forEach(r => { if (r.fx?.rate && !next[r.currency]) next[r.currency] = String(r.fx.rate).replace('.', ','); });
+      return next;
+    });
+  }, [loaded.map(r => r.company).join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
+  const rateOf = (c: string) => (c === 'EUR' ? 1 : parseFloat((fxInputs[c] || '').replace(',', '.')) || 0);
+  const localCur = multi ? 'EUR' : data?.currency || 'EUR';
+  const canConvert = localCur !== 'EUR' && rateOf(localCur) > 0;
+  const toEur = multi || (inEur && canConvert);
+  const cur = toEur ? 'EUR' : localCur;
+  const factorOf = (r: Report) => (toEur ? rateOf(r.currency) || 1 : 1);
+  const missingFx = multi ? Array.from(new Set(loaded.map(r => r.currency).filter(c => !rateOf(c)))) : [];
+  const fxNote = toEur ? Array.from(new Set(loaded.map(r => r.currency).filter(c => c !== 'EUR'))).map(c => `1 ${c} = ${fxInputs[c]} EUR`).join(', ') : '';
   const rows = useMemo(
-    () => (data?.rows || []).map(r => (factor === 1 ? r : { ...r, turnover: r.turnover * factor, turnoverFob: r.turnoverFob * factor, provision: r.provision * factor, price: r.price * factor })),
-    [data, factor]
+    () => loaded.flatMap(rep => {
+      const f = factorOf(rep);
+      return rep.rows.map(r => ({ ...r, company: rep.company, turnover: r.turnover * f, turnoverFob: r.turnoverFob * f, provision: r.provision * f, price: r.price * f }));
+    }),
+    [loaded.map(r => `${r.company}${r.from}${r.to}${r.rows.length}`).join('|'), fxInputs, toEur] // eslint-disable-line react-hooks/exhaustive-deps
   );
+  // Avisos y estadísticas de todas las empresas cargadas
+  const stats = {
+    ic: loaded.reduce((a, r) => ({ lines: a.lines + r.stats.ic.lines, turnover: a.turnover + r.stats.ic.turnover * factorOf(r), provision: a.provision + r.stats.ic.provision * factorOf(r) }), { lines: 0, turnover: 0, provision: 0 }),
+    noRate: Array.from(new Set(loaded.flatMap(r => r.stats.noRate))),
+    noItemCard: Array.from(new Set(loaded.flatMap(r => r.stats.noItemCard))),
+    excluded: loaded.filter(r => r.stats.excluded.codes.length),
+  };
+  const companiesLabel = companies.length === GROUP.length ? 'CRAZE Consolidated' : companies.map(c => (multi ? SHORT[c] || c : c)).join(' + ');
+  const columns = COLUMNS.filter(c => multi || c.key !== 'company');
   const codes = useMemo(() => Array.from(new Set(rows.map(r => r.code))).sort(byCode), [rows]);
   const countries = useMemo(() => Array.from(new Set(rows.map(r => r.country))).sort(), [rows]);
 
@@ -115,7 +157,7 @@ export default function RoyaltiesPage() {
         const num = COLUMNS.find(c => c.key === sort.key)?.num;
         return (num ? ((va as number | null) ?? -1) - ((vb as number | null) ?? -1) : String(va).localeCompare(String(vb))) * sort.dir;
       }
-      return byCode(a.code, b.code) || a.country.localeCompare(b.country) || a.item.localeCompare(b.item);
+      return byCode(a.code, b.code) || (a.company || '').localeCompare(b.company || '') || a.country.localeCompare(b.country) || a.item.localeCompare(b.item);
     });
   }, [rows, codeFilter, countryFilter, hideNotApplied, search, sort]);
 
@@ -132,6 +174,8 @@ export default function RoyaltiesPage() {
       }))
       .sort((a, b) => (a.code === NOT_APPLIED ? 1 : b.code === NOT_APPLIED ? -1 : b.provision - a.provision));
   }, [rows, countryFilter, search]);
+  const codeTotal = byCodeSummary.reduce((t, c) => ({ n: t.n + c.n, qty: t.qty + c.qty, turnover: t.turnover + c.turnover, turnoverFob: t.turnoverFob + c.turnoverFob, provision: t.provision + c.provision }),
+    { n: 0, qty: 0, turnover: 0, turnoverFob: 0, provision: 0 });
 
   const totals = { qty: sum(visible, 'qty'), turnover: sum(visible, 'turnover'), provision: sum(visible, 'provision') };
   const licensed = visible.filter(r => r.code !== NOT_APPLIED);
@@ -142,22 +186,23 @@ export default function RoyaltiesPage() {
 
   const exportExcel = () => {
     const aoa: any[][] = [
-      [`ROYALTIES ${selectedCompany} · ${dateEs(range.from)} – ${dateEs(range.to)} · ${cur}${cur !== localCur ? ` (1 ${localCur} = ${fxInput} EUR)` : ''}`],
-      ['Royalty Code', 'Bill-to Country/Region Code', 'No.', 'Description', 'Quantity', 'Turnover Net of Provision Sales', 'of which FOB', 'Price Per Unit', 'Provision Royalties', '% Domestic Royalty', '% Fob Royalty'],
-      ...visible.map(r => [r.code, r.country, r.item, r.desc, r.qty, r.turnover, r.turnoverFob, r.price, r.provision, r.domestic, r.fob]),
-      ['Total', '', '', '', totals.qty, totals.turnover, sum(visible, 'turnoverFob'), null, totals.provision, null, null],
+      [`ROYALTIES ${companiesLabel} · ${dateEs(range.from)} – ${dateEs(range.to)} · ${cur}${fxNote ? ` (${fxNote})` : ''}`],
+      [...(multi ? ['Company'] : []), 'Royalty Code', 'Bill-to Country/Region Code', 'No.', 'Description', 'Quantity', 'Turnover Net of Provision Sales', 'of which FOB', 'Price Per Unit', 'Provision Royalties', '% Domestic Royalty', '% Fob Royalty'],
+      ...visible.map(r => [...(multi ? [r.company] : []), r.code, r.country, r.item, r.desc, r.qty, r.turnover, r.turnoverFob, r.price, r.provision, r.domestic, r.fob]),
+      [...(multi ? [''] : []), 'Total', '', '', '', totals.qty, totals.turnover, sum(visible, 'turnoverFob'), null, totals.provision, null, null],
     ];
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     for (let r = 2; r < aoa.length; r++) {
-      for (const c of [4, 5, 6, 7, 8, 9, 10]) {
+      for (const c0 of [4, 5, 6, 7, 8, 9, 10]) {
+        const c = c0 + (multi ? 1 : 0);
         const cell = ws[XLSX.utils.encode_cell({ r, c })];
-        if (cell && cell.t === 'n') cell.z = c === 4 ? '#,##0' : c >= 9 ? '0.00%' : '#,##0.00';
+        if (cell && cell.t === 'n') cell.z = c0 === 4 ? '#,##0' : c0 >= 9 ? '0.00%' : '#,##0.00';
       }
     }
-    ws['!cols'] = [{ wch: 24 }, { wch: 10 }, { wch: 12 }, { wch: 50 }, { wch: 12 }, { wch: 18 }, { wch: 14 }, { wch: 12 }, { wch: 16 }, { wch: 10 }, { wch: 10 }];
+    ws['!cols'] = [...(multi ? [{ wch: 20 }] : []), { wch: 24 }, { wch: 10 }, { wch: 12 }, { wch: 50 }, { wch: 12 }, { wch: 18 }, { wch: 14 }, { wch: 12 }, { wch: 16 }, { wch: 10 }, { wch: 10 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Royalties');
-    XLSX.writeFile(wb, `Royalties_${selectedCompany}_${range.from}_${range.to}_${cur}.xlsx`.replace(/\s+/g, '_'));
+    XLSX.writeFile(wb, `Royalties_${companiesLabel}_${range.from}_${range.to}_${cur}.xlsx`.replace(/\s+/g, '_'));
   };
 
   const presets = [
@@ -172,7 +217,7 @@ export default function RoyaltiesPage() {
         <div className="w-full px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="mr-auto">
             <p className="font-bold text-gray-900 leading-tight text-lg">Royalties</p>
-            <p className="text-xs text-gray-500">{selectedCompany} · {dateEs(range.from)} – {dateEs(range.to)} · importes en {cur}{cur !== localCur ? ` (1 ${localCur} = ${fxInput} EUR)` : ''} · Royalty Code de la ficha de artículo (CRAZE GmbH) · sin Main Item ni intercompañía</p>
+            <p className="text-xs text-gray-500">{companiesLabel} · {dateEs(range.from)} – {dateEs(range.to)} · importes en {cur}{fxNote ? ` (${fxNote})` : ''} · Royalty Code de la ficha de artículo (CRAZE GmbH) · sin Main Item ni intercompañía</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex bg-gray-100 rounded-lg p-1">
@@ -188,7 +233,15 @@ export default function RoyaltiesPage() {
             <span className="text-gray-400 text-sm">–</span>
             <input type="date" value={range.to} min={range.from} onChange={e => e.target.value && setRange(r => ({ ...r, to: e.target.value }))}
               className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-semibold bg-white" />
-            {localCur !== 'EUR' && (
+            {multi && Array.from(new Set(loaded.map(r => r.currency).filter(c => c !== 'EUR'))).map(c => (
+              <label key={c} className="flex items-center gap-1 text-xs text-gray-500" title="Tipo de Currencies_Excel (CRAZE GmbH), editable">
+                1 {c} =
+                <input value={fxInputs[c] || ''} onChange={e => setFxInputs(f => ({ ...f, [c]: e.target.value }))} inputMode="decimal" placeholder="tipo"
+                  className="w-20 border border-gray-300 rounded-md px-2 py-1 text-sm font-semibold text-gray-900 bg-white text-right" />
+                EUR
+              </label>
+            ))}
+            {!multi && localCur !== 'EUR' && (
               <div className="flex items-center gap-2">
                 <div className="flex bg-gray-100 rounded-lg p-1">
                   {[localCur, 'EUR'].map(c => (
@@ -202,7 +255,7 @@ export default function RoyaltiesPage() {
                 <label className="flex items-center gap-1 text-xs text-gray-500"
                   title={data?.fx?.rate ? `Tipo de Currencies_Excel (CRAZE GmbH)${data.fx.date ? ' del ' + dateEs(data.fx.date) : ''}` : data?.fx?.error || ''}>
                   1 {localCur} =
-                  <input value={fxInput} onChange={e => setFxInput(e.target.value)} inputMode="decimal" placeholder="tipo"
+                  <input value={fxInputs[localCur] || ''} onChange={e => setFxInputs(f => ({ ...f, [localCur]: e.target.value }))} inputMode="decimal" placeholder="tipo"
                     className="w-20 border border-gray-300 rounded-md px-2 py-1 text-sm font-semibold text-gray-900 bg-white text-right" />
                   EUR
                 </label>
@@ -218,55 +271,81 @@ export default function RoyaltiesPage() {
             </button>
           </div>
         </div>
+        <div className="w-full px-4 md:px-8 pb-3 flex flex-wrap items-center gap-2 text-xs">
+          <span className="font-semibold uppercase tracking-wider text-gray-500 mr-1">CRAZE Company</span>
+          <button onClick={() => setCompanies(GROUP)}
+            className={`px-3 py-1.5 rounded-full border font-semibold ${companies.length === GROUP.length ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-600 border-gray-300 hover:text-gray-900'}`}>
+            CRAZE Consolidated
+          </button>
+          {GROUP.map(c => {
+            const on = companies.includes(c);
+            return (
+              <button key={c} title={on && companies.length > 1 ? 'Quitar del informe' : 'Añadir al informe (clic con Alt: solo esta)'}
+                onClick={e => setCompanies(prev => (e.altKey ? [c] : on ? (prev.length > 1 ? prev.filter(x => x !== c) : prev) : GROUP.filter(x => x === c || prev.includes(x))))}
+                className={`px-3 py-1.5 rounded-full border font-semibold ${on ? 'bg-indigo-50 text-indigo-700 border-indigo-300' : 'bg-white text-gray-500 border-gray-300 hover:text-gray-900'}`}>
+                {on ? '✓ ' : ''}{SHORT[c] || c}
+              </button>
+            );
+          })}
+          {multi && <span className="text-gray-500 ml-1">Varias empresas: importes en EUR</span>}
+        </div>
       </header>
 
       <main className="w-full px-4 md:px-8 pt-6 space-y-6">
         {selectedCompany === 'CRAZE' && <GroupSummary range={range} reload={reload} />}
-        {selectedCompany === 'ALL' ? (
-          <p className="text-sm text-gray-600">Selecciona una empresa concreta en el menú lateral para ver sus royalties.</p>
-        ) : error ? (
-          <SetupError error={error} />
-        ) : loading && !data ? (
+        {failed.map(f => (
+          <div key={f.company}>
+            {multi && <p className="text-sm font-semibold text-gray-900 mb-1">{f.company}</p>}
+            <SetupError error={f} />
+          </div>
+        ))}
+        {missingFx.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900">
+            Falta el tipo de cambio a EUR de {missingFx.join(', ')}: esos importes se muestran sin convertir.
+          </div>
+        )}
+        {loading && !loaded.length ? (
           <p className="text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Leyendo líneas de royalties de Business Central…</p>
         ) : data && (
           <>
-            {data.ratesSource === 'lm' && (
+            {loading && <p className="text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Leyendo las demás empresas de Business Central…</p>}
+            {loaded.some(r => r.ratesSource === 'lm') && (
               <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-800">
                 No se han podido leer los % de royalty de RoyaltiesCRZ (CRAZE GmbH): la provisión mostrada es la que calcula la LM de BC, sin recalcular.
-                {data.ratesBcError && <span className="block text-xs mt-1">{data.ratesBcError}</span>}
+                {loaded.find(r => r.ratesBcError)?.ratesBcError && <span className="block text-xs mt-1">{loaded.find(r => r.ratesBcError)!.ratesBcError}</span>}
               </div>
             )}
-            {data.stats.excluded.codes.length > 0 && (
-              <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700">
-                {selectedCompany} no puede vender <b>{data.stats.excluded.codes.join(', ')}</b>: excluido del informe
-                ({data.stats.excluded.lines} líneas, turnover {money(data.stats.excluded.turnover * factor)} {cur}).
+            {stats.excluded.map(r => (
+              <div key={r.company} className="bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700">
+                {r.company} no puede vender <b>{r.stats.excluded.codes.join(', ')}</b>: excluido del informe
+                ({r.stats.excluded.lines} líneas, turnover {money(r.stats.excluded.turnover * factorOf(r))} {cur}).
               </div>
-            )}
-            {data.stats.noRate.length > 0 && (
+            ))}
+            {stats.noRate.length > 0 && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900">
-                Royalty Codes sin % en RoyaltiesCRZ (no provisionan): <b>{data.stats.noRate.join(', ')}</b>
+                Royalty Codes sin % en RoyaltiesCRZ (no provisionan): <b>{stats.noRate.join(', ')}</b>
               </div>
             )}
-            {data.itemsError ? (
+            {loaded.find(r => r.itemsError) ? (
               <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-800 flex items-start gap-2">
                 <AlertCircle size={16} className="mt-0.5 shrink-0" />
                 <div>
                   No se han podido leer los Royalty Codes de las fichas de artículo de CRAZE GmbH: se muestran los de la LM, que pueden no ser correctos.
-                  <span className="block text-xs mt-1">{data.itemsError}</span>
+                  <span className="block text-xs mt-1">{loaded.find(r => r.itemsError)!.itemsError}</span>
                 </div>
               </div>
-            ) : data.stats.noItemCard.length > 0 && (
+            ) : stats.noItemCard.length > 0 && (
               <details className="bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700">
-                <summary className="cursor-pointer">{data.stats.noItemCard.length} artículos no existen en CRAZE GmbH: se usa su Royalty Code de la LM.</summary>
-                <p className="mt-2 font-mono text-xs break-words">{data.stats.noItemCard.join(', ')}</p>
+                <summary className="cursor-pointer">{stats.noItemCard.length} artículos no existen en CRAZE GmbH: se usa su Royalty Code de la LM.</summary>
+                <p className="mt-2 font-mono text-xs break-words">{stats.noItemCard.join(', ')}</p>
               </details>
             )}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <Kpi label={`Provisión royalties (${cur})`} value={money(totals.provision)} sub={licensedTurnover ? `${pct(totals.provision / licensedTurnover)} sobre ventas con licencia` : undefined} />
               <Kpi label={`Turnover neto de provisión (${cur})`} value={money(totals.turnover)} sub={`Con licencia: ${money(licensedTurnover)}`} />
               <Kpi label="Cantidad" value={qf.format(totals.qty)} sub={`${visible.length} líneas de artículo`} />
-              <Kpi label={`Excluido intercompañía (${cur})`} value={money(data.stats.ic.turnover * factor)}
-                sub={`${data.stats.ic.lines} líneas · provisión ${money(data.stats.ic.provision * factor)}`} />
+              <Kpi label={`Excluido intercompañía (${cur})`} value={money(stats.ic.turnover)}
+                sub={`${stats.ic.lines} líneas · provisión ${money(stats.ic.provision)}`} />
             </div>
 
             <section className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -302,6 +381,20 @@ export default function RoyaltiesPage() {
                       </tr>
                     ))}
                   </tbody>
+                  {byCodeSummary.length > 0 && (
+                    <tfoot className="bg-gray-50 font-bold text-gray-900">
+                      <tr className="border-t-2 border-gray-300">
+                        <td className="px-4 py-2">TOTAL</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{codeTotal.n}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{qf.format(codeTotal.qty)}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{money(codeTotal.turnover)}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{codeTotal.turnoverFob ? money(codeTotal.turnoverFob) : '—'}</td>
+                        <td className="px-4 py-2" colSpan={2} />
+                        <td className="px-4 py-2 text-right tabular-nums">{money(codeTotal.provision)}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{codeTotal.turnover ? pct(codeTotal.provision / codeTotal.turnover) : '—'}</td>
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
               </div>
             </section>
@@ -331,7 +424,7 @@ export default function RoyaltiesPage() {
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-500 sticky top-0">
                     <tr>
-                      {COLUMNS.map(c => (
+                      {columns.map(c => (
                         <th key={c.key} onClick={() => toggleSort(c.key)}
                           className={`px-3 py-2 cursor-pointer select-none whitespace-nowrap hover:text-gray-900 ${c.num ? 'text-right' : 'text-left'}`}>
                           <span className="inline-flex items-center gap-1">
@@ -344,7 +437,8 @@ export default function RoyaltiesPage() {
                   </thead>
                   <tbody>
                     {visible.map(r => (
-                      <tr key={`${r.code}|${r.country}|${r.item}`} className={`border-t border-gray-100 ${r.code === NOT_APPLIED ? 'text-gray-500' : 'text-gray-900'}`}>
+                      <tr key={`${r.company}|${r.code}|${r.country}|${r.item}`} className={`border-t border-gray-100 ${r.code === NOT_APPLIED ? 'text-gray-500' : 'text-gray-900'}`}>
+                        {multi && <td className="px-3 py-1.5 whitespace-nowrap">{SHORT[r.company || ''] || r.company}</td>}
                         <td className="px-3 py-1.5 whitespace-nowrap">{r.code}</td>
                         <td className="px-3 py-1.5">{r.country}</td>
                         <td className="px-3 py-1.5 font-mono text-xs">{r.item}</td>
@@ -358,13 +452,13 @@ export default function RoyaltiesPage() {
                       </tr>
                     ))}
                     {!visible.length && (
-                      <tr><td colSpan={COLUMNS.length} className="px-3 py-6 text-center text-gray-500">No hay líneas de royalties para este periodo y filtros.</td></tr>
+                      <tr><td colSpan={columns.length} className="px-3 py-6 text-center text-gray-500">No hay líneas de royalties para este periodo y filtros.</td></tr>
                     )}
                   </tbody>
                   {visible.length > 0 && (
                     <tfoot className="bg-gray-50 font-bold text-gray-900 sticky bottom-0">
                       <tr className="border-t-2 border-gray-300">
-                        <td className="px-3 py-2" colSpan={4}>Total</td>
+                        <td className="px-3 py-2" colSpan={multi ? 5 : 4}>Total</td>
                         <td className="px-3 py-2 text-right tabular-nums">{qf.format(totals.qty)}</td>
                         <td className="px-3 py-2 text-right tabular-nums">{money(totals.turnover)}</td>
                         <td className="px-3 py-2" />
