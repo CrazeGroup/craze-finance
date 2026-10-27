@@ -419,6 +419,10 @@ export default function RoyaltiesPage() {
                   <input type="checkbox" checked={hideNotApplied} onChange={e => setHideNotApplied(e.target.checked)} />
                   Ocultar NON-ROYALTY
                 </label>
+                <button onClick={exportExcel} disabled={loading || !visible.length} title="Descargar esta tabla (con los filtros aplicados) en Excel"
+                  className="flex items-center gap-1.5 border border-gray-300 bg-white text-gray-700 text-sm font-semibold px-3 py-1.5 rounded-lg hover:bg-gray-50 disabled:opacity-40">
+                  <Download size={14} /> Excel
+                </button>
               </div>
               <div className="overflow-x-auto max-h-[70vh]">
                 <table className="w-full text-sm">
