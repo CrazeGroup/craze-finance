@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Lock, User } from 'lucide-react';
 import Image from 'next/image';
@@ -11,6 +11,19 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+
+  // Errores de la vuelta del inicio de sesión con Microsoft (/login?error=...)
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get('error');
+    const messages: Record<string, string> = {
+      sso_config: 'El inicio de sesión con Microsoft aún no está configurado.',
+      sso_usuario: 'Tu cuenta de Microsoft no tiene acceso a esta aplicación.',
+      sso_cancelado: 'Se ha cancelado el inicio de sesión con Microsoft.',
+      sso_state: 'La sesión de inicio con Microsoft ha caducado. Inténtalo de nuevo.',
+      sso_error: 'No se ha podido iniciar sesión con Microsoft.',
+    };
+    if (code) setError(messages[code] || 'Error al iniciar sesión');
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -60,6 +73,21 @@ export default function LoginPage() {
             {error}
           </div>
         )}
+
+        <a
+          href="/api/auth/microsoft"
+          className="w-full flex items-center justify-center gap-3 py-3 px-4 border border-gray-300 rounded-xl text-sm font-bold text-black bg-white hover:bg-gray-50 transition-colors"
+        >
+          <svg width="18" height="18" viewBox="0 0 21 21" aria-hidden="true">
+            <rect x="1" y="1" width="9" height="9" fill="#F25022" /><rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+            <rect x="1" y="11" width="9" height="9" fill="#00A4EF" /><rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+          </svg>
+          Iniciar sesión con Microsoft
+        </a>
+
+        <div className="flex items-center gap-3 my-6 text-xs text-gray-400">
+          <div className="flex-1 h-px bg-gray-200" />o con usuario y contraseña<div className="flex-1 h-px bg-gray-200" />
+        </div>
 
         <form onSubmit={handleLogin} className="space-y-6">
           

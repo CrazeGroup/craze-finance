@@ -23,6 +23,25 @@ export async function decrypt(input: string): Promise<any> {
   return payload;
 }
 
+// Cookie de sesión (24 h) para un usuario de la tabla User; la usan el login con contraseña y el de Microsoft
+export async function setSessionCookie(response: { cookies: { set: (c: any) => void } }, user: { id: number; username: string; permissions: string }) {
+  const token = await encrypt({ id: user.id, username: user.username, permissions: user.permissions });
+  response.cookies.set({
+    name: 'auth-token',
+    value: token,
+    httpOnly: true,
+    path: '/',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 60 * 60 * 24,
+  });
+}
+
+// Inicio de sesión con Microsoft (Entra ID), activo cuando están las tres variables del registro de la app en Azure
+export const entraConfig = () => {
+  const tenantId = process.env.AZURE_AD_TENANT_ID, clientId = process.env.AZURE_AD_CLIENT_ID, clientSecret = process.env.AZURE_AD_CLIENT_SECRET;
+  return tenantId && clientId && clientSecret ? { tenantId, clientId, clientSecret } : null;
+};
+
 export async function getSession() {
   if (!AUTH_ENABLED) return PUBLIC_SESSION;
   const cookieStore = await cookies();

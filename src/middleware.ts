@@ -2,7 +2,9 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { decrypt, AUTH_ENABLED } from './lib/auth';
 
-const publicRoutes = ['/login', '/api/auth/login', '/api/auth/logout', '/api/upload'];
+const publicRoutes = ['/login', '/api/auth/login', '/api/auth/logout', '/api/auth/microsoft', '/api/auth/microsoft/callback', '/api/upload'];
+// Token de servicio para llamar a la API sin sesión (sincronización horaria de GitHub Actions, scripts de diagnóstico)
+const INTERNAL_API_TOKEN = process.env.INTERNAL_API_TOKEN;
 const staticAssetRegex = /\.(ico|png|jpg|jpeg|svg|css|js|webp|woff|woff2|ttf|eot)$/;
 
 export async function middleware(request: NextRequest) {
@@ -19,11 +21,17 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  const isApi = path.startsWith('/api/');
+  if (isApi && INTERNAL_API_TOKEN && request.headers.get('authorization') === `Bearer ${INTERNAL_API_TOKEN}`) {
+    return NextResponse.next();
+  }
+
   // Get token
   const token = request.cookies.get('auth-token')?.value;
 
-  // If no token and not a public route, redirect to login
+  // If no token and not a public route, redirect to login (the API answers 401)
   if (!token) {
+    if (isApi) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
     return NextResponse.redirect(new URL('/login', request.url));
   }
 
@@ -58,9 +66,10 @@ export async function middleware(request: NextRequest) {
       'cashflow': 'cashflow'
     };
     
-    if (protectedUiRoutes.includes(normalizedRoot) && normalizedRoot !== 'settings') {
+    if (!permissions.includes('admin') && protectedUiRoutes.includes(normalizedRoot) && normalizedRoot !== 'settings') {
       const requiredPermission = permissionMap[normalizedRoot] || normalizedRoot;
-      if (!permissions.includes(requiredPermission)) {
+      // El editor de usuarios guarda el id del módulo (movimientos, pagos); los usuarios antiguos, el nombre largo
+      if (!permissions.includes(requiredPermission) && !permissions.includes(normalizedRoot)) {
         return NextResponse.redirect(new URL('/', request.url));
       }
     }
@@ -78,7 +87,7 @@ export async function middleware(request: NextRequest) {
     });
   } catch (error) {
     // Invalid token
-    const response = NextResponse.redirect(new URL('/login', request.url));
+    const response = isApi ? NextResponse.json({ error: 'Sesión caducada' }, { status: 401 }) : NextResponse.redirect(new URL('/login', request.url));
     response.cookies.delete('auth-token');
     return response;
   }
