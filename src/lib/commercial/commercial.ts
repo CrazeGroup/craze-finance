@@ -1,6 +1,5 @@
 import { bcFetchAll, BcContext, getBcContext, odataUrl } from '@/lib/bcClient';
-import prisma from '@/lib/prisma';
-import { cached, HOUR, readCached } from '@/lib/reporting/cache';
+import { cached, HOUR } from '@/lib/reporting/cache';
 import { today } from '@/lib/reporting/period';
 
 // Commercial Analysis: recreación del Power BI "Commercial Analysis" leyendo BC en directo.
@@ -97,52 +96,25 @@ async function rateToEur(currency: string) {
 
 // Pedidos abiertos como Sales_Lines_Excel_<empresa> del Power BI: líneas que no son de factura, con cliente, fecha =
 // Requested Delivery Date (Return Order: Posting Date de la devolución). En CRAZE, las líneas del almacén ASIA son de Asia.
+// newToday: línea de un pedido de venta con Order Date de hoy (custom salesHeaders), para la columna "Δ hoy".
 async function openSalesLines(ctx: BcContext, location: 'notAsia' | 'asia' | 'all') {
-  const [lines, returns] = await Promise.all([
+  const [lines, returns, todayOrders] = await Promise.all([
     bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Sales_Lines_Excel`, {
       $filter: `Document_Type ne 'Invoice'${location === 'asia' ? ` and Location_Code eq 'ASIA'` : ''}`,
       $select: 'Document_Type,Document_No,Sell_to_Customer_No,No,Location_Code,Quantity,Line_Amount,AIT_Requested_Delivery_Date',
     }), ctx.token),
     bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Sales_Return_Order_Excel`, { $select: 'No,Posting_Date' }), ctx.token).catch(() => [] as any[]),
+    bcFetchAll(odataUrl(`${ctx.customApiBase}/salesHeaders`, { $filter: `documentType eq 'Order' and orderDate eq ${today()}`, $select: 'no' }), ctx.token).catch(() => [] as any[]),
   ]);
+  const newOrders = new Set(todayOrders.map((h: any) => s(h.no)));
   const returnDate = new Map(returns.map((r: any) => [s(r.No), d10(r.Posting_Date)]));
   return lines
     .filter((l: any) => s(l.Sell_to_Customer_No) && (location !== 'notAsia' || s(l.Location_Code) !== 'ASIA'))
     .map((l: any) => ({
       date: s(l.Document_Type) === 'Return Order' ? returnDate.get(s(l.Document_No)) || '' : d10(l.AIT_Requested_Delivery_Date),
       cust: s(l.Sell_to_Customer_No), item: s(l.No), qty: n(l.Quantity), amount: n(l.Line_Amount),
+      newToday: s(l.Document_Type) === 'Order' && newOrders.has(s(l.Document_No)),
     }));
-}
-
-// Cambio del día: diferencia (sin la parte del mes) entre los hechos nuevos y los datos guardados antes de la primera
-// actualización del día (los del día anterior, o los primeros de hoy si ya se habían calculado hoy).
-// La base del día se fija con la primera actualización de cada día en ApiConfig commercial:dayBase:<empresa>:<año>.
-async function dayDelta(cacheKey: string, baseKey: string, rows: FactRow[]) {
-  const day = today();
-  const stored = await prisma.apiConfig.findUnique({ where: { key: baseKey } });
-  let base: { date: string; from: string; rows: FactRow[] } | null = null;
-  try { base = stored?.config ? JSON.parse(stored.config) : null; } catch { /* base corrupta: se rehace */ }
-  if (!base || base.date !== day) {
-    const prev = await readCached<{ cutoff: string; rows: FactRow[] }>(cacheKey);
-    // Lo último guardado antes de esta actualización (normalmente del día anterior; si ya era de hoy, el más antiguo de hoy)
-    const usable = !!prev?.value?.rows;
-    base = { date: day, from: usable ? prev!.at.toISOString() : new Date().toISOString(), rows: usable ? prev!.value.rows : rows };
-    const config = JSON.stringify(base);
-    await prisma.apiConfig.upsert({ where: { key: baseKey }, update: { config }, create: { key: baseKey, url: '', config } });
-  }
-  const acc = new Map<string, FactRow>();
-  const put = (r: FactRow, sign: number) => {
-    const key = [r[0], r[2], r[3], r[4], r[5], r[6], r[7]].join('|');
-    let d = acc.get(key);
-    if (!d) { d = [r[0], 0, r[2], r[3], r[4], r[5], r[6], r[7], ...MEASURES.map(() => 0)] as FactRow; acc.set(key, d); }
-    for (let i = 8; i < 8 + MEASURES.length; i++) (d as number[])[i] += sign * ((r[i] as number) || 0);
-  };
-  for (const r of base.rows) put(r, -1);
-  for (const r of rows) put(r, 1);
-  const delta = Array.from(acc.values())
-    .map(r => r.map((v, i) => (i >= 8 ? Math.round((v as number) * 100) / 100 : v)) as FactRow)
-    .filter(r => r.slice(8).some(v => v !== 0));
-  return { delta, deltaFrom: base.from };
 }
 
 export async function commercialFacts(abbr: CompanyAbbr, year: number, force = false) {
@@ -151,8 +123,7 @@ export async function commercialFacts(abbr: CompanyAbbr, year: number, force = f
   const live = to >= today();
   // Guardado: el año en curso se renueva cada hora en segundo plano (para el cambio del día) y los años cerrados una vez al día (la parte
   // "hasta hoy" del mes actual cambia cada día para el año anterior); el botón de actualizar lo fuerza.
-  const cacheKey = `commercial:facts2:${abbr}:${year}${live ? '' : `:${today()}`}`;
-  return cached(cacheKey, 24 * HOUR, async () => {
+  return cached(`commercial:facts2:${abbr}:${year}${live ? '' : `:${today()}`}`, 24 * HOUR, async () => {
     const dims = await commercialDims();
     const itemBy = new Map(dims.items.map(i => [i.no, i]));
     const groupBy = new Map(dims.groups.map(g => [g.code, g]));
@@ -186,8 +157,9 @@ export async function commercialFacts(abbr: CompanyAbbr, year: number, force = f
     const kamOf = (group: string, item: Item | undefined) =>
       dims.kamByGroupBu[`${group}_${item?.bu || ''}`] || groupBy.get(group)?.kam || '';
 
-    const rows = new Map<string, FactRow>();
-    const add = (date: string, cls: number, group: string, cust: string, ship: string, itemNo: string, measure: number, value: number) => {
+    const facts = new Map<string, FactRow>();
+    const newRows = new Map<string, FactRow>();   // pedidos con Order Date de hoy
+    const add = (date: string, cls: number, group: string, cust: string, ship: string, itemNo: string, measure: number, value: number, rows = facts) => {
       if (!value || !date.startsWith(String(year))) return;
       const item = itemBy.get(itemNo);
       if (!item || group === EXCLUDED_GROUP) return;   // solo artículos con línea de producto (no PUBLISHING), sin intercompañía
@@ -222,6 +194,11 @@ export async function commercialFacts(abbr: CompanyAbbr, year: number, force = f
       add(l.date, 0, group, l.cust, '', l.item, I('so'), l.amount);
       add(l.date, 0, group, l.cust, '', l.item, I('soEur'), l.amount * fx(l.date));
       add(l.date, 0, group, l.cust, '', l.item, I('soQty'), l.qty);
+      if (l.newToday) {
+        add(l.date, 0, group, l.cust, '', l.item, I('so'), l.amount, newRows);
+        add(l.date, 0, group, l.cust, '', l.item, I('soEur'), l.amount * fx(l.date), newRows);
+        add(l.date, 0, group, l.cust, '', l.item, I('soQty'), l.qty, newRows);
+      }
     }
     // Presupuesto y forecast: importe (…Items) y unidades (…Units), en la divisa de la empresa
     const plan = (list: any[], measure: 'bdg' | 'fc' | 'bdgQty' | 'fcQty', field: 'amount' | 'quantity') => {
@@ -236,12 +213,12 @@ export async function commercialFacts(abbr: CompanyAbbr, year: number, force = f
     plan(bItems, 'bdg', 'amount'); plan(bUnits, 'bdgQty', 'quantity');
     plan(fItems, 'fc', 'amount'); plan(fUnits, 'fcQty', 'quantity');
 
-    const factRows = Array.from(rows.values()).map(r => r.map((v, i) => (i >= 8 ? Math.round((v as number) * 100) / 100 : v)) as FactRow);
+    const round = (m: Map<string, FactRow>) => Array.from(m.values()).map(r => r.map((v, i) => (i >= 8 ? Math.round((v as number) * 100) / 100 : v)));
     return {
       company: abbr, currency: company.currency, year, cutoff: today(),
-      rows: factRows,
-      // Año en curso: lo que ha cambiado hoy (columna "Δ hoy" de Sales Performance)
-      ...(live ? await dayDelta(cacheKey, `commercial:dayBase:${abbr}:${year}`, factRows) : {}),
+      rows: round(facts),
+      // Pedidos de venta con Order Date de hoy (columna "Δ hoy" de Sales Performance)
+      delta: round(newRows),
       itemRoyalty,
       counts: { lm: lm.length, salesLines: salesLines.length, budget: bItems.length, forecast: fItems.length },
       warnings,

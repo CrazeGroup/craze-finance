@@ -8,8 +8,8 @@ export type Dims = {
   groups: { code: string; desc: string; dim: string; kam: string }[];
   kamByGroupBu: Record<string, string>; kams: Record<string, string>; dimensions: Record<string, string>;
 };
-// delta: cambio de hoy frente a los datos guardados en deltaFrom (solo año en curso; mismas columnas, parte del mes = 0)
-export type Facts = { company: string; currency: string; year: number; cutoff: string; rows: (string | number)[][]; delta?: (string | number)[][]; deltaFrom?: string; itemRoyalty: Record<string, string>; warnings: string[] };
+// delta: líneas abiertas de los pedidos de venta con Order Date de hoy (mismas columnas que rows)
+export type Facts = { company: string; currency: string; year: number; cutoff: string; rows: (string | number)[][]; delta?: (string | number)[][]; itemRoyalty: Record<string, string>; warnings: string[] };
 
 export const COMPANIES = [
   { abbr: 'GmbH', name: 'Craze GmbH', currency: 'EUR' },
@@ -59,7 +59,7 @@ export type Period = 'ytd' | 'motd' | 'full';
 // Clases de línea LM: el Power BI filtra component = false (todas las páginas de sell-in) o mainItemCRZ = false (Top 50)
 export type Classes = 'noComponent' | 'noMain';
 
-// source 'delta' = el cambio de hoy en lugar de los hechos
+// source 'delta' = los pedidos de venta de hoy en lugar de los hechos
 export function records(ctx: Ctx, facts: Facts[], filters: Filters, period: Period, classes: Classes = 'noComponent', source: 'rows' | 'delta' = 'rows'): Rec[] {
   const out: Rec[] = [];
   const local = ctx.currency !== 'EUR' || (filters.companies.length === 1);

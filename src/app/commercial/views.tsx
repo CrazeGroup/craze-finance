@@ -89,15 +89,14 @@ export function SalesPerformance({ ctx, facts, filters }: P) {
   const detail = sortedEntries(groupBy(recs, keyFn(ctx, param)), p => p.cur.sIn);
   const t = totals(recs);
   const cur = ctx.currency;
-  // Δ hoy: cambio del Sell-in de cada mes frente a los datos anteriores a hoy (facturado + pedidos abiertos)
-  // (solo datos calculados hoy: los guardados de un día anterior traen el cambio de ese día)
+  // Δ hoy: pedidos de venta con Order Date de hoy, por el mes de su Requested Delivery Date
+  // (solo datos calculados hoy: los guardados de un día anterior traen los pedidos de ese día)
   const todayFacts = useMemo(() => facts.filter(f => f.cutoff === new Date().toISOString().substring(0, 10)), [facts]);
   const dRecs = useMemo(() => records(ctx, todayFacts, filters, 'full', 'noComponent', 'delta'), [ctx, todayFacts, filters]);
   const dByMonth = groupBy(dRecs, r => String(r.m));
   const dOf = (m: number) => dByMonth.get(String(m))?.cur.sIn || 0;
   const dTotal = totals(dRecs).cur.sIn;
-  const dFrom = todayFacts.filter(f => f.year === ctx.year && f.deltaFrom).map(f => f.deltaFrom!).sort()[0];
-  const dTitle = dFrom ? `Cambio del Sell-in frente a los datos del ${new Date(dFrom).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : 'Sin datos anteriores a hoy';
+  const dTitle = 'Pedidos de venta con Order Date de hoy (importe de sus líneas, en el mes de su Requested Delivery Date)';
   const Delta = ({ v }: { v: number }) => (Math.abs(v) < 0.5 ? <span className="text-gray-300">–</span> : <span className={v > 0 ? 'text-emerald-700' : 'text-red-600'}>{v > 0 ? '+' : ''}{fmtNum(v)}</span>);
   let acm = { prev: 0, cur: 0, bdg: 0 };
   const monthRows = months.map(m => {
