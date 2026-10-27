@@ -93,7 +93,9 @@ export default function CashflowPage() {
   const [recurringModalOpen, setRecurringModalOpen] = useState(false);
   const [recurringPayments, setRecurringPayments] = useState<any[]>([]);
   const [editingRecurring, setEditingRecurring] = useState<any>(null);
-  const [recurringForm, setRecurringForm] = useState({ amount: '', dayOfMonth: '1', activeFromDate: '', frequency: 'monthly' });
+  const [recurringForm, setRecurringForm] = useState({ amount: '', dayOfMonth: '1', activeFromDate: '', frequency: 'monthly', description: '' });
+  const isManualRecurring = (rec: any) => String(rec?.bcCode || '').startsWith('APP-');
+  const newRecurringForm = () => ({ amount: '', dayOfMonth: '1', activeFromDate: new Date().toISOString().split('T')[0], frequency: 'monthly', description: '' });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -590,8 +592,10 @@ export default function CashflowPage() {
   const handleSaveRecurring = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const isNew = !editingRecurring.id;
       const payload = {
         id: editingRecurring.id,
+        description: recurringForm.description,
         isActive: true,
         amount: recurringForm.amount,
         dayOfMonth: recurringForm.dayOfMonth,
@@ -599,11 +603,12 @@ export default function CashflowPage() {
         frequency: recurringForm.frequency,
         currencyCode: currentCurrency
       };
-      await fetch('/api/cashflow/recurring', {
-        method: 'PUT',
+      const res = await fetch('/api/cashflow/recurring', {
+        method: isNew ? 'POST' : 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      if (!res.ok) { alert((await res.json().catch(() => ({}))).error || 'No se pudo guardar'); return; }
       setEditingRecurring(null);
       fetchRecurringPayments();
       fetchCashflow();
@@ -612,7 +617,11 @@ export default function CashflowPage() {
 
   const handleRemoveRecurring = async (rec: any) => {
     try {
-      await fetch('/api/cashflow/recurring', {
+      // Los manuales se borran; los de BC se quedan en la lista como no añadidos
+      if (isManualRecurring(rec)) {
+        if (!confirm(`¿Borrar el pago recurrente "${rec.description}"?`)) return;
+        await fetch(`/api/cashflow/recurring?id=${rec.id}`, { method: 'DELETE' });
+      } else await fetch('/api/cashflow/recurring', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: rec.id, isActive: false })
@@ -1306,9 +1315,15 @@ export default function CashflowPage() {
                   <Calendar className="text-indigo-600" />
                   Configuración de Pagos Recurrentes
                 </h3>
-                <button onClick={() => setRecurringModalOpen(false)} className="text-gray-500 hover:text-gray-900 transition-colors">
-                  <X size={20} />
-                </button>
+                <div className="flex items-center gap-3">
+                  <button onClick={() => { setEditingRecurring({ id: null, description: '' }); setRecurringForm(newRecurringForm()); }}
+                    className="px-3 py-1.5 bg-indigo-600 text-white hover:bg-indigo-700 font-bold text-sm rounded-lg transition-colors">
+                    + Nuevo pago recurrente
+                  </button>
+                  <button onClick={() => setRecurringModalOpen(false)} className="text-gray-500 hover:text-gray-900 transition-colors">
+                    <X size={20} />
+                  </button>
+                </div>
               </div>
               
               <div className="flex-1 overflow-y-auto p-6 bg-white">
@@ -1323,11 +1338,11 @@ export default function CashflowPage() {
                   </thead>
                   <tbody>
                     {recurringPayments.length === 0 ? (
-                      <tr><td colSpan={4} className="p-4 text-center text-gray-500">No hay pagos recurrentes sincronizados de BC.</td></tr>
+                      <tr><td colSpan={4} className="p-4 text-center text-gray-500">No hay pagos recurrentes de BC ni manuales.</td></tr>
                     ) : (
                       recurringPayments.map(rec => (
                         <tr key={rec.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-                          <td className="p-3 font-mono text-sm text-gray-600">{rec.bcCode}</td>
+                          <td className="p-3 font-mono text-sm text-gray-600">{isManualRecurring(rec) ? <span className="font-sans text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">MANUAL</span> : rec.bcCode}</td>
                           <td className="p-3 font-medium text-gray-900">{rec.description}</td>
                           <td className="p-3 text-center">
                             {rec.isActive ? (
@@ -1343,12 +1358,12 @@ export default function CashflowPage() {
                           <td className="p-3 text-center">
                             {rec.isActive ? (
                               <button onClick={() => handleRemoveRecurring(rec)} className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 font-bold text-xs rounded transition-colors">
-                                Quitar del Cashflow
+                                {isManualRecurring(rec) ? 'Borrar' : 'Quitar del Cashflow'}
                               </button>
                             ) : (
                               <button onClick={() => {
                                 setEditingRecurring(rec);
-                                setRecurringForm({ amount: '', dayOfMonth: '1', activeFromDate: new Date().toISOString().split('T')[0], frequency: 'monthly' });
+                                setRecurringForm(newRecurringForm());
                               }} className="px-3 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 font-bold text-xs rounded transition-colors">
                                 Añadir al Cashflow
                               </button>
@@ -1370,14 +1385,26 @@ export default function CashflowPage() {
             <div className="bg-white border border-gray-200 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden transform transition-all">
               <div className="flex justify-between items-center p-6 border-b border-gray-200 bg-gray-50">
                 <h3 className="text-xl font-bold text-gray-900">
-                  Configurar Pago
+                  {editingRecurring.id ? 'Configurar Pago' : 'Nuevo pago recurrente'}
                 </h3>
                 <button onClick={() => setEditingRecurring(null)} className="text-gray-900 hover:text-gray-900 transition-colors">
                   <X size={20} />
                 </button>
               </div>
               <form onSubmit={handleSaveRecurring} className="p-6 space-y-4">
-                <p className="text-sm text-gray-600 font-medium mb-4">{editingRecurring.description}</p>
+                {editingRecurring.id ? (
+                  <p className="text-sm text-gray-600 font-medium mb-4">{editingRecurring.description}</p>
+                ) : (
+                  <div>
+                    <label className="block text-sm font-bold text-gray-900 mb-1">Descripción</label>
+                    <input
+                      type="text" required autoFocus placeholder="ej. Alquiler oficina"
+                      value={recurringForm.description}
+                      onChange={e => setRecurringForm({...recurringForm, description: e.target.value})}
+                      className="w-full bg-white border border-gray-200 rounded-lg px-4 py-2.5 text-gray-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-bold text-gray-900 mb-1">Periodicidad</label>
                   <select
