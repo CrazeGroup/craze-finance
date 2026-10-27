@@ -20,6 +20,7 @@ const MODULES = [
   { id: 'intercompany', label: 'Intercompany' },
   { id: 'payment_proposal', label: 'Payment Proposal' },
   { id: 'notas_compra', label: 'Notas de compra' },
+  { id: 'aduanas', label: 'Aduanas' },
   { id: 'dforce', label: 'D-FORCE (Craze Entertainment)' },
   { id: 'seguros', label: 'Seguros' },
   { id: 'configuracion', label: 'Configuración y Usuarios' },
