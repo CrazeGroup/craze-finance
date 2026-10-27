@@ -153,7 +153,7 @@ export async function createInvoices(ctx: BcContext, input: CreateInput, cfg: Cu
         for (const l of lines) {
           await bc('POST', `${headUrl}/purchaseInvoiceLines`, ctx.token, {
             lineType: 'Item', lineObjectNumber: zoll ? cfg.zollItem : cfg.eustItem,
-            quantity: l.quantity, directUnitCost: inv.amount, description2, taxCode: l.vat,
+            quantity: l.quantity, unitCost: inv.amount, description2, taxCode: l.vat,
           });
         }
       } catch (e) {
