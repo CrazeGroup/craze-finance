@@ -38,6 +38,17 @@ export async function GET(req: Request) {
       const body = await res.json().catch(async () => ({ error: await res.text() }));
       return NextResponse.json({ company: ctx.companyName, status: res.status, rows: body.value ?? body });
     }
+    // ?metadata=<entidad>[&api=custom|v2]: definición $metadata de la entidad (clave, campos y si se puede insertar/modificar)
+    const metadata = searchParams.get('metadata');
+    if (metadata) {
+      const base = (searchParams.get('api') === 'v2' ? ctx.apiBase : ctx.customApiBase).replace(/\/companies\(.*$/, '');
+      const res = await fetch(`${base}/$metadata`, { headers: { Authorization: `Bearer ${ctx.token}` } });
+      const xml = await res.text();
+      const type = metadata.replace(/s$/, '');
+      const entity = xml.match(new RegExp(`<EntityType Name="${type}"[\\s\\S]*?</EntityType>`, 'i'))?.[0] || '';
+      const set = xml.match(new RegExp(`<EntitySet Name="${metadata}"[\\s\\S]*?(</EntitySet>|/>)`, 'i'))?.[0] || '';
+      return new NextResponse(`${set}\n\n${entity}`, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+    }
     const odataRoot = ctx.odataCompanyBase.replace(/\/Company\(.*$/, '');
     const customRoot = ctx.customApiBase.replace(/\/companies\(.*$/, '');
     const [odata, custom, v2] = await Promise.all([names(odataRoot, ctx.token), names(customRoot, ctx.token), names(ctx.apiBase.replace(/\/companies\(.*$/, ''), ctx.token)]);
