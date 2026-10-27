@@ -3,8 +3,9 @@ import { cached, HOUR } from '@/lib/reporting/cache';
 import { today } from '@/lib/reporting/period';
 
 // Commercial Analysis: recreación del Power BI "Commercial Analysis" leyendo BC en directo.
-// Sell-in = facturado (componentes LM, custom documentsLMComponents) + pedidos abiertos (OData Sales_Lines_Excel,
-// pendiente de servir); presupuesto y forecast = custom budgetItems/budgetUnits y forecastItems/forecastUnits;
+// Sell-in = facturado (componentes LM, custom documentsLMComponents) + pedidos abiertos (OData Sales_Lines_Excel, como
+// el Power BI: Line_Amount entero de toda línea que no sea de factura, por Requested Delivery Date; las devoluciones por
+// la fecha de registro de la Return Order); presupuesto y forecast = custom budgetItems/budgetUnits y forecastItems/forecastUnits;
 // sell-out = OData SellOuts_CRZ (por GTIN) + SellIn_B2C. Los datos maestros (artículos, Customer Groups, KAM,
 // dimensiones) salen de CRAZE GmbH, como en el Power BI.
 // Los hechos se agregan por empresa × mes × Customer Group × KAM × país × artículo para que la página pueda filtrar y
@@ -80,18 +81,36 @@ export const MEASURES = ['inv', 'invEur', 'invQty', 'so', 'soEur', 'soQty', 'bdg
 //        Customer Group, KAM, país de venta (ficha de cliente), país de envío, artículo, ...medidas]
 export type FactRow = [number, number, number, string, string, string, string, string, ...number[]];
 
-async function rateToEur(ctx: BcContext, currency: string) {
+// EUR por 1 unidad de la divisa, como la columna Currency_Exchg_EUR del Power BI: Currency Exchange Rates de CRAZE,
+// 1 / Exchange_Rate_Amount de la última fecha de inicio <= la fecha; sin tipo = 1
+async function rateToEur(currency: string) {
   if (currency === 'EUR') return () => 1;
-  // Currency Exchange Rates de la empresa → EUR por 1 unidad de su divisa local, por fecha
-  const rows = await bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Currency_Exchange_Rates`, { $select: 'Currency_Code,Starting_Date,Exchange_Rate_Amount,Relational_Exch_Rate_Amount' }), ctx.token).catch(() => [] as any[]);
-  const list = rows.filter((r: any) => s(r.Currency_Code) === 'EUR' || s(r.Currency_Code) === currency)
-    .map((r: any) => ({ code: s(r.Currency_Code), date: d10(r.Starting_Date), rate: n(r.Exchange_Rate_Amount) / (n(r.Relational_Exch_Rate_Amount) || 1) }))
+  const crz = await getBcContext('CRAZE');
+  const rows = await bcFetchAll(odataUrl(`${crz.odataCompanyBase}/Currency_Exchange_Rates`, {
+    $select: 'Currency_Code,Starting_Date,Exchange_Rate_Amount', $filter: `Currency_Code eq '${currency}'`,
+  }), crz.token).catch(() => [] as any[]);
+  const list = rows.map((r: any) => ({ date: d10(r.Starting_Date), rate: n(r.Exchange_Rate_Amount) ? 1 / n(r.Exchange_Rate_Amount) : 1 }))
     .sort((a, b) => a.date.localeCompare(b.date));
-  return (date: string) => {
-    // Tabla de la propia empresa (divisa local X): la fila EUR da Exchange_Rate_Amount EUR por Relational_Exch_Rate_Amount X
-    const eur = list.filter(r => r.code === 'EUR' && r.date <= date).pop() || list.find(r => r.code === 'EUR');
-    return eur?.rate || 1;
-  };
+  return (date: string) => list.filter(r => r.date <= date).pop()?.rate ?? 1;
+}
+
+// Pedidos abiertos como Sales_Lines_Excel_<empresa> del Power BI: líneas que no son de factura, con cliente, fecha =
+// Requested Delivery Date (Return Order: Posting Date de la devolución). En CRAZE, las líneas del almacén ASIA son de Asia.
+async function openSalesLines(ctx: BcContext, location: 'notAsia' | 'asia' | 'all') {
+  const [lines, returns] = await Promise.all([
+    bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Sales_Lines_Excel`, {
+      $filter: `Document_Type ne 'Invoice'${location === 'asia' ? ` and Location_Code eq 'ASIA'` : ''}`,
+      $select: 'Document_Type,Document_No,Sell_to_Customer_No,No,Location_Code,Quantity,Line_Amount,AIT_Requested_Delivery_Date',
+    }), ctx.token),
+    bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Sales_Return_Order_Excel`, { $select: 'No,Posting_Date' }), ctx.token).catch(() => [] as any[]),
+  ]);
+  const returnDate = new Map(returns.map((r: any) => [s(r.No), d10(r.Posting_Date)]));
+  return lines
+    .filter((l: any) => s(l.Sell_to_Customer_No) && (location !== 'notAsia' || s(l.Location_Code) !== 'ASIA'))
+    .map((l: any) => ({
+      date: s(l.Document_Type) === 'Return Order' ? returnDate.get(s(l.Document_No)) || '' : d10(l.AIT_Requested_Delivery_Date),
+      cust: s(l.Sell_to_Customer_No), item: s(l.No), qty: n(l.Quantity), amount: n(l.Line_Amount),
+    }));
 }
 
 export async function commercialFacts(abbr: CompanyAbbr, year: number, force = false) {
@@ -100,7 +119,7 @@ export async function commercialFacts(abbr: CompanyAbbr, year: number, force = f
   const live = to >= today();
   // Guardado: el año en curso se renueva cada 6 h en segundo plano y los años cerrados una vez al día (la parte
   // "hasta hoy" del mes actual cambia cada día para el año anterior); el botón de actualizar lo fuerza.
-  return cached(`commercial:facts:${abbr}:${year}${live ? '' : `:${today()}`}`, 24 * HOUR, async () => {
+  return cached(`commercial:facts2:${abbr}:${year}${live ? '' : `:${today()}`}`, 24 * HOUR, async () => {
     const dims = await commercialDims();
     const itemBy = new Map(dims.items.map(i => [i.no, i]));
     const groupBy = new Map(dims.groups.map(g => [g.code, g]));
@@ -118,16 +137,17 @@ export async function commercialFacts(abbr: CompanyAbbr, year: number, force = f
         $filter: `postingDate ge ${from} and postingDate le ${to}`,
         $select: 'postingDate,sellToCustomerNo,no,quantity,lineAmount,lineAmountLCY,lineAmountEUR,component,mainItemCRZ,shipToCountryRegionCode,customerGroupCode,productLineCode,royaltyCode',
       }), ctx.token, 55_000)),
-      live ? safe('Pedidos abiertos', bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Sales_Lines_Excel`, {
-        $filter: `Document_Type ne 'Invoice' and Type eq 'Item'`,
-        $select: 'Document_Type,Sell_to_Customer_No,No,Quantity,Outstanding_Quantity,Line_Amount,Shipment_Date',
-      }), ctx.token)) : Promise.resolve([] as any[]),
-      safe('Clientes', bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Customer_Card_Excel`, { $select: 'No,Country_Region_Code,Customer_Group_Code_CRZ,Currency_Code' }), ctx.token)),
+      // Pedidos abiertos de cualquier año (el Power BI no filtra: cada línea cuenta en el año de su fecha)
+      safe('Pedidos abiertos', abbr === 'GmbH' ? openSalesLines(ctx, 'notAsia')
+        : abbr === 'Asia' ? Promise.all([openSalesLines(ctx, 'all'), getBcContext('CRAZE').then(crz => openSalesLines(crz, 'asia'))]).then(([a, b]) => [...a, ...b])
+        : openSalesLines(ctx, 'all')),
+      // Ficha de cliente de CRAZE para todas las empresas (Customer_Card_Excel del Power BI)
+      safe('Clientes', getBcContext('CRAZE').then(crz => bcFetchAll(odataUrl(`${crz.odataCompanyBase}/Customer_Card_Excel`, { $select: 'No,Country_Region_Code,Customer_Group_Code_CRZ,Currency_Code' }), crz.token))),
       plans ? safe('Presupuesto', bcFetchAll(odataUrl(`${ctx.customApiBase}/budgetItems`, { $filter: `postingDate ge ${from} and postingDate le ${to}` }), ctx.token)) : none,
       plans ? safe('Presupuesto (uds.)', bcFetchAll(odataUrl(`${ctx.customApiBase}/budgetUnits`, { $filter: `postingDate ge ${from} and postingDate le ${to}` }), ctx.token)) : none,
       plans ? safe('Forecast', bcFetchAll(odataUrl(`${ctx.customApiBase}/forecastItems`, { $filter: `postingDate ge ${from} and postingDate le ${to}` }), ctx.token)) : none,
       plans ? safe('Forecast (uds.)', bcFetchAll(odataUrl(`${ctx.customApiBase}/forecastUnits`, { $filter: `postingDate ge ${from} and postingDate le ${to}` }), ctx.token)) : none,
-      rateToEur(ctx, company.currency),
+      rateToEur(company.currency),
     ]);
     const custBy = new Map(customers.map((c: any) => [s(c.No), { country: s(c.Country_Region_Code), group: s(c.Customer_Group_Code_CRZ) }]));
     const kamOf = (group: string, item: Item | undefined) =>
@@ -162,18 +182,13 @@ export async function commercialFacts(abbr: CompanyAbbr, year: number, force = f
       add(date, cls, group, s(l.sellToCustomerNo), s(l.shipToCountryRegionCode), s(l.no), I('invEur'), n(l.lineAmountEUR));
       add(date, cls, group, s(l.sellToCustomerNo), s(l.shipToCountryRegionCode), s(l.no), I('invQty'), n(l.quantity));
     }
-    // Pedidos abiertos: pendiente de servir (importe × cantidad pendiente / cantidad), por fecha de envío; devoluciones en negativo
+    // Pedidos abiertos (Rev_SO / Uds_SO del Power BI): Line_Amount y Quantity enteros, sin signo, en la fecha de la línea
     for (const l of salesLines) {
-      const date = d10(l.Shipment_Date);
-      const qty = n(l.Quantity), out = n(l.Outstanding_Quantity);
-      if (!qty || !out) continue;
-      const sign = /return|credit/i.test(s(l.Document_Type)) ? -1 : 1;
-      const amount = sign * n(l.Line_Amount) * (out / qty);
-      const cust = s(l.Sell_to_Customer_No);
-      const group = custBy.get(cust)?.group || '';
-      add(date, 0, group, cust, '', s(l.No), I('so'), amount);
-      add(date, 0, group, cust, '', s(l.No), I('soEur'), amount * fx(date));
-      add(date, 0, group, cust, '', s(l.No), I('soQty'), sign * out);
+      if (!l.date) continue;
+      const group = custBy.get(l.cust)?.group || '';
+      add(l.date, 0, group, l.cust, '', l.item, I('so'), l.amount);
+      add(l.date, 0, group, l.cust, '', l.item, I('soEur'), l.amount * fx(l.date));
+      add(l.date, 0, group, l.cust, '', l.item, I('soQty'), l.qty);
     }
     // Presupuesto y forecast: importe (…Items) y unidades (…Units), en la divisa de la empresa
     const plan = (list: any[], measure: 'bdg' | 'fc' | 'bdgQty' | 'fcQty', field: 'amount' | 'quantity') => {
@@ -181,7 +196,8 @@ export async function commercialFacts(abbr: CompanyAbbr, year: number, force = f
         const date = d10(b.postingDate);
         const v = n(b[field]);
         add(date, 0, s(b.customerGroupCode), '', '', s(b.itemNo), I(measure), v);
-        if (field === 'amount') add(date, 0, s(b.customerGroupCode), '', '', s(b.itemNo), I(measure === 'bdg' ? 'bdgEur' : 'fcEur'), v * fx(date));
+        // amountEUR de BC (como el Power BI); si no viene, al tipo de cambio
+        if (field === 'amount') add(date, 0, s(b.customerGroupCode), '', '', s(b.itemNo), I(measure === 'bdg' ? 'bdgEur' : 'fcEur'), b.amountEUR != null ? n(b.amountEUR) : v * fx(date));
       }
     };
     plan(bItems, 'bdg', 'amount'); plan(bUnits, 'bdgQty', 'quantity');
