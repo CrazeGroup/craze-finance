@@ -27,9 +27,10 @@ export async function GET(req: Request) {
       return res.json();
     };
 
-    const vendors = await bcFetchAll(odataUrl(`${ctx.apiBase}/vendors`, {
-      $filter: `number eq '${q(vendor)}' or contains(displayName,'${q(vendor)}')`, $select: 'id,number,displayName',
-    }), ctx.token);
+    // BC no admite 'or' entre campos distintos: primero por nº, luego por nombre
+    const findVendors = (filter: string) => bcFetchAll(odataUrl(`${ctx.apiBase}/vendors`, { $filter: filter, $select: 'id,number,displayName' }), ctx.token);
+    let vendors = await findVendors(`number eq '${q(vendor)}'`);
+    if (!vendors.length) vendors = await findVendors(`contains(displayName,'${q(vendor)}')`);
     if (vendors.length !== 1) return NextResponse.json({ company: ctx.companyName, error: vendors.length ? 'Varios proveedores, indica el nº' : 'Proveedor no encontrado', vendors });
     const v = vendors[0];
 
