@@ -130,7 +130,8 @@ async function bc(method: string, url: string, token: string, body?: any) {
 // de solo lectura: cabecera y líneas por la API v2 (purchaseInvoices + purchaseInvoiceLines: Description 2 y taxCode =
 // VAT Prod. Posting Group) y la Posting Description, que v2 no tiene, por la página OData purchaseDocuments (por SystemId).
 // Devuelve las creadas, avisos y, si una falla, el error (las anteriores se quedan creadas)
-export async function createInvoices(ctx: BcContext, input: CreateInput, cfg: CustomsConfig) {
+// pdf: el Einfuhrabgabenbescheid, que se adjunta a cada factura (Attachments de BC, v2 documentAttachments)
+export async function createInvoices(ctx: BcContext, input: CreateInput, cfg: CustomsConfig, pdf?: { name: string; data: Uint8Array }) {
   const created: { kind: string; no: string; amount: number }[] = [];
   const warnings: string[] = [];
   const description = input.description.substring(0, 100);
@@ -166,6 +167,19 @@ export async function createInvoices(ctx: BcContext, input: CreateInput, cfg: Cu
         throw e;
       }
       created.push({ kind: inv.kind, no, amount: inv.amount });
+      if (pdf) {
+        try {
+          const att = await bc('POST', `${ctx.apiBase}/documentAttachments`, ctx.token, { fileName: pdf.name, parentType: 'Purchase Invoice', parentId: id });
+          const res = await fetch(`${ctx.apiBase}/documentAttachments(${att.id})/attachmentContent`, {
+            method: 'PATCH',
+            headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/octet-stream', 'If-Match': '*' },
+            body: Buffer.from(pdf.data),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).substring(0, 160)}`);
+        } catch (e: any) {
+          warnings.push(`${no}: no se ha podido adjuntar el PDF (${String(e.message).substring(0, 160)}); adjúntalo en BC.`);
+        }
+      }
       try {
         await bc('PATCH', `${ctx.odataCompanyBase}/purchaseDocuments(${id})`, ctx.token, { postingDescription: description });
       } catch (e: any) {

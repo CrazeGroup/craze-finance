@@ -70,10 +70,12 @@ export default function AduanasPage() {
         .filter(k => (force ? !made(k) : !has(d, k)))
         .map(k => ({ kind: k, amount: toNum(f[k]), dueDate: k === 'zoll' ? f.zollDue : f.eustDue }))
         .filter(i => i.amount > 0);
-      const res = await fetch('/api/customs/create', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ atc: f.atc.trim(), date: f.date, description: f.description.trim(), invoices, force }),
-      });
+      // El PDF subido va como adjunto a las dos facturas
+      const form = new FormData();
+      form.append('data', JSON.stringify({ atc: f.atc.trim(), date: f.date, description: f.description.trim(), invoices, force }));
+      const pdf = files.find(x => x.name === d.file);
+      if (pdf) form.append('pdf', pdf);
+      const res = await fetch('/api/customs/create', { method: 'POST', body: form });
       const json = await res.json();
       setStatus(s => ({ ...s, [d.file]: { created: [...(s[d.file]?.created || []), ...(json.created || [])], warnings: [...(s[d.file]?.warnings || []), ...(json.warnings || [])], error: json.error || null } }));
     } catch (e: any) {
