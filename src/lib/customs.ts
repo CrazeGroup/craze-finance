@@ -147,6 +147,10 @@ export async function createInvoices(ctx: BcContext, input: CreateInput, cfg: Cu
       try {
         // Vencimiento después de la fecha (la fecha de factura lo recalcula con los términos de pago del proveedor)
         if (inv.dueDate) await bc('PATCH', headUrl, ctx.token, { dueDate: inv.dueDate });
+        // Al poner el proveedor, BC añade sus líneas estándar (códigos de compra estándar del proveedor: 3,90 en ZOLL,
+        // ±21,64 en EUST); en las facturas registradas no están, así que se quitan antes de añadir las nuestras
+        const auto = await bc('GET', `${headUrl}/purchaseInvoiceLines?$select=id`, ctx.token);
+        for (const l of auto?.value || []) await bc('DELETE', `${headUrl}/purchaseInvoiceLines(${l.id})`, ctx.token);
         const lines = zoll
           ? [{ quantity: 1, vat: cfg.zollVat }]
           : [{ quantity: 1, vat: cfg.eustVat }, { quantity: -1, vat: cfg.noVat }];
