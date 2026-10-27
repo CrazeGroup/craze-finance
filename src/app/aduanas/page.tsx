@@ -29,6 +29,8 @@ export default function AduanasPage() {
   const [config, setConfig] = useState<Config | null>(null);
   const [forms, setForms] = useState<Record<string, Form>>({});
   const [status, setStatus] = useState<Record<string, Status>>({});
+  // Declaraciones marcadas para enviar juntas
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const read = async (list: File[]) => {
     if (!list.length) return;
@@ -40,6 +42,7 @@ export default function AduanasPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Error al leer los PDFs');
       setDocs(json.docs); setConfig(json.config); setStatus({});
+      setSelected(new Set((json.docs as Doc[]).filter(d => !d.error).map(d => d.file)));
       setForms(Object.fromEntries((json.docs as Doc[]).filter(d => !d.error).map(d => [d.file, {
         atc: d.atc, date: d.date, description: d.description, zoll: fmt(d.zoll), zollDue: d.zollDue, eust: fmt(d.eust), eustDue: d.eustDue,
       }])));
@@ -54,12 +57,12 @@ export default function AduanasPage() {
   const has = (d: Doc, kind: 'zoll' | 'eust') => d.existing.some(e => e.kind === kind) || !!status[d.file]?.created?.some(c => c.kind === kind);
   const pending = (d: Doc) => !d.error && (['zoll', 'eust'] as const).some(k => !has(d, k) && toNum(forms[d.file]?.[k] || '0') > 0);
 
-  const create = async (d: Doc) => {
+  const create = async (d: Doc, confirmed = false) => {
     const f = forms[d.file];
     if (!f.atc || !f.date || !f.description.trim()) { setStatus(s => ({ ...s, [d.file]: { error: 'Rellena el nº AT/C, la fecha y la descripción.' } })); return; }
     // Si ya existen en BC, se pueden crear de nuevo tras confirmarlo (no las creadas ya en esta sesión)
     const force = !pending(d);
-    if (force && !confirm(`Las facturas de ${f.atc} ya existen en BC (${d.existing.map(e => e.no).join(', ')}). ¿Crearlas de nuevo?`)) return;
+    if (force && !confirmed && !confirm(`Las facturas de ${f.atc} ya existen en BC (${d.existing.map(e => e.no).join(', ')}). ¿Crearlas de nuevo?`)) return;
     setStatus(s => ({ ...s, [d.file]: { ...s[d.file], saving: true, error: null } }));
     try {
       const made = (k: 'zoll' | 'eust') => !!status[d.file]?.created?.some(c => c.kind === k);
@@ -77,13 +80,24 @@ export default function AduanasPage() {
       setStatus(s => ({ ...s, [d.file]: { ...s[d.file], saving: false, error: e.message } }));
     }
   };
-  const createAll = async () => { for (const d of docs.filter(pending)) await create(d); };
+  // Enviar las marcadas (una confirmación para todas las que ya existen en BC)
+  const sendable = (d: Doc) => !d.error && selected.has(d.file) && (pending(d) || !status[d.file]?.created?.length);
+  const toSend = docs.filter(sendable);
+  const createSelected = async () => {
+    const again = toSend.filter(d => !pending(d));
+    if (again.length && !confirm(`${again.length} de las ${toSend.length} declaraciones ya tienen sus facturas en BC (${again.map(d => forms[d.file]?.atc).join(', ')}). ¿Crearlas de nuevo también?`)) return;
+    for (const d of toSend) await create(d, true);
+  };
+  const toggle = (file: string) => setSelected(prev => { const n = new Set(prev); if (n.has(file)) n.delete(file); else n.add(file); return n; });
+  const valid = docs.filter(d => !d.error);
+  const allSelected = valid.length > 0 && valid.every(d => selected.has(d.file));
   // Quitar una declaración de la lista (no se envía a BC)
   const remove = (file: string) => {
     setDocs(l => l.filter(d => d.file !== file));
     setFiles(l => l.filter(f => f.name !== file));
     setForms(({ [file]: _f, ...rest }) => rest);
     setStatus(({ [file]: _s, ...rest }) => rest);
+    setSelected(prev => { const n = new Set(prev); n.delete(file); return n; });
   };
 
   return (
@@ -110,11 +124,17 @@ export default function AduanasPage() {
             </label>
             <span className="text-sm text-gray-500">{files.length ? `${files.length} PDF: ${files.map(f => f.name).join(', ')}` : 'o arrástralos aquí (varios a la vez)'}</span>
             {loading && <span className="text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Leyendo y comprobando en BC…</span>}
-            {docs.some(pending) && (
-              <button onClick={createAll} disabled={Object.values(status).some(s => s.saving)}
-                className="ml-auto inline-flex items-center gap-2 bg-indigo-600 text-white text-sm font-semibold px-4 py-2.5 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
-                Enviar todas a BC ({docs.filter(pending).length})
-              </button>
+            {valid.length > 1 && (
+              <div className="ml-auto flex items-center gap-3">
+                <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <input type="checkbox" checked={allSelected} onChange={() => setSelected(allSelected ? new Set() : new Set(valid.map(d => d.file)))} />
+                  Marcar todas
+                </label>
+                <button onClick={createSelected} disabled={!toSend.length || Object.values(status).some(s => s.saving)}
+                  className="inline-flex items-center gap-2 bg-indigo-600 text-white text-sm font-semibold px-4 py-2.5 rounded-lg hover:bg-indigo-700 disabled:opacity-40">
+                  Enviar seleccionadas a BC ({toSend.length})
+                </button>
+              </div>
             )}
           </div>
         )}
@@ -133,6 +153,7 @@ export default function AduanasPage() {
           return (
             <section key={d.file} className="bg-white border border-gray-200 rounded-xl shadow-sm">
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 border-b border-gray-200">
+                <input type="checkbox" checked={selected.has(d.file)} onChange={() => toggle(d.file)} title="Marcar para enviar junto con las demás" />
                 <FileText size={16} className="text-gray-400" />
                 <span className="font-bold text-gray-900">{d.atc || 'Sin nº AT/C'}</span>
                 <span className="text-xs text-gray-500">Registriernr. {d.registration || '—'} · LRN {d.lrn || '—'} · {d.file}</span>
