@@ -8,7 +8,8 @@ export type Dims = {
   groups: { code: string; desc: string; dim: string; kam: string }[];
   kamByGroupBu: Record<string, string>; kams: Record<string, string>; dimensions: Record<string, string>;
 };
-export type Facts = { company: string; currency: string; year: number; cutoff: string; rows: (string | number)[][]; itemRoyalty: Record<string, string>; warnings: string[] };
+// delta: cambio de hoy frente a los datos guardados en deltaFrom (solo año en curso; mismas columnas, parte del mes = 0)
+export type Facts = { company: string; currency: string; year: number; cutoff: string; rows: (string | number)[][]; delta?: (string | number)[][]; deltaFrom?: string; itemRoyalty: Record<string, string>; warnings: string[] };
 
 export const COMPANIES = [
   { abbr: 'GmbH', name: 'Craze GmbH', currency: 'EUR' },
@@ -58,7 +59,8 @@ export type Period = 'ytd' | 'motd' | 'full';
 // Clases de línea LM: el Power BI filtra component = false (todas las páginas de sell-in) o mainItemCRZ = false (Top 50)
 export type Classes = 'noComponent' | 'noMain';
 
-export function records(ctx: Ctx, facts: Facts[], filters: Filters, period: Period, classes: Classes = 'noComponent'): Rec[] {
+// source 'delta' = el cambio de hoy en lugar de los hechos
+export function records(ctx: Ctx, facts: Facts[], filters: Filters, period: Period, classes: Classes = 'noComponent', source: 'rows' | 'delta' = 'rows'): Rec[] {
   const out: Rec[] = [];
   const local = ctx.currency !== 'EUR' || (filters.companies.length === 1);
   const sel = (list: string[], v: string) => !list.length || list.includes(v);
@@ -66,7 +68,7 @@ export function records(ctx: Ctx, facts: Facts[], filters: Filters, period: Peri
     if (filters.companies.length && !filters.companies.includes(f.company)) continue;
     const y = f.year === ctx.year ? 'cur' : f.year === ctx.year - 1 ? 'prev' : null;
     if (!y) continue;
-    for (const r of f.rows) {
+    for (const r of (source === 'delta' ? f.delta : f.rows) || []) {
       const m = r[0] as number, part = r[1] as number, cls = r[2] as number;
       if (classes === 'noComponent' ? cls === 2 : cls === 1) continue;
       if (period === 'ytd' && (m > ctx.cutMonth || (m === ctx.cutMonth && part === 1))) continue;

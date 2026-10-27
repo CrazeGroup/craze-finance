@@ -89,6 +89,16 @@ export function SalesPerformance({ ctx, facts, filters }: P) {
   const detail = sortedEntries(groupBy(recs, keyFn(ctx, param)), p => p.cur.sIn);
   const t = totals(recs);
   const cur = ctx.currency;
+  // Δ hoy: cambio del Sell-in de cada mes frente a los datos anteriores a hoy (facturado + pedidos abiertos)
+  // (solo datos calculados hoy: los guardados de un día anterior traen el cambio de ese día)
+  const todayFacts = useMemo(() => facts.filter(f => f.cutoff === new Date().toISOString().substring(0, 10)), [facts]);
+  const dRecs = useMemo(() => records(ctx, todayFacts, filters, 'full', 'noComponent', 'delta'), [ctx, todayFacts, filters]);
+  const dByMonth = groupBy(dRecs, r => String(r.m));
+  const dOf = (m: number) => dByMonth.get(String(m))?.cur.sIn || 0;
+  const dTotal = totals(dRecs).cur.sIn;
+  const dFrom = todayFacts.filter(f => f.year === ctx.year && f.deltaFrom).map(f => f.deltaFrom!).sort()[0];
+  const dTitle = dFrom ? `Cambio del Sell-in frente a los datos del ${new Date(dFrom).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : 'Sin datos anteriores a hoy';
+  const Delta = ({ v }: { v: number }) => (Math.abs(v) < 0.5 ? <span className="text-gray-300">–</span> : <span className={v > 0 ? 'text-emerald-700' : 'text-red-600'}>{v > 0 ? '+' : ''}{fmtNum(v)}</span>);
   let acm = { prev: 0, cur: 0, bdg: 0 };
   const monthRows = months.map(m => {
     const p = byMonth.get(String(m)) || { cur: totals([]).cur, prev: totals([]).prev };
@@ -99,13 +109,13 @@ export function SalesPerformance({ ctx, facts, filters }: P) {
     <div className="space-y-4">
       <div className="grid gap-4 xl:grid-cols-2">
         <Card title="Mes a mes y acumulado (año completo)" right={<ExportBtn onClick={() => exportRows('Sales Performance mensual', monthRows.map(r => ({
-          Mes: MONTHS[r.m - 1], 'Sell-in Prev. Year': r.p.prev.sIn, 'Sell-in Year': r.p.cur.sIn, Budget: r.p.cur.bdg,
+          Mes: MONTHS[r.m - 1], 'Sell-in Prev. Year': r.p.prev.sIn, 'Sell-in Year': r.p.cur.sIn, 'Δ hoy': dOf(r.m), Budget: r.p.cur.bdg,
           'Acm. Sell-in Prev. Year': r.acm.prev, 'Acm. Sell-in Year': r.acm.cur, 'Acm. Budget': r.acm.bdg,
         })))} />}>
           <div className="overflow-x-auto">
             <table className="w-full text-[12px]">
               <thead><tr className="border-b border-gray-200">
-                <th className={`${th} text-left`}>Mo.</th><th className={th}>Sell-in Prev. Year</th><th className={th}>%</th><th className={th}>Sell-in Year</th><th className={th}>% vs Bdg</th><th className={th}>Budget</th>
+                <th className={`${th} text-left`}>Mo.</th><th className={th}>Sell-in Prev. Year</th><th className={th}>%</th><th className={th}>Sell-in Year</th><th className={th} title={dTitle}>Δ hoy</th><th className={th}>% vs Bdg</th><th className={th}>Budget</th>
                 <th className={th}>Acm. Prev. Year</th><th className={th}>%</th><th className={th}>Acm. Year</th><th className={th}>% vs Bdg</th><th className={th}>Acm. Budget</th>
               </tr></thead>
               <tbody>
@@ -113,7 +123,7 @@ export function SalesPerformance({ ctx, facts, filters }: P) {
                   <tr key={m} className="border-b border-gray-100">
                     <td className="py-1.5 px-2 font-semibold">{MONTHS[m - 1]}</td>
                     <td className={td}>{fmtNum(p.prev.sIn)}</td><td className={td}><Var v={pctVar(p.cur.sIn, p.prev.sIn)} /></td>
-                    <td className={`${td} font-semibold`}>{fmtNum(p.cur.sIn)}</td><td className={td}><Var v={pctVar(p.cur.sIn, p.cur.bdg)} /></td><td className={td}>{fmtNum(p.cur.bdg)}</td>
+                    <td className={`${td} font-semibold`}>{fmtNum(p.cur.sIn)}</td><td className={td} title={dTitle}><Delta v={dOf(m)} /></td><td className={td}><Var v={pctVar(p.cur.sIn, p.cur.bdg)} /></td><td className={td}>{fmtNum(p.cur.bdg)}</td>
                     <td className={td}>{fmtNum(a.prev)}</td><td className={td}><Var v={pctVar(a.cur, a.prev)} /></td>
                     <td className={`${td} font-semibold`}>{fmtNum(a.cur)}</td><td className={td}><Var v={pctVar(a.cur, a.bdg)} /></td><td className={td}>{fmtNum(a.bdg)}</td>
                   </tr>
@@ -122,7 +132,7 @@ export function SalesPerformance({ ctx, facts, filters }: P) {
               <tfoot><tr className="border-t-2 border-gray-300 font-bold bg-gray-50">
                 <td className="py-1.5 px-2">Total</td>
                 <td className={td}>{fmtNum(t.prev.sIn)}</td><td className={td}><Var v={pctVar(t.cur.sIn, t.prev.sIn)} /></td>
-                <td className={td}>{fmtNum(t.cur.sIn)}</td><td className={td}><Var v={pctVar(t.cur.sIn, t.cur.bdg)} /></td><td className={td}>{fmtNum(t.cur.bdg)}</td>
+                <td className={td}>{fmtNum(t.cur.sIn)}</td><td className={td} title={dTitle}><Delta v={dTotal} /></td><td className={td}><Var v={pctVar(t.cur.sIn, t.cur.bdg)} /></td><td className={td}>{fmtNum(t.cur.bdg)}</td>
                 <td colSpan={5} className={`${td} text-gray-400 font-normal`}>{cur}</td>
               </tr></tfoot>
             </table>

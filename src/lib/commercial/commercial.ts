@@ -1,5 +1,6 @@
 import { bcFetchAll, BcContext, getBcContext, odataUrl } from '@/lib/bcClient';
-import { cached, HOUR } from '@/lib/reporting/cache';
+import prisma from '@/lib/prisma';
+import { cached, HOUR, readCached } from '@/lib/reporting/cache';
 import { today } from '@/lib/reporting/period';
 
 // Commercial Analysis: recreación del Power BI "Commercial Analysis" leyendo BC en directo.
@@ -113,13 +114,43 @@ async function openSalesLines(ctx: BcContext, location: 'notAsia' | 'asia' | 'al
     }));
 }
 
+// Cambio del día: diferencia (sin la parte del mes) entre los hechos nuevos y los primeros datos guardados antes de hoy.
+// La base del día se fija con la primera actualización de cada día en ApiConfig commercial:dayBase:<empresa>:<año>.
+async function dayDelta(cacheKey: string, baseKey: string, rows: FactRow[]) {
+  const day = today();
+  const stored = await prisma.apiConfig.findUnique({ where: { key: baseKey } });
+  let base: { date: string; from: string; rows: FactRow[] } | null = null;
+  try { base = stored?.config ? JSON.parse(stored.config) : null; } catch { /* base corrupta: se rehace */ }
+  if (!base || base.date !== day) {
+    const prev = await readCached<{ cutoff: string; rows: FactRow[] }>(cacheKey);
+    const usable = prev && prev.value.cutoff < day;
+    base = { date: day, from: usable ? prev.at.toISOString() : new Date().toISOString(), rows: usable ? prev.value.rows : rows };
+    const config = JSON.stringify(base);
+    await prisma.apiConfig.upsert({ where: { key: baseKey }, update: { config }, create: { key: baseKey, url: '', config } });
+  }
+  const acc = new Map<string, FactRow>();
+  const put = (r: FactRow, sign: number) => {
+    const key = [r[0], r[2], r[3], r[4], r[5], r[6], r[7]].join('|');
+    let d = acc.get(key);
+    if (!d) { d = [r[0], 0, r[2], r[3], r[4], r[5], r[6], r[7], ...MEASURES.map(() => 0)] as FactRow; acc.set(key, d); }
+    for (let i = 8; i < 8 + MEASURES.length; i++) (d as number[])[i] += sign * ((r[i] as number) || 0);
+  };
+  for (const r of base.rows) put(r, -1);
+  for (const r of rows) put(r, 1);
+  const delta = Array.from(acc.values())
+    .map(r => r.map((v, i) => (i >= 8 ? Math.round((v as number) * 100) / 100 : v)) as FactRow)
+    .filter(r => r.slice(8).some(v => v !== 0));
+  return { delta, deltaFrom: base.from };
+}
+
 export async function commercialFacts(abbr: CompanyAbbr, year: number, force = false) {
   const company = COMPANIES.find(c => c.abbr === abbr)!;
   const from = `${year}-01-01`, to = `${year}-12-31`;
   const live = to >= today();
-  // Guardado: el año en curso se renueva cada 6 h en segundo plano y los años cerrados una vez al día (la parte
+  // Guardado: el año en curso se renueva cada hora en segundo plano (para el cambio del día) y los años cerrados una vez al día (la parte
   // "hasta hoy" del mes actual cambia cada día para el año anterior); el botón de actualizar lo fuerza.
-  return cached(`commercial:facts2:${abbr}:${year}${live ? '' : `:${today()}`}`, 24 * HOUR, async () => {
+  const cacheKey = `commercial:facts2:${abbr}:${year}${live ? '' : `:${today()}`}`;
+  return cached(cacheKey, 24 * HOUR, async () => {
     const dims = await commercialDims();
     const itemBy = new Map(dims.items.map(i => [i.no, i]));
     const groupBy = new Map(dims.groups.map(g => [g.code, g]));
@@ -203,12 +234,15 @@ export async function commercialFacts(abbr: CompanyAbbr, year: number, force = f
     plan(bItems, 'bdg', 'amount'); plan(bUnits, 'bdgQty', 'quantity');
     plan(fItems, 'fc', 'amount'); plan(fUnits, 'fcQty', 'quantity');
 
+    const factRows = Array.from(rows.values()).map(r => r.map((v, i) => (i >= 8 ? Math.round((v as number) * 100) / 100 : v)) as FactRow);
     return {
       company: abbr, currency: company.currency, year, cutoff: today(),
-      rows: Array.from(rows.values()).map(r => r.map((v, i) => (i >= 8 ? Math.round((v as number) * 100) / 100 : v))),
+      rows: factRows,
+      // Año en curso: lo que ha cambiado hoy (columna "Δ hoy" de Sales Performance)
+      ...(live ? await dayDelta(cacheKey, `commercial:dayBase:${abbr}:${year}`, factRows) : {}),
       itemRoyalty,
       counts: { lm: lm.length, salesLines: salesLines.length, budget: bItems.length, forecast: fItems.length },
       warnings,
     };
-  }, force, { refreshAfterMs: live ? 6 * HOUR : 24 * HOUR });
+  }, force, { refreshAfterMs: live ? HOUR : 24 * HOUR });
 }

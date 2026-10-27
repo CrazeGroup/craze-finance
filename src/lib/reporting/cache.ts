@@ -69,6 +69,18 @@ export async function cached<T>(key: string, maxAgeMs: number, compute: () => Pr
   return computeAndStore(dbKey, compute);
 }
 
+// Último valor guardado de una caché (sin recalcular) y cuándo se guardó
+export async function readCached<T>(key: string): Promise<{ value: T; at: Date } | null> {
+  if (process.env.REPORTING_NO_CACHE === '1') return null;
+  const row = await prisma.apiConfig.findUnique({ where: { key: PREFIX + key } });
+  if (!row?.config) return null;
+  try {
+    return { value: JSON.parse(row.config) as T, at: row.updatedAt };
+  } catch {
+    return null;
+  }
+}
+
 export async function readSetting<T>(key: string, fallback: T): Promise<T> {
   if (process.env.REPORTING_NO_CACHE === '1') return fallback;
   const row = await prisma.apiConfig.findUnique({ where: { key: 'reporting:setting:' + key } });
