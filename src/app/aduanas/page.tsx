@@ -168,12 +168,16 @@ export default function AduanasPage() {
                 </table>
                 {d.warnings.map(w => <p key={w} className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {w}</p>)}
                 {st.error && <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{st.error}</p>}
-                {pending(d) && (
-                  <button onClick={() => create(d)} disabled={st.saving}
-                    className="inline-flex items-center gap-2 bg-indigo-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
-                    {st.saving && <RefreshCw size={14} className="animate-spin" />} Enviar a BC ({rows.filter(r => !has(d, r.kind) && toNum(f[r.amount]) > 0).map(r => r.label).join(' + ')})
+                {/* Siempre visible; desactivado cuando ya no queda nada por crear (las dos facturas existen en BC) */}
+                <div className="flex items-center gap-3">
+                  <button onClick={() => create(d)} disabled={st.saving || !pending(d)}
+                    title={pending(d) ? 'Crea las Purchase Invoices en BC, sin registrar' : 'Las facturas de esta declaración ya están en BC'}
+                    className="inline-flex items-center gap-2 bg-indigo-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                    {st.saving && <RefreshCw size={14} className="animate-spin" />} Enviar a BC
+                    {pending(d) && ` (${rows.filter(r => !has(d, r.kind) && toNum(f[r.amount]) > 0).map(r => r.label).join(' + ')})`}
                   </button>
-                )}
+                  {!pending(d) && <span className="text-xs text-gray-500">Ya están en BC: no se vuelven a crear.</span>}
+                </div>
               </div>
             </section>
           );
