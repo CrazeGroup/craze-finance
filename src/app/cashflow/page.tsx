@@ -5,6 +5,15 @@ import * as XLSX from 'xlsx';
 import { useCompany } from '@/contexts/CompanyContext';
 import { syncFromBc } from '@/lib/syncClient';
 
+// Periodicidad de los pagos recurrentes (RecurringPayment.frequency)
+const FREQUENCIES = [
+  { value: 'weekly', label: 'Semanal' },
+  { value: 'monthly', label: 'Mensual' },
+  { value: 'quarterly', label: 'Trimestral' },
+  { value: 'semiannual', label: 'Semestral' },
+  { value: 'annual', label: 'Anual' },
+];
+
 export default function CashflowPage() {
   const { selectedCompany } = useCompany();
   const availableCurrencies = selectedCompany === 'Craze UK' ? ['EUR', 'USD', 'GBP'] : ['EUR', 'USD', 'CHF'];
@@ -84,7 +93,7 @@ export default function CashflowPage() {
   const [recurringModalOpen, setRecurringModalOpen] = useState(false);
   const [recurringPayments, setRecurringPayments] = useState<any[]>([]);
   const [editingRecurring, setEditingRecurring] = useState<any>(null);
-  const [recurringForm, setRecurringForm] = useState({ amount: '', dayOfMonth: '1', activeFromDate: '' });
+  const [recurringForm, setRecurringForm] = useState({ amount: '', dayOfMonth: '1', activeFromDate: '', frequency: 'monthly' });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -587,6 +596,7 @@ export default function CashflowPage() {
         amount: recurringForm.amount,
         dayOfMonth: recurringForm.dayOfMonth,
         activeFromDate: recurringForm.activeFromDate,
+        frequency: recurringForm.frequency,
         currencyCode: currentCurrency
       };
       await fetch('/api/cashflow/recurring', {
@@ -1323,7 +1333,7 @@ export default function CashflowPage() {
                             {rec.isActive ? (
                               <div className="text-sm">
                                 <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded font-bold mr-2">ACTIVO</span>
-                                <div>Día {rec.dayOfMonth} | {getCurrencySymbol(rec.currencyCode || 'EUR')}{rec.amount}</div>
+                                <div>{FREQUENCIES.find(f => f.value === (rec.frequency || 'monthly'))?.label}{rec.frequency === 'weekly' ? '' : ` · día ${rec.dayOfMonth}`} | {getCurrencySymbol(rec.currencyCode || 'EUR')}{rec.amount}</div>
                                 <div className="text-xs text-gray-500">Desde: {rec.activeFromDate ? new Date(rec.activeFromDate).toLocaleDateString() : '-'}</div>
                               </div>
                             ) : (
@@ -1338,7 +1348,7 @@ export default function CashflowPage() {
                             ) : (
                               <button onClick={() => {
                                 setEditingRecurring(rec);
-                                setRecurringForm({ amount: '', dayOfMonth: '1', activeFromDate: new Date().toISOString().split('T')[0] });
+                                setRecurringForm({ amount: '', dayOfMonth: '1', activeFromDate: new Date().toISOString().split('T')[0], frequency: 'monthly' });
                               }} className="px-3 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 font-bold text-xs rounded transition-colors">
                                 Añadir al Cashflow
                               </button>
@@ -1369,6 +1379,19 @@ export default function CashflowPage() {
               <form onSubmit={handleSaveRecurring} className="p-6 space-y-4">
                 <p className="text-sm text-gray-600 font-medium mb-4">{editingRecurring.description}</p>
                 <div>
+                  <label className="block text-sm font-bold text-gray-900 mb-1">Periodicidad</label>
+                  <select
+                    value={recurringForm.frequency}
+                    onChange={e => setRecurringForm({...recurringForm, frequency: e.target.value})}
+                    className="w-full bg-white border border-gray-200 rounded-lg px-4 py-2.5 text-gray-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    {FREQUENCIES.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+                  </select>
+                  {recurringForm.frequency === 'weekly' && (
+                    <p className="text-xs text-gray-500 mt-1">Cada 7 días a partir de la fecha de inicio.</p>
+                  )}
+                </div>
+                {recurringForm.frequency !== 'weekly' && <div>
                   <label className="block text-sm font-bold text-gray-900 mb-1">Día del Mes (1-31)</label>
                   <input 
                     type="number" min="1" max="31" required
@@ -1376,7 +1399,10 @@ export default function CashflowPage() {
                     onChange={e => setRecurringForm({...recurringForm, dayOfMonth: e.target.value})}
                     className="w-full bg-white border border-gray-200 rounded-lg px-4 py-2.5 text-gray-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   />
-                </div>
+                  {recurringForm.frequency !== 'monthly' && (
+                    <p className="text-xs text-gray-500 mt-1">En el mes de la fecha de inicio y cada {recurringForm.frequency === 'quarterly' ? '3' : recurringForm.frequency === 'semiannual' ? '6' : '12'} meses.</p>
+                  )}
+                </div>}
                 <div>
                   <label className="block text-sm font-bold text-gray-900 mb-1">Importe (ej. -1000)</label>
                   <input 

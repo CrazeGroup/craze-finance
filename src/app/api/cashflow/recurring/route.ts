@@ -27,7 +27,7 @@ export async function PUT(request: Request) {
     const companyId = cookieStore.get('craze_selected_company')?.value || 'CRAZE';
     const body = await request.json();
 
-    const { id, isActive, amount, dayOfMonth, activeFromDate, currencyCode } = body;
+    const { id, isActive, amount, dayOfMonth, activeFromDate, currencyCode, frequency } = body;
 
     if (!id) {
       return NextResponse.json({ error: 'Missing payment ID' }, { status: 400 });
@@ -40,7 +40,8 @@ export async function PUT(request: Request) {
         amount: amount !== undefined ? parseFloat(amount) : null,
         dayOfMonth: dayOfMonth !== undefined ? parseInt(dayOfMonth) : null,
         activeFromDate: activeFromDate ? new Date(activeFromDate) : null,
-        currencyCode: currencyCode || null
+        currencyCode: currencyCode || null,
+        frequency: frequency || null
       }
     });
 

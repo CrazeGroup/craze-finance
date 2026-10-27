@@ -108,16 +108,35 @@ export async function getCashflow(companyId: string, currency: string, showArchi
   const recurringEntries: any[] = [];
   const projectionMonths = 12; // Project 12 months into the future
   const today = new Date();
-  
+  // Periodicidad (frequency): weekly = cada 7 días desde la fecha de inicio; el resto = el día del mes cada 1/3/6/12 meses
+  const MONTHS_STEP: Record<string, number> = { monthly: 1, quarterly: 3, semiannual: 6, annual: 12 };
+
   for (const rec of recurringPayments) {
-    if (!rec.activeFromDate || !rec.dayOfMonth) continue;
-    
-    let currentProjDate = new Date(rec.activeFromDate);
-    
-    // Make sure we start from the activeFromDate
-    for (let i = 0; i < projectionMonths; i++) {
-      const projDate = new Date(currentProjDate.getFullYear(), currentProjDate.getMonth() + i, rec.dayOfMonth);
-      
+    const frequency = rec.frequency && (rec.frequency === 'weekly' || MONTHS_STEP[rec.frequency]) ? rec.frequency : 'monthly';
+    if (!rec.activeFromDate || (frequency !== 'weekly' && !rec.dayOfMonth)) continue;
+
+    const start = new Date(rec.activeFromDate);
+    start.setHours(0, 0, 0, 0);
+    // Desde hoy (o la fecha de inicio, si es futura) hasta 12 meses después
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const from = start > todayStart ? start : todayStart;
+    const horizon = new Date(from.getFullYear(), from.getMonth() + projectionMonths, from.getDate());
+
+    const dates: Date[] = [];
+    if (frequency === 'weekly') {
+      for (let d = new Date(start); d <= horizon; d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7)) if (d >= from) dates.push(d);
+    } else {
+      const step = MONTHS_STEP[frequency];
+      for (let i = 0; ; i += step) {
+        // Día del mes ajustado al último día en meses más cortos (31 → 28/29 en febrero)
+        const lastDay = new Date(start.getFullYear(), start.getMonth() + i + 1, 0).getDate();
+        const d = new Date(start.getFullYear(), start.getMonth() + i, Math.min(rec.dayOfMonth!, lastDay));
+        if (d > horizon) break;
+        if (d >= from) dates.push(d);   // solo desde hoy: lo ya pagado está en BC
+      }
+    }
+
+    for (const projDate of dates) {
       // If the projected date is past an endDate (if it exists), stop
       if (rec.endDate && projDate > rec.endDate) break;
       
