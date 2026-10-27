@@ -80,10 +80,11 @@ export function YoYStatus({ ctx, facts, filters }: P) {
 }
 
 // ---------- Sales Performance ----------
+// Como la página del Power BI (sin filtro de fecha): el año entero, con los pedidos abiertos de meses futuros
 export function SalesPerformance({ ctx, facts, filters }: P) {
   const [param, setParam] = useState<ParamId>('customer');
-  const recs = useMemo(() => records(ctx, facts, filters, 'ytd'), [ctx, facts, filters]);
-  const months = Array.from({ length: ctx.cutMonth }, (_, i) => i + 1).filter(m => !filters.months.length || filters.months.includes(m));
+  const recs = useMemo(() => records(ctx, facts, filters, 'full'), [ctx, facts, filters]);
+  const months = Array.from({ length: 12 }, (_, i) => i + 1).filter(m => !filters.months.length || filters.months.includes(m));
   const byMonth = groupBy(recs, r => String(r.m));
   const detail = sortedEntries(groupBy(recs, keyFn(ctx, param)), p => p.cur.sIn);
   const t = totals(recs);
@@ -97,7 +98,7 @@ export function SalesPerformance({ ctx, facts, filters }: P) {
   return (
     <div className="space-y-4">
       <div className="grid gap-4 xl:grid-cols-2">
-        <Card title="Mes a mes y acumulado (hasta hoy)" right={<ExportBtn onClick={() => exportRows('Sales Performance mensual', monthRows.map(r => ({
+        <Card title="Mes a mes y acumulado (año completo)" right={<ExportBtn onClick={() => exportRows('Sales Performance mensual', monthRows.map(r => ({
           Mes: MONTHS[r.m - 1], 'Sell-in Prev. Year': r.p.prev.sIn, 'Sell-in Year': r.p.cur.sIn, Budget: r.p.cur.bdg,
           'Acm. Sell-in Prev. Year': r.acm.prev, 'Acm. Sell-in Year': r.acm.cur, 'Acm. Budget': r.acm.bdg,
         })))} />}>
@@ -135,7 +136,7 @@ export function SalesPerformance({ ctx, facts, filters }: P) {
           ]} />
         </Card>
       </div>
-      <Card title="Detalle (hasta hoy)" right={<div className="flex items-center gap-2"><ParamSelect value={param} onChange={setParam} />
+      <Card title="Detalle (año completo)" right={<div className="flex items-center gap-2"><ParamSelect value={param} onChange={setParam} />
         <ExportBtn onClick={() => exportRows(`Sales Performance ${param}`, detail.map(([k, p]) => ({
           [PARAMS.find(x => x.id === param)!.label]: k, 'Sell-in Prev. Year': p.prev.sIn, 'Sell-in Year': p.cur.sIn, Budget: p.cur.bdg,
           'Units Prev. Year': p.prev.sInQty, 'Units Year': p.cur.sInQty, 'Budget Units': p.cur.bdgQty,
