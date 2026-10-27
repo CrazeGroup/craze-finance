@@ -49,6 +49,9 @@ const DATEV_SECTION_LINE: [RegExp, RegExp][] = [
   [/^1200$/, /marketing/i], [/^1220$/, /logistic/i], [/^1240$/, /depreciation/i], [/^(13\d\d)$/, /financial/i], [/./, /other expenses/i],
 ];
 // Nombre de una línea BWA con su número de BWA group: "1020 - SALES REVENUES"
+// Monthly: líneas con una fila de % por mes sobre Sales Revenues (1020) o Net Turnover (1051)
+const MONTHLY_PCT_LINES = ['1080', '1300', '1302', '1380'];
+const PCT_BASES = [{ code: '1020', label: '1020 - Sales Revenues' }, { code: '1051', label: '1051 - Net Turnover' }];
 const lineName = (l: { code: string; description: string }) => `${l.code} - ${l.description}`;
 const th = 'py-2 px-2 text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap text-right';
 const td = 'py-1.5 px-2 whitespace-nowrap tabular-nums text-right';
@@ -62,6 +65,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
   // Hasta mes (acumulado del año): por defecto el último mes cerrado
   const [toMonth, setToMonth] = useState(now.getMonth() === 0 ? 12 : now.getMonth());
   const [company, setCompany] = useState(CONSOL);
+  const [pctBase, setPctBase] = useState('1020');
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [reload, setReload] = useState({ n: 0, force: false });
   const [state, setState] = useState<{ data: Data | null; loading: boolean; error: string | null }>({ data: null, loading: true, error: null });
@@ -253,6 +257,14 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
   };
   useEffect(() => { setDrills({}); }, [page, year, toMonth, company]);
 
+  // Monthly: % de una línea sobre la línea base elegida, con los meses de la columna
+  const baseLine = d?.lines.find(l => l.code === pctBase);
+  const monthlyPct = (c: Col, l: Line) => {
+    const months = c.drill?.months;
+    return months && baseLine ? div(sum(company, lineAccounts(l), months), sum(company, lineAccounts(baseLine), months)) : null;
+  };
+  const showPct = (l: Line) => page === 'monthly' && MONTHLY_PCT_LINES.includes(l.code);
+
   const cell = (c: Col, accs: Account[], line: Line | null) => {
     const v = c.value(accs, line);
     return c.kind === 'pct' ? pctTxt(v) : money(v || 0);
@@ -266,6 +278,11 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
       const row: Record<string, string | number | null> = { 'BWA Group': lineName(l), 'No.': '', Level: '', Description: '' };
       columns.forEach(c => { row[`${c.label}${c.sub ? ` ${c.sub}` : ''}`] = c.value(accs, l); });
       rows.push(row);
+      if (showPct(l)) {
+        const pr: Record<string, string | number | null> = { 'BWA Group': `% ${lineName(l)} s/ ${pctBase}`, 'No.': '', Level: '', Description: '' };
+        columns.forEach(c => { pr[`${c.label}${c.sub ? ` ${c.sub}` : ''}`] = monthlyPct(c, l); });
+        rows.push(pr);
+      }
       if (!l.formula) for (const a of accountsOf.get(l.code) || []) {
         const sub: Record<string, string | number | null> = { 'BWA Group': lineName(l), 'No.': a.account, Level: a.level, Description: a.description };
         columns.forEach(c => { sub[`${c.label}${c.sub ? ` ${c.sub}` : ''}`] = c.value([a], null); });
@@ -341,6 +358,14 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
             CRAZE Company
             <select value={company} onChange={e => setCompany(e.target.value)} className={select}>
               {columnsCompanies.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
+        )}
+        {page === 'monthly' && (
+          <label className={label}>
+            % sobre
+            <select value={pctBase} onChange={e => setPctBase(e.target.value)} className={select}>
+              {PCT_BASES.map(b => <option key={b.code} value={b.code}>{b.label}</option>)}
             </select>
           </label>
         )}
@@ -433,6 +458,12 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
                             <td key={c.key} className={`${td} ${c.red?.(accs, l) ? 'bg-[#FFBABD] text-[#80292E]' : ''} ${c.kind === 'pct' && !l.highlight ? 'text-[#2B408E]' : ''}`}>{cell(c, accs, l)}</td>
                           ))}
                         </tr>
+                        {showPct(l) && (
+                          <tr className="border-b border-gray-100 text-[12px] italic text-[#2B408E] bg-[#F5F7FC]">
+                            <td className="py-1 px-2 pl-6 whitespace-nowrap">% s/ {pctBase}</td>
+                            {columns.map(c => <td key={c.key} className={`${td} py-1`}>{pctTxt(monthlyPct(c, l))}</td>)}
+                          </tr>
+                        )}
                         {open[l.code] && subs.map(a => (
                           <Fragment key={a.account}>
                             <tr className={`border-b border-gray-100 text-[12px] text-gray-600 ${drills[a.account] ? 'bg-[#FDF2F7]' : ''}`}>
@@ -462,7 +493,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
             <p className="text-xs text-gray-500">
               {page === 'datev' && `Year -1 = Jahresübersicht de DATEV (cuentas DATEV 602000 = BC 6020 00, con el mapeo BWA de BC; las cuentas sin mapeo se asignan como la cuenta de BC con las mismas 4 cifras o por su apartado DATEV y aparecen marcadas "DATEV"). Gastos con el signo invertido, como el BWA. "Year -1 BC" y "DATEV − BC" muestran lo que registra BC para el mismo periodo. `}
               {page === 'annual' && `Acumulado de enero a ${MONTHS_ES[toMonth - 1].toLowerCase()} de ${year} frente al mismo periodo de ${year - 1}, ${company}. % = sobre Sales Revenues; el último % es la diferencia en puntos (en rojo si baja).`}
-              {page === 'monthly' && `Importe de cada mes de ${year}, ${company}.`}
+              {page === 'monthly' && `Importe de cada mes de ${year}, ${company}. Bajo Gross Margin, EBITDA, EBIT y Net Income, su % sobre ${PCT_BASES.find(b => b.code === pctBase)!.label} de cada mes.`}
               {page === 'detail' && `Acumulado de enero a ${MONTHS_ES[toMonth - 1].toLowerCase()} de ${year} por sociedad (cada una con sus movimientos de eliminación) y consolidado (sin eliminaciones).`}
               {' '}Importes en EUR con el signo invertido (ingresos en positivo). Haz clic en una línea para ver sus niveles.
             </p>
