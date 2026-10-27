@@ -82,7 +82,7 @@ export default function AduanasPage() {
           <div>
             <h1 className="text-3xl font-black text-black tracking-tight flex items-center gap-2"><Landmark /> Aduanas</h1>
             <p className="text-gray-500 mt-1 text-sm">
-              Sube los Einfuhrabgabenbescheide (PDF de ATLAS): cada declaración crea en BC ({selectedCompany}) la factura de Zoll y la de EUSt, sin registrar.
+              Sube los Einfuhrabgabenbescheide (PDF de ATLAS): cada declaración crea en BC ({selectedCompany}) dos Purchase Invoices, Zoll y EUSt, sin registrar: revísalas y regístralas (Post) en BC.
             </p>
           </div>
         </header>
@@ -102,7 +102,7 @@ export default function AduanasPage() {
             {docs.some(pending) && (
               <button onClick={createAll} disabled={Object.values(status).some(s => s.saving)}
                 className="ml-auto inline-flex items-center gap-2 bg-indigo-600 text-white text-sm font-semibold px-4 py-2.5 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
-                Crear todas en BC ({docs.filter(pending).length})
+                Enviar todas a BC ({docs.filter(pending).length})
               </button>
             )}
           </div>
@@ -157,7 +157,7 @@ export default function AduanasPage() {
                           <td className="p-2 text-right"><input value={f[r.amount]} onChange={e => setField(d.file, r.amount, e.target.value)} className={`${input} w-32 text-right tabular-nums`} /></td>
                           <td className="p-2"><input type="date" value={f[r.due]} onChange={e => setField(d.file, r.due, e.target.value)} className={input} /></td>
                           <td className="p-2">
-                            {made.map(c => <span key={c.no} className="inline-flex items-center gap-1 text-emerald-700 font-semibold"><CheckCircle2 size={14} /> Creada {c.no}</span>)}
+                            {made.map(c => <span key={c.no} className="inline-flex items-center gap-1 text-emerald-700 font-semibold"><CheckCircle2 size={14} /> Purchase Invoice {c.no}</span>)}
                             {ex.map(e => <span key={e.no} className="inline-block text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-0.5 text-xs">Ya existe {e.no}{e.posted ? ' (registrada)' : ' (pendiente)'}</span>)}
                             {!made.length && !ex.length && (toNum(f[r.amount]) > 0 ? <span className="text-gray-400">Pendiente</span> : <span className="text-gray-400">Sin importe: no se crea</span>)}
                           </td>
@@ -171,7 +171,7 @@ export default function AduanasPage() {
                 {pending(d) && (
                   <button onClick={() => create(d)} disabled={st.saving}
                     className="inline-flex items-center gap-2 bg-indigo-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
-                    {st.saving && <RefreshCw size={14} className="animate-spin" />} Crear {rows.filter(r => !has(d, r.kind) && toNum(f[r.amount]) > 0).map(r => r.label).join(' + ')} en BC
+                    {st.saving && <RefreshCw size={14} className="animate-spin" />} Enviar a BC ({rows.filter(r => !has(d, r.kind) && toNum(f[r.amount]) > 0).map(r => r.label).join(' + ')})
                   </button>
                 )}
               </div>
