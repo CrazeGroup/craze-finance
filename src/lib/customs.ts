@@ -126,44 +126,50 @@ async function bc(method: string, url: string, token: string, body?: any) {
   return text ? JSON.parse(text) : null;
 }
 
-// Crea en BC (sin registrar) una factura de compra por importe: cabecera y líneas por la API custom
-// Devuelve las creadas y, si una falla, el error (las anteriores se quedan creadas)
+// Crea en BC (sin registrar) una factura de compra por importe. La API custom (purchaseHeaders/purchaseLines) es
+// de solo lectura: cabecera y líneas por la API v2 (purchaseInvoices + purchaseInvoiceLines: Description 2 y taxCode =
+// VAT Prod. Posting Group) y la Posting Description, que v2 no tiene, por la página OData purchaseDocuments (por SystemId).
+// Devuelve las creadas, avisos y, si una falla, el error (las anteriores se quedan creadas)
 export async function createInvoices(ctx: BcContext, input: CreateInput, cfg: CustomsConfig) {
   const created: { kind: string; no: string; amount: number }[] = [];
-  try {
-  const base = ctx.customApiBase;
+  const warnings: string[] = [];
   const description = input.description.substring(0, 100);
   const description2 = input.description.substring(0, 50);
-  for (const inv of input.invoices) {
-    if (!(inv.amount > 0)) continue;
-    const zoll = inv.kind === 'zoll';
-    const head = await bc('POST', `${base}/purchaseHeaders`, ctx.token, { documentType: 'Invoice', buyFromVendorNo: zoll ? cfg.zollVendor : cfg.eustVendor });
-    const no: string = head.no;
-    const headUrl = `${base}/purchaseHeaders(documentType='Invoice',no='${q(no)}')`;
-    try {
-      // Fechas primero (la fecha de documento recalcula el vencimiento con los términos de pago del proveedor)
-      await bc('PATCH', headUrl, ctx.token, { postingDate: input.date, documentDate: input.date, vatReportingDate: input.date, vendorInvoiceNo: input.atc });
-      await bc('PATCH', headUrl, ctx.token, { postingDescription: description, ...(inv.dueDate ? { dueDate: inv.dueDate } : {}) });
-      const lines = zoll
-        ? [{ quantity: 1, vat: cfg.zollVat }]
-        : [{ quantity: 1, vat: cfg.eustVat }, { quantity: -1, vat: cfg.noVat }];
-      let lineNo = 10000;
-      for (const l of lines) {
-        await bc('POST', `${base}/purchaseLines`, ctx.token, {
-          documentType: 'Invoice', documentNo: no, lineNo, type: 'Item', no: zoll ? cfg.zollItem : cfg.eustItem,
-          quantity: l.quantity, directUnitCost: inv.amount, description2, vatProdPostingGroup: l.vat,
-        });
-        lineNo += 10000;
+  try {
+    for (const inv of input.invoices) {
+      if (!(inv.amount > 0)) continue;
+      const zoll = inv.kind === 'zoll';
+      const head = await bc('POST', `${ctx.apiBase}/purchaseInvoices`, ctx.token, {
+        vendorNumber: zoll ? cfg.zollVendor : cfg.eustVendor, invoiceDate: input.date, postingDate: input.date, vendorInvoiceNumber: input.atc,
+      });
+      const id: string = head.id, no: string = head.number;
+      const headUrl = `${ctx.apiBase}/purchaseInvoices(${id})`;
+      try {
+        // Vencimiento después de la fecha (la fecha de factura lo recalcula con los términos de pago del proveedor)
+        if (inv.dueDate) await bc('PATCH', headUrl, ctx.token, { dueDate: inv.dueDate });
+        const lines = zoll
+          ? [{ quantity: 1, vat: cfg.zollVat }]
+          : [{ quantity: 1, vat: cfg.eustVat }, { quantity: -1, vat: cfg.noVat }];
+        for (const l of lines) {
+          await bc('POST', `${headUrl}/purchaseInvoiceLines`, ctx.token, {
+            lineType: 'Item', lineObjectNumber: zoll ? cfg.zollItem : cfg.eustItem,
+            quantity: l.quantity, directUnitCost: inv.amount, description2, taxCode: l.vat,
+          });
+        }
+      } catch (e) {
+        // No dejar una factura a medias
+        await bc('DELETE', headUrl, ctx.token).catch(() => {});
+        throw e;
       }
-    } catch (e) {
-      // No dejar una cabecera a medias
-      await bc('DELETE', headUrl, ctx.token).catch(() => {});
-      throw e;
+      created.push({ kind: inv.kind, no, amount: inv.amount });
+      try {
+        await bc('PATCH', `${ctx.odataCompanyBase}/purchaseDocuments(${id})`, ctx.token, { postingDescription: description });
+      } catch (e: any) {
+        warnings.push(`${no}: no se ha podido poner la Posting Description (${String(e.message).substring(0, 160)}); escríbela en BC.`);
+      }
     }
-    created.push({ kind: inv.kind, no, amount: inv.amount });
-  }
   } catch (e: any) {
-    return { created, error: e.message as string };
+    return { created, warnings, error: e.message as string };
   }
-  return { created, error: null };
+  return { created, warnings, error: null };
 }

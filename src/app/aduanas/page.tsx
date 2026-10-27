@@ -12,7 +12,7 @@ type Doc = {
 type Config = { zollVendor: string; eustVendor: string; zollItem: string; eustItem: string; zollVat: string; eustVat: string; noVat: string };
 // Valores editables de cada declaración antes de crear las facturas
 type Form = { atc: string; date: string; description: string; zoll: string; zollDue: string; eust: string; eustDue: string };
-type Status = { saving?: boolean; created?: { kind: string; no: string; amount: number }[]; error?: string | null };
+type Status = { saving?: boolean; created?: { kind: string; no: string; amount: number }[]; warnings?: string[]; error?: string | null };
 
 const nf = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const toNum = (s: string) => parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
@@ -75,7 +75,7 @@ export default function AduanasPage() {
         body: JSON.stringify({ atc: f.atc.trim(), date: f.date, description: f.description.trim(), invoices, force }),
       });
       const json = await res.json();
-      setStatus(s => ({ ...s, [d.file]: { created: [...(s[d.file]?.created || []), ...(json.created || [])], error: json.error || null } }));
+      setStatus(s => ({ ...s, [d.file]: { created: [...(s[d.file]?.created || []), ...(json.created || [])], warnings: [...(s[d.file]?.warnings || []), ...(json.warnings || [])], error: json.error || null } }));
     } catch (e: any) {
       setStatus(s => ({ ...s, [d.file]: { ...s[d.file], saving: false, error: e.message } }));
     }
@@ -200,6 +200,7 @@ export default function AduanasPage() {
                   </tbody>
                 </table>
                 {d.warnings.map(w => <p key={w} className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {w}</p>)}
+                {st.warnings?.map(w => <p key={w} className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {w}</p>)}
                 {st.error && <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{st.error}</p>}
                 {/* Siempre visible; desactivado cuando ya no queda nada por crear (las dos facturas existen en BC) */}
                 <div className="flex items-center gap-3">
