@@ -114,7 +114,8 @@ async function openSalesLines(ctx: BcContext, location: 'notAsia' | 'asia' | 'al
     }));
 }
 
-// Cambio del día: diferencia (sin la parte del mes) entre los hechos nuevos y los primeros datos guardados antes de hoy.
+// Cambio del día: diferencia (sin la parte del mes) entre los hechos nuevos y los datos guardados antes de la primera
+// actualización del día (los del día anterior, o los primeros de hoy si ya se habían calculado hoy).
 // La base del día se fija con la primera actualización de cada día en ApiConfig commercial:dayBase:<empresa>:<año>.
 async function dayDelta(cacheKey: string, baseKey: string, rows: FactRow[]) {
   const day = today();
@@ -123,8 +124,9 @@ async function dayDelta(cacheKey: string, baseKey: string, rows: FactRow[]) {
   try { base = stored?.config ? JSON.parse(stored.config) : null; } catch { /* base corrupta: se rehace */ }
   if (!base || base.date !== day) {
     const prev = await readCached<{ cutoff: string; rows: FactRow[] }>(cacheKey);
-    const usable = prev && prev.value.cutoff < day;
-    base = { date: day, from: usable ? prev.at.toISOString() : new Date().toISOString(), rows: usable ? prev.value.rows : rows };
+    // Lo último guardado antes de esta actualización (normalmente del día anterior; si ya era de hoy, el más antiguo de hoy)
+    const usable = !!prev?.value?.rows;
+    base = { date: day, from: usable ? prev!.at.toISOString() : new Date().toISOString(), rows: usable ? prev!.value.rows : rows };
     const config = JSON.stringify(base);
     await prisma.apiConfig.upsert({ where: { key: baseKey }, update: { config }, create: { key: baseKey, url: '', config } });
   }
