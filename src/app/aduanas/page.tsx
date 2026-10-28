@@ -5,6 +5,7 @@ import { AlertCircle, CheckCircle2, FileText, Landmark, RefreshCw, Upload, X } f
 import DocPdfLink from '@/components/DocPdfLink';
 import { useCompany } from '@/contexts/CompanyContext';
 import TariffCheck, { Position } from './TariffCheck';
+import HistoryView from './HistoryView';
 
 type Existing = { no: string; kind: 'zoll' | 'eust' | 'otro'; posted: boolean; date: string };
 type Doc = {
@@ -22,9 +23,13 @@ const toNum = (s: string) => parseFloat(s.replace(/\./g, '').replace(',', '.')) 
 const fmt = (v: number) => nf.format(v);
 const input = 'border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white';
 
-// Aduanas: del Einfuhrabgabenbescheid (PDF) a las dos facturas de compra de BC (Zoll y EUSt)
+const TABS = [{ id: 'importer', label: 'Importador' }, { id: 'history', label: 'Histórico' }] as const;
+
+// Aduanas: Importador (del Einfuhrabgabenbescheid en PDF a las dos facturas de compra de BC, Zoll y EUSt) e Histórico
+// (los códigos arancelarios declarados en las facturas Zoll del año frente al Tariff No. de los artículos)
 export default function AduanasPage() {
   const { selectedCompany } = useCompany();
+  const [tab, setTab] = useState<typeof TABS[number]['id']>('importer');
   const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,13 +114,28 @@ export default function AduanasPage() {
     <div className="min-h-screen bg-[#F3F4F7] pb-24">
       <main className="w-full px-4 md:px-8 pt-6 space-y-4">
         <header className="flex flex-wrap items-end justify-between gap-4">
-          <div>
+          <div className="flex-1 min-w-[280px]">
             <h1 className="text-3xl font-black text-black tracking-tight flex items-center gap-2"><Landmark /> Aduanas</h1>
             <p className="text-gray-500 mt-1 text-sm">
-              Sube los Einfuhrabgabenbescheide (PDF de ATLAS): cada declaración crea en BC ({selectedCompany}) dos Purchase Invoices, Zoll y EUSt, sin registrar: revísalas y regístralas (Post) en BC. También compara el código arancelario de cada posición con el Tariff No. de los artículos de la factura de China.
+              {tab === 'history'
+                ? `Facturas Zoll (${config?.zollVendor || '7300184'}) de ${selectedCompany} del año: el PDF adjunto de cada AT/C se lee una sola vez y sus códigos arancelarios se comparan con el Tariff No. de los artículos importados. Los resultados quedan guardados; solo se procesan los AT/C nuevos.`
+                : <>Sube los Einfuhrabgabenbescheide (PDF de ATLAS): cada declaración crea en BC ({selectedCompany}) dos Purchase Invoices, Zoll y EUSt, sin registrar: revísalas y regístralas (Post) en BC. También compara el código arancelario de cada posición con el Tariff No. de los artículos de la factura de China.</>}
             </p>
           </div>
+          <div className="flex bg-gray-200/70 rounded-lg p-1">
+            {TABS.map(t => (
+              <button key={t.id} onClick={() => setTab(t.id)}
+                className={`px-4 py-1.5 rounded-md text-sm font-semibold ${tab === t.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
+                {t.label}
+              </button>
+            ))}
+          </div>
         </header>
+
+        {tab === 'history' && (selectedCompany === 'ALL'
+          ? <div className="bg-white border rounded-lg p-4 text-sm text-gray-600">Selecciona una empresa en el menú.</div>
+          : <HistoryView key={selectedCompany} />)}
+        {tab === 'importer' && <>
 
         {selectedCompany === 'ALL' ? (
           <div className="bg-white border rounded-lg p-4 text-sm text-gray-600">Selecciona una empresa en el menú.</div>
@@ -222,6 +242,7 @@ export default function AduanasPage() {
             </section>
           );
         })}
+        </>}
       </main>
     </div>
   );
