@@ -6,8 +6,8 @@ import * as XLSX from 'xlsx';
 import DocPdfLink from '@/components/DocPdfLink';
 import { Check, code, Item, nf0, nf2, STATUS, StatusBadges, TariffTable } from './TariffCheck';
 
-// Aduanas · Histórico: facturas Zoll del año (/api/customs/history), resumen por código arancelario declarado con los
-// artículos importados en cada uno, y la lista de declaraciones con el detalle de cada una.
+// Aduanas · Histórico: facturas Zoll del año (/api/customs/history), vista por código arancelario declarado con los
+// artículos importados en cada uno, o por declaración (AT/C) con el detalle de cada una.
 type Entry = {
   atc: string; file: string; date: string; orders: string[]; transport: string[]; zoll: number; eust: number;
   check: Check | null; warnings: string[]; error?: string; computedAt: string;
@@ -26,6 +26,7 @@ type CodeRow = {
 };
 
 const dateEs = (d: string) => (d ? d.split('-').reverse().join('.') : '—');
+const VIEW_KEY = 'aduanas:historico:vista';
 const th = 'p-2 text-left text-xs uppercase tracking-wider text-gray-500 font-semibold whitespace-nowrap';
 
 export default function HistoryView() {
@@ -37,6 +38,9 @@ export default function HistoryView() {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [search, setSearch] = useState('');
   const [onlyIssues, setOnlyIssues] = useState(false);
+  const [view, setView] = useState<'code' | 'atc'>('code');
+  useEffect(() => { try { if (localStorage.getItem(VIEW_KEY) === 'atc') setView('atc'); } catch {} }, []);
+  const changeView = (v: 'code' | 'atc') => { setView(v); try { localStorage.setItem(VIEW_KEY, v); } catch {} };
   const run = useRef(0);
 
   // Va llamando a la API hasta que no quedan AT/C pendientes (cada llamada procesa los que caben en ~40 s)
@@ -138,6 +142,12 @@ export default function HistoryView() {
         <select value={year} onChange={e => setYear(Number(e.target.value))} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white">
           {[thisYear, thisYear - 1].map(y => <option key={y} value={y}>{y}</option>)}
         </select>
+        <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+          {([['code', 'Por código arancelario'], ['atc', 'Por AT/C']] as const).map(([v, l]) => (
+            <button key={v} onClick={() => changeView(v)}
+              className={`px-3 py-1.5 font-semibold ${view === v ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>{l}</button>
+          ))}
+        </div>
         <div className="relative">
           <Search size={14} className="absolute left-2.5 top-2.5 text-gray-400" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Código, artículo, AT/C o pedido"
@@ -186,18 +196,21 @@ export default function HistoryView() {
 
       {data && (
         <section className="bg-white border border-gray-200 rounded-xl overflow-x-auto">
-          <h2 className="px-4 pt-3 pb-1 font-bold text-gray-900">Resumen por código declarado</h2>
-          <p className="px-4 pb-2 text-xs text-gray-500">Cada código que ha declarado aduanas, con los artículos asignados a sus posiciones y el Tariff No. de su ficha en BC. Uds. = unidades de la factura de China asignadas.</p>
+          <h2 className="px-4 pt-3 pb-1 font-bold text-gray-900">{view === 'code' ? 'Resumen por código declarado' : 'Resumen por AT/C'}</h2>
+          <p className="px-4 pb-2 text-xs text-gray-500">{view === 'code'
+            ? 'Cada código que ha declarado aduanas, con los artículos asignados a sus posiciones y el Tariff No. de su ficha en BC. Uds. = unidades de la factura de China asignadas.'
+            : 'Cada declaración de aduanas con sus códigos declarados, importes y el estado de los artículos asignados. Al desplegarla: factura Zoll, pedido, factura China y sus posiciones.'}</p>
           <table className="w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
-                <th className={th} /><th className={th}>Código declarado</th><th className={`${th} text-right`}>Zoll %</th><th className={`${th} text-right`}>Declaraciones</th>
+                <th className={th} /><th className={th}>{view === 'code' ? 'Código declarado' : 'AT/C'}</th><th className={`${th} text-right`}>Zoll %</th>
+                <th className={`${th} text-right`}>{view === 'code' ? 'Declaraciones' : 'Códigos'}</th>
                 <th className={`${th} text-right`}>Posiciones</th><th className={`${th} text-right`}>Zollwert €</th><th className={`${th} text-right`}>Zoll €</th>
                 <th className={`${th} text-right`}>Artículos</th><th className={th}>Estado artículos</th>
               </tr>
             </thead>
             <tbody>
-              {visibleCodes.map(({ c, items }) => {
+              {view === 'code' && visibleCodes.map(({ c, items }) => {
                 const k = `code:${c.tariff}`;
                 const all = Array.from(c.items.values());
                 const counts = SEVERITY.map(st => [st, all.filter(i => i.status === st).length] as const).filter(([, n]) => n);
@@ -250,55 +263,50 @@ export default function HistoryView() {
                   </Fragment>
                 );
               })}
-              {!visibleCodes.length && <tr><td colSpan={9} className="p-4 text-sm text-gray-500">{loading ? 'Cargando…' : 'Nada que mostrar.'}</td></tr>}
-            </tbody>
-          </table>
-        </section>
-      )}
-
-      {data && (
-        <section className="bg-white border border-gray-200 rounded-xl overflow-x-auto">
-          <h2 className="px-4 pt-3 pb-2 font-bold text-gray-900">Declaraciones</h2>
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className={th} /><th className={th}>Fecha</th><th className={th}>AT/C</th><th className={th}>Factura Zoll</th><th className={th}>Pedido / contenedor</th>
-                <th className={th}>Factura China</th><th className={`${th} text-right`}>Posiciones</th><th className={th}>Estado</th><th className={th} />
-              </tr>
-            </thead>
-            <tbody>
-              {visibleEntries.map(e => {
+              {view === 'code' && !visibleCodes.length && <tr><td colSpan={9} className="p-4 text-sm text-gray-500">{loading ? 'Cargando…' : 'Nada que mostrar.'}</td></tr>}
+              {view === 'atc' && visibleEntries.map(e => {
                 const k = `atc:${e.atc}`;
+                const ps = e.check?.positions || [];
+                const sum = (f: (p: typeof ps[number]) => number | null | undefined) => ps.reduce((t, p) => t + (f(p) || 0), 0);
+                const rates = Array.from(new Set(ps.map(p => p.dutyRate).filter((r): r is number => r != null))).sort((a, b) => a - b);
+                const tariffs = Array.from(new Set(ps.map(p => p.tariff)));
                 return (
                   <Fragment key={k}>
-                    <tr className="border-t border-gray-200 hover:bg-gray-50 cursor-pointer" onClick={() => e.check && toggle(k)}>
-                      <td className="p-2 w-6">{e.check ? (open[k] ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : null}</td>
-                      <td className="p-2 whitespace-nowrap tabular-nums">{dateEs(e.postingDate)}</td>
-                      <td className="p-2 font-mono whitespace-nowrap">{e.atc}</td>
-                      <td className="p-2 font-mono whitespace-nowrap">{e.invoiceNo}<DocPdfLink documentNo={e.invoiceNo} />{e.status === 'Draft' && <span className="ml-1 text-xs text-gray-500">(sin registrar)</span>}</td>
-                      <td className="p-2 text-xs">{[e.orders.join(', '), e.transport.join(', ')].filter(Boolean).join(' / ') || '—'}</td>
-                      <td className="p-2 text-xs">{e.check ? (e.check.invoices.length ? e.check.invoices.map(i => `${i.vendorInvoiceNo} (${i.no})`).join(', ') : <span className="text-amber-700">no encontrada</span>) : '—'}</td>
-                      <td className="p-2 text-right tabular-nums">{e.check?.positions.length ?? '—'}</td>
+                    <tr className="border-t border-gray-200 hover:bg-gray-50 cursor-pointer" onClick={() => toggle(k)}>
+                      <td className="p-2 w-6">{open[k] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
+                      <td className="p-2 whitespace-nowrap">
+                        <span className="font-mono font-semibold">{e.atc}</span>
+                        <span className="ml-2 text-xs text-gray-500 tabular-nums">{dateEs(e.postingDate)}</span>
+                      </td>
+                      <td className="p-2 text-right tabular-nums whitespace-nowrap">{rates.map(r => `${nf2.format(r)} %`).join(' · ') || '—'}</td>
+                      <td className="p-2 text-right tabular-nums" title={tariffs.map(code).join('\n')}>{e.check ? tariffs.length : '—'}</td>
+                      <td className="p-2 text-right tabular-nums">{e.check ? ps.length : '—'}</td>
+                      <td className="p-2 text-right tabular-nums">{e.check ? nf2.format(sum(p => p.value)) : '—'}</td>
+                      <td className="p-2 text-right tabular-nums">{e.check ? nf2.format(sum(p => p.duty)) : '—'}</td>
+                      <td className="p-2 text-right tabular-nums">{e.check ? new Set(ps.flatMap(p => p.items.map(i => i.no))).size : '—'}</td>
                       <td className="p-2">
                         {e.error ? <span className="text-xs text-red-700 flex items-center gap-1"><AlertCircle size={13} /> {e.error}</span>
                           : e.check ? <span className="flex flex-wrap gap-1"><StatusBadges data={e.check} /></span>
                           : <span className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> El PDF no trae las posiciones (parte &quot;Beleg&quot;)</span>}
                       </td>
-                      <td className="p-2 text-right">
-                        <button onClick={ev => { ev.stopPropagation(); load(e.atc); }} disabled={loading} title="Volver a leer este PDF"
-                          className="p-1 rounded text-gray-400 hover:text-gray-900 hover:bg-gray-100 disabled:opacity-40"><RefreshCw size={13} /></button>
-                      </td>
                     </tr>
-                    {open[k] && e.check && (
+                    {open[k] && (
                       <tr><td /><td colSpan={8} className="pb-3 pr-2">
+                        <div className="flex flex-wrap items-center gap-x-6 gap-y-1 px-1 pb-2 text-xs text-gray-600">
+                          <span>Factura Zoll: <span className="font-mono text-gray-900">{e.invoiceNo}</span><DocPdfLink documentNo={e.invoiceNo} />{e.status === 'Draft' && <span className="ml-1 text-gray-500">(sin registrar)</span>}</span>
+                          <span>Pedido / contenedor: <span className="text-gray-900">{[e.orders.join(', '), e.transport.join(', ')].filter(Boolean).join(' / ') || '—'}</span></span>
+                          <span>Factura China: {e.check ? (e.check.invoices.length ? <span className="text-gray-900">{e.check.invoices.map(i => `${i.vendorInvoiceNo} (${i.no})`).join(', ')}</span> : <span className="text-amber-700">no encontrada</span>) : '—'}</span>
+                          <button onClick={() => load(e.atc)} disabled={loading} title="Volver a leer este PDF"
+                            className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100 disabled:opacity-40"><RefreshCw size={12} /> Volver a leer el PDF</button>
+                        </div>
                         {e.warnings.map(w => <p key={w} className="px-3 pt-2 text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {w}</p>)}
-                        <div className="border border-gray-200 rounded-lg overflow-x-auto"><TariffTable data={e.check} /></div>
+                        {e.check && <div className="border border-gray-200 rounded-lg overflow-x-auto"><TariffTable data={e.check} /></div>}
                       </td></tr>
                     )}
                   </Fragment>
                 );
               })}
-              {!visibleEntries.length && <tr><td colSpan={9} className="p-4 text-sm text-gray-500">{loading ? 'Cargando…' : 'No hay declaraciones.'}</td></tr>}
+              {view === 'atc' && !visibleEntries.length && <tr><td colSpan={9} className="p-4 text-sm text-gray-500">{loading ? 'Cargando…' : 'No hay declaraciones.'}</td></tr>}
             </tbody>
           </table>
         </section>
