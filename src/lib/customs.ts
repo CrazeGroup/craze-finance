@@ -22,9 +22,14 @@ const DEFAULT_CONFIG: CustomsConfig = {
 export const customsConfig = async () => ({ ...DEFAULT_CONFIG, ...(await readSetting<Partial<CustomsConfig>>('customsConfig', {})) });
 
 export type Duty = { type: string; code: string; amount: number; due: string };
+// Posición de la declaración (parte "Beleg"): código arancelario aplicado, descripción y nº de artículo si los ponen
+export type CustomsPosition = {
+  pos: number; tariff: string; description: string; articles: string[];
+  packages: number | null; value: number | null; dutyRate: number | null; duty: number | null;
+};
 export type CustomsDoc = {
   file: string; atc: string; registration: string; lrn: string; date: string;
-  orders: string[]; transport: string[]; duties: Duty[];
+  orders: string[]; transport: string[]; duties: Duty[]; positions: CustomsPosition[];
   zoll: number; zollDue: string; eust: number; eustDue: string; total: number | null;
   description: string; warnings: string[];
 };
@@ -77,11 +82,48 @@ export async function parseCustomsPdf(file: string, data: Uint8Array): Promise<C
   if (!transport.length) warnings.push('El PDF no trae contenedor ni AWB: complétalo en la descripción.');
   if (!atc) warnings.push('No se ha encontrado el nº AT/C.');
 
+  const positions = parsePositions(t);
+  if (!positions.length) warnings.push('No se han encontrado las posiciones (Warennummer) en la parte "Beleg".');
+
   const description = [orders.join(', '), transport.join(', ')].filter(Boolean).join(' / ');
   return {
-    file, atc, registration, lrn, date, orders, transport, duties,
+    file, atc, registration, lrn, date, orders, transport, duties, positions,
     zoll, zollDue: zollDuties[0]?.due || '', eust, eustDue: eustDuties[0]?.due || '', total, description, warnings,
   };
+}
+
+// Posiciones de la parte "Beleg für den Beteiligten" (la primera parte, el Bescheid, solo trae Warennummer y Zollwert).
+// Se quitan la cabecera y el pie que se repiten en cada página, que pueden caer en medio de una posición.
+function parsePositions(t: string): CustomsPosition[] {
+  const start = t.indexOf('Beleg für den Beteiligten');
+  if (start < 0) return [];
+  const beleg = t.slice(start)
+    .replace(/Hauptzollamt .{0,200}?Beleg für den Beteiligten Zollanmeldung \/ Einfuhrabgabenbescheid \S+ AT\/C\/\S+ CUSTAX\w+ \d\d\.\d\d\.\d{4}( \d{14}( [A-Z0-9]{1,6}(?= ))?)?/g, ' ')
+    .replace(/ZODIAK\S* \/ ATLAS [\d.]+ \d\d\.\d\d\.\d{4} \/ \d\d:\d\d:\d\d Seite: \d+/g, ' ')
+    .replace(/\s+/g, ' ');
+  const parts = beleg.split(/Abschließend festgesetzt \(.?\) Nicht abschließend festgesetzt \(.?\) Position (\d+)/);
+  const positions: CustomsPosition[] = [];
+  for (let i = 1; i < parts.length; i += 2) {
+    const b = parts[i + 1];
+    const tariff = b.match(/Warennummer\*\* (\d{4} ?\d{4} ?\d{0,3})/)?.[1].replace(/ /g, '') || '';
+    if (!tariff) continue;
+    const description = (b.match(/Warenbezeichnung\*\* (.*?) Packstücke/)?.[1] || '').trim();
+    // "Artikel Nr.: 80207/80665", "Artikel Nr: 76880,76798", "Artikel Nr.: 35597;39854" (en la descripción o en Positionszusatz)
+    // Los saltos de línea parten palabras y números ("Artike l Nr.: 81 914"): se buscan en el texto sin espacios
+    const articles = new Set<string>();
+    for (const m of b.replace(/ /g, '').matchAll(/Artikel-?Nr\.?:?((?:\d{3,7}[\/,;]?)+)/gi)) {
+      for (const a of m[1].split(/[\/,;]/)) if (a) articles.add(a);
+    }
+    const zoll = b.match(/ZOLLEU [\d.]*\d,\d{2} EUR ([\d.]*\d,\d+) Prozent( [A-Z0-9]+)? ([\d.]*\d,\d{2})/);
+    positions.push({
+      pos: Number(parts[i]), tariff, description, articles: Array.from(articles),
+      packages: b.match(/Packstücke, Art\*\* (\d+)/) ? Number(b.match(/Packstücke, Art\*\* (\d+)/)![1]) : null,
+      value: b.match(/Zollwert ([\d.]*\d,\d{2}) EUR/) ? amount(b.match(/Zollwert ([\d.]*\d,\d{2}) EUR/)![1]) : null,
+      dutyRate: zoll ? amount(zoll[1]) : null,
+      duty: zoll ? amount(zoll[3]) : null,
+    });
+  }
+  return positions;
 }
 
 // ---------- BC ----------
@@ -190,4 +232,159 @@ export async function createInvoices(ctx: BcContext, input: CreateInput, cfg: Cu
     return { created, warnings, error: e.message as string };
   }
   return { created, warnings, error: null };
+}
+
+// ---------- Códigos arancelarios ----------
+// Compara el código arancelario aplicado en cada posición con el Tariff No. de la ficha de los artículos importados.
+// Los artículos salen de la factura de China del pedido (Unterlagen N380 = Vendor Invoice No. de la factura con forma de
+// pago CHINA TRF, mismas tres partes en cualquier orden: "MRM-254-2248" = "2248-MRM-254"), registrada o pendiente, con los
+// componentes de los displays (BOM de ensamblado: el FSDU se declara desglosado en su contenido). Cada artículo se
+// asigna a una posición por el "Artikel Nr." que trae la posición, si solo hay una posición a esa, y si no por descripción.
+
+export type TariffItem = {
+  no: string; description: string; qty: number; parent?: string; inInvoice: boolean;
+  bcTariff: string; bcRate: number | null; via: 'artikel' | 'unica' | 'descripcion' | ''; score?: number;
+  status: 'ok' | 'ok8' | 'distinto' | 'sin_codigo' | 'sin_ficha';
+};
+export type TariffPosition = CustomsPosition & { items: TariffItem[]; qty: number };
+export type TariffCheck = {
+  invoices: { no: string; vendorInvoiceNo: string; vendor: string; posted: boolean; paymentMethod: string }[];
+  positions: TariffPosition[]; unassigned: TariffItem[]; warnings: string[];
+};
+
+const orderKey = (s: string) => {
+  const letters = s.match(/[A-Z]{2,4}/i)?.[0]?.toUpperCase(), n3 = s.match(/(?<!\d)\d{3}(?!\d)/)?.[0], n4 = s.match(/(?<!\d)\d{4}(?!\d)/)?.[0];
+  return letters && n3 && n4 ? `${letters}-${n3}-${n4}` : s.trim().toUpperCase();
+};
+const digits = (s: string) => (s || '').replace(/\D/g, '');
+const baseNo = (no: string) => no.match(/^\d+/)?.[0] || no;
+const inFilter = (field: string, values: string[]) => values.map(v => `${field} eq '${q(v)}'`).join(' or ');
+async function chunked<T>(values: string[], size: number, fn: (part: string[]) => Promise<T[]>): Promise<T[]> {
+  const parts: string[][] = [];
+  for (let i = 0; i < values.length; i += size) parts.push(values.slice(i, i + size));
+  return (await Promise.all(parts.map(fn))).flat();
+}
+
+// Palabras de la descripción del artículo que aparecen en la de la posición (sin espacios: el PDF parte palabras)
+const GENERIC = new Set(['inkee', 'top', 'fashion', 'craze', 'the', 'and', 'for', 'with', 'mit', 'und', 'der', 'die', 'das', 'pcs', 'set', 'new']);
+const squash = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+function descScore(texts: string[], target: string) {
+  let best = 0;
+  for (const text of texts) {
+    const words = Array.from(new Set(text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').split(/[^a-z0-9]+/)))
+      .filter(w => w.length >= 3 && !GENERIC.has(w) && !/^\d+$/.test(w));
+    if (!words.length) continue;
+    const total = words.reduce((s, w) => s + w.length, 0);
+    const found = words.filter(w => target.includes(w)).reduce((s, w) => s + w.length, 0);
+    best = Math.max(best, found / total);
+  }
+  return best;
+}
+
+export async function checkTariffs(ctx: BcContext, orders: string[], positions: CustomsPosition[]): Promise<TariffCheck> {
+  const warnings: string[] = [];
+  const keys = new Set(orders.map(orderKey));
+  const n4s = Array.from(new Set(orders.map(o => o.match(/(?<!\d)\d{4}(?!\d)/)?.[0]).filter(Boolean) as string[]));
+
+  // Facturas de China del pedido: registradas y pendientes de registrar
+  const [posted, open] = await Promise.all([
+    chunked(n4s, 5, part => bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Posted_Purchase_Invoice_Excel`, {
+      $filter: part.map(n => `contains(Vendor_Invoice_No,'${n}')`).join(' or '),
+      $select: 'No,Vendor_Invoice_No,Buy_from_Vendor_Name,Payment_Method_Code',
+    }), ctx.token)),
+    chunked(n4s, 5, part => bcFetchAll(odataUrl(`${ctx.customApiBase}/purchaseHeaders`, {
+      $filter: `documentType eq 'Invoice' and (${part.map(n => `contains(vendorInvoiceNo,'${n}')`).join(' or ')})`,
+      $select: 'no,vendorInvoiceNo,buyFromVendorName,paymentMethodCode',
+    }), ctx.token).catch(() => [] as any[])),
+  ]);
+  let invoices = [
+    ...posted.map((r: any) => ({ no: r.No, vendorInvoiceNo: r.Vendor_Invoice_No, vendor: r.Buy_from_Vendor_Name, posted: true, paymentMethod: r.Payment_Method_Code || '' })),
+    ...open.map((r: any) => ({ no: r.no, vendorInvoiceNo: r.vendorInvoiceNo, vendor: r.buyFromVendorName, posted: false, paymentMethod: r.paymentMethodCode || '' })),
+  ].filter(i => keys.has(orderKey(i.vendorInvoiceNo)));
+  if (invoices.some(i => i.paymentMethod === 'CHINA TRF')) invoices = invoices.filter(i => i.paymentMethod === 'CHINA TRF');
+  if (!orders.length) warnings.push('El PDF no trae el pedido (N380): solo se comparan los artículos con "Artikel Nr.".');
+  else if (!invoices.length) warnings.push(`No se ha encontrado en BC la factura de China ${orders.join(', ')}: solo se comparan los artículos con "Artikel Nr.".`);
+
+  // Líneas de artículo de esas facturas
+  const lines = (await Promise.all(invoices.map(inv => bcFetchAll(odataUrl(inv.posted ? `${ctx.customApiBase}/purchInvLines` : `${ctx.customApiBase}/purchaseLines`, {
+    $filter: `${inv.posted ? '' : "documentType eq 'Invoice' and "}documentNo eq '${q(inv.no)}' and type eq 'Item'`,
+    $select: 'no,description,quantity',
+  }), ctx.token)))).flat();
+  const qtyByItem = new Map<string, number>();
+  for (const l of lines) if (l.no) qtyByItem.set(l.no, (qtyByItem.get(l.no) || 0) + (Number(l.quantity) || 0));
+
+  // Componentes de los displays (un nivel)
+  const invoiceItems = Array.from(qtyByItem.keys());
+  const bom = invoiceItems.length ? await chunked(invoiceItems, 15, part => bcFetchAll(odataUrl(`${ctx.customApiBase}/bomComponents`, {
+    $filter: inFilter('parentItemNo', part), $select: 'parentItemNo,type,no,quantityPer',
+  }), ctx.token)) : [];
+  const candidates = new Map<string, { no: string; qty: number; parent?: string; inInvoice: boolean }>();
+  for (const [no, qty] of qtyByItem) candidates.set(no, { no, qty, inInvoice: true });
+  for (const c of bom.filter((c: any) => c.type === 'Item' && c.no)) {
+    const qty = (qtyByItem.get(c.parentItemNo) || 0) * (Number(c.quantityPer) || 0);
+    const prev = candidates.get(c.no);
+    if (prev) prev.qty += qty;
+    else candidates.set(c.no, { no: c.no, qty, parent: c.parentItemNo, inInvoice: true });
+  }
+
+  // Asignación: 1) Artikel Nr. de la posición (nº exacto o nº base sin sufijo: 76613 → 76613W2X)
+  const assigned = new Map<string, { pos: number; via: TariffItem['via']; score?: number }>();
+  const extra = new Map<string, number>(); // nº de artículo del PDF que no está en la factura → posición
+  for (const p of positions) {
+    for (const a of p.articles) {
+      const hits = Array.from(candidates.values()).filter(c => c.no === a || baseNo(c.no) === a);
+      for (const h of hits) if (!assigned.has(h.no)) assigned.set(h.no, { pos: p.pos, via: 'artikel' });
+      if (!hits.length && !extra.has(a)) extra.set(a, p.pos);
+    }
+  }
+
+  // Fichas de artículo (Tariff No., % arancel y descripciones para comparar)
+  const allNos = Array.from(new Set([...candidates.keys(), ...extra.keys()]));
+  const cards = new Map<string, any>();
+  for (const it of await chunked(allNos, 15, part => bcFetchAll(odataUrl(`${ctx.customApiBase}/items`, {
+    $filter: inFilter('no', part), $select: 'no,description,descriptionInGerman,shortDescriptionInGerman,shortDescriptionInEnglish,tariffNo,tariff',
+  }), ctx.token))) cards.set(it.no, it);
+
+  // 2) una sola posición: todo a ella; 3) por descripción (la posición que más palabras del artículo contiene)
+  const squashed = new Map(positions.map(p => [p.pos, squash(p.description)]));
+  for (const c of candidates.values()) {
+    if (assigned.has(c.no) || !positions.length) continue;
+    if (positions.length === 1) { assigned.set(c.no, { pos: positions[0].pos, via: 'unica' }); continue; }
+    const card = cards.get(c.no) || {};
+    const texts = [card.description, card.descriptionInGerman, card.shortDescriptionInGerman, card.shortDescriptionInEnglish].filter(Boolean);
+    let best = { pos: 0, score: 0 };
+    for (const p of positions) {
+      const score = descScore(texts, squashed.get(p.pos) || '');
+      if (score > best.score) best = { pos: p.pos, score };
+    }
+    if (best.score >= 0.5) assigned.set(c.no, { pos: best.pos, via: 'descripcion', score: Math.round(best.score * 100) / 100 });
+  }
+
+  const toItem = (no: string, qty: number, inInvoice: boolean, parent: string | undefined, tariff: string): TariffItem => {
+    const card = cards.get(no);
+    const a = assigned.get(no);
+    const bcTariff = digits(card?.tariffNo);
+    const status: TariffItem['status'] = !card ? 'sin_ficha' : !bcTariff ? 'sin_codigo'
+      : !tariff ? 'ok' : bcTariff === tariff || (bcTariff.length < tariff.length && tariff.startsWith(bcTariff)) ? 'ok'
+      : bcTariff.slice(0, 8) === tariff.slice(0, 8) ? 'ok8' : 'distinto';
+    return {
+      no, description: card?.description || '', qty, parent, inInvoice, bcTariff,
+      bcRate: card?.tariff != null && card.tariff !== '' ? Number(card.tariff) : null, via: a?.via || '', score: a?.score, status,
+    };
+  };
+  const result: TariffPosition[] = positions.map(p => ({ ...p, items: [], qty: 0 }));
+  const byPos = new Map(result.map(p => [p.pos, p]));
+  const unassigned: TariffItem[] = [];
+  for (const c of candidates.values()) {
+    const a = assigned.get(c.no);
+    const p = a && byPos.get(a.pos);
+    if (p) { p.items.push(toItem(c.no, c.qty, true, c.parent, p.tariff)); p.qty += c.qty; }
+    else unassigned.push(toItem(c.no, c.qty, true, c.parent, ''));
+  }
+  for (const [no, pos] of extra) {
+    const p = byPos.get(pos)!;
+    assigned.set(no, { pos, via: 'artikel' });
+    p.items.push(toItem(no, 0, false, undefined, p.tariff));
+  }
+  return { invoices, positions: result, unassigned, warnings };
 }
