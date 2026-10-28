@@ -102,7 +102,7 @@ export default function HistoryView() {
       && (!s || codeHit || i.no.toLowerCase().includes(s) || i.description.toLowerCase().includes(s) || i.bcTariff.includes(sCode)));
     return { c, items, show: items.length > 0 || (!onlyIssues && (!s || codeHit)) };
   }).filter(v => v.show);
-  const entryIssue = (e: Entry) => !!e.error || !!e.check?.unassigned.length || !!e.check?.positions.some(p => p.items.some(i => BAD.has(i.status)));
+  const entryIssue = (e: Entry) => !!e.error || !e.check || !!e.check?.unassigned.length || !!e.check?.positions.some(p => p.items.some(i => BAD.has(i.status)));
   const visibleEntries = entries.filter(e => (!onlyIssues || entryIssue(e))
     && (!s || [e.atc, e.invoiceNo, ...e.orders, ...e.transport].some(x => x.toLowerCase().includes(s))
       || !!e.check?.positions.some(p => p.tariff.includes(sCode) || p.items.some(i => i.no.toLowerCase().includes(s)))));
@@ -281,7 +281,8 @@ export default function HistoryView() {
                       <td className="p-2 text-right tabular-nums">{e.check?.positions.length ?? '—'}</td>
                       <td className="p-2">
                         {e.error ? <span className="text-xs text-red-700 flex items-center gap-1"><AlertCircle size={13} /> {e.error}</span>
-                          : e.check ? <span className="flex flex-wrap gap-1"><StatusBadges data={e.check} /></span> : null}
+                          : e.check ? <span className="flex flex-wrap gap-1"><StatusBadges data={e.check} /></span>
+                          : <span className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> El PDF no trae las posiciones (parte &quot;Beleg&quot;)</span>}
                       </td>
                       <td className="p-2 text-right">
                         <button onClick={ev => { ev.stopPropagation(); load(e.atc); }} disabled={loading} title="Volver a leer este PDF"
