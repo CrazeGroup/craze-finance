@@ -1,0 +1,30 @@
+# Sincronización automática con Business Central cada hora (empresa × paso, como Configuración → Sincronizar).
+# Llama a la app publicada; APP_URL se puede cambiar en Settings → Secrets and variables → Actions → Variables.
+name: Sincronizar BC
+
+on:
+  schedule:
+    - cron: '7 * * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Sincronizar empresas
+        env:
+          APP_URL: ${{ vars.APP_URL || 'https://craze-finance.vercel.app' }}
+          # Token de servicio de la app (Vercel INTERNAL_API_TOKEN), necesario cuando el login está activado
+          INTERNAL_API_TOKEN: ${{ secrets.INTERNAL_API_TOKEN }}
+        run: |
+          fail=0
+          for company in "CRAZE" "Craze Iberia SL" "Craze UK" "CRAZE Group AG" "Craze Entertainment"; do
+            for step in customers invoices vendors vendorInvoices recurring; do
+              code=$(curl -s -o out.json -w '%{http_code}' -m 90 -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $INTERNAL_API_TOKEN" \
+                -d "{\"company\":\"$company\",\"step\":\"$step\"}" "$APP_URL/api/sync-bc" || echo 000)
+              echo "$company · $step → $code"
+              if [ "$code" != "200" ]; then head -c 400 out.json; echo; fail=1; fi
+            done
+          done
+          exit $fail
