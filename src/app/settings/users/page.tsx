@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { User, Shield, Trash2, Plus, Edit2, Save, X } from 'lucide-react';
 
 const MODULES = [
+  { id: 'admin', label: 'Administrador (acceso a todo)' },
   { id: 'dashboard', label: 'Dashboard Principal' },
   { id: 'riesgos', label: 'Riesgos' },
   { id: 'recobros', label: 'Recobros' },
@@ -36,6 +37,7 @@ export default function UsersPage() {
   const [formData, setFormData] = useState({
     username: '',
     password: '',
+    ssoOnly: false,
     permissions: [] as string[]
   });
 
@@ -66,6 +68,7 @@ export default function UsersPage() {
       setFormData({
         username: user.username,
         password: '', // Leave blank when editing unless they want to change it
+        ssoOnly: false,
         permissions: parsedPerms,
       });
     } else {
@@ -73,6 +76,7 @@ export default function UsersPage() {
       setFormData({
         username: '',
         password: '',
+        ssoOnly: false,
         permissions: [],
       });
     }
@@ -90,7 +94,6 @@ export default function UsersPage() {
 
   const handleSave = async () => {
     if (!formData.username) return alert('El usuario es obligatorio');
-    if (!editingUserId && !formData.password) return alert('La contraseña es obligatoria para un nuevo usuario');
 
     try {
       const url = editingUserId ? `/api/users/${editingUserId}` : '/api/users';
@@ -103,6 +106,8 @@ export default function UsersPage() {
       
       if (formData.password) {
         payload.password = formData.password;
+      } else if (formData.ssoOnly) {
+        payload.ssoOnly = true;
       }
 
       const res = await fetch(url, {
@@ -186,10 +191,11 @@ export default function UsersPage() {
                   <td className="p-4 text-gray-900 font-medium flex items-center gap-2">
                     {user.id === 1 && <span title="Super Admin"><Shield size={14} className="text-orange-400" /></span>}
                     {user.username}
+                    {!user.hasPassword && <span className="px-2 py-0.5 text-xs font-normal rounded bg-sky-100 text-sky-700 border border-sky-200" title="Sin contraseña: entra con Microsoft">Microsoft</span>}
                   </td>
                   <td className="p-4">
                     <div className="flex flex-wrap gap-1">
-                      {perms.includes('configuracion') ? (
+                      {perms.includes('configuracion') || perms.includes('admin') ? (
                         <span className="px-2 py-0.5 text-xs rounded bg-orange-500/20 text-orange-400 border border-orange-500/30">
                           Acceso Total
                         </span>
@@ -247,7 +253,7 @@ export default function UsersPage() {
             
             <div className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">Nombre de Usuario</label>
+                <label className="block text-sm font-medium text-gray-600 mb-1">Usuario <span className="text-slate-500 text-xs font-normal">(correo de Microsoft para entrar con Microsoft)</span></label>
                 <input 
                   type="text" 
                   value={formData.username}
@@ -258,14 +264,25 @@ export default function UsersPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-600 mb-1">
-                  Contraseña {editingUserId && <span className="text-slate-500 text-xs font-normal">(Dejar en blanco para no cambiar)</span>}
+                  Contraseña <span className="text-slate-500 text-xs font-normal">{editingUserId ? '(Dejar en blanco para no cambiar)' : '(Opcional: sin contraseña solo entra con Microsoft)'}</span>
                 </label>
                 <input 
                   type="password" 
                   value={formData.password}
+                  disabled={formData.ssoOnly}
                   onChange={e => setFormData({...formData, password: e.target.value})}
-                  className="w-full bg-white border border-gray-200 rounded-lg px-4 py-2 text-gray-900 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  className="w-full bg-white border border-gray-200 rounded-lg px-4 py-2 text-gray-900 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-100"
                 />
+                {editingUserId && (
+                  <label className="flex items-center gap-2 mt-2 text-sm text-gray-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.ssoOnly}
+                      onChange={e => setFormData({...formData, ssoOnly: e.target.checked, password: ''})}
+                    />
+                    Quitar la contraseña (solo entrar con Microsoft)
+                  </label>
+                )}
               </div>
 
               <div className="pt-2">

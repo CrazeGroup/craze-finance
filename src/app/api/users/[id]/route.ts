@@ -8,11 +8,12 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   try {
     const { id } = await params;
     const userId = parseInt(id);
-    const { username, password, permissions } = await req.json();
+    const { username, password, permissions, ssoOnly } = await req.json();
 
     const updateData: any = {};
     if (username) updateData.username = username;
     if (password) updateData.passwordHash = await bcrypt.hash(password, 10);
+    else if (ssoOnly) updateData.passwordHash = ''; // quitar la contraseña: solo Microsoft
     if (permissions) updateData.permissions = JSON.stringify(permissions);
 
     const user = await prisma.user.update({

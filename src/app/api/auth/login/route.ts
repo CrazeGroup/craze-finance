@@ -15,7 +15,8 @@ export async function POST(req: Request) {
       where: { username },
     });
 
-    if (!user) {
+    // Usuarios sin contraseña: solo inicio de sesión con Microsoft
+    if (!user || !user.passwordHash) {
       return NextResponse.json({ error: 'Credenciales inválidas' }, { status: 401 });
     }
 

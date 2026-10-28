@@ -12,10 +12,12 @@ export async function GET(req: Request) {
         username: true,
         permissions: true,
         createdAt: true,
+        passwordHash: true,
       }
     });
     
-    return NextResponse.json(users);
+    // Sin contraseña = solo puede entrar con Microsoft
+    return NextResponse.json(users.map(({ passwordHash, ...u }) => ({ ...u, hasPassword: !!passwordHash })));
   } catch (error) {
     console.error('Error fetching users:', error);
     return NextResponse.json({ error: 'Failed to fetch users' }, { status: 500 });
@@ -27,8 +29,9 @@ export async function POST(req: Request) {
   try {
     const { username, password, permissions } = await req.json();
 
-    if (!username || !password) {
-      return NextResponse.json({ error: 'Username and password are required' }, { status: 400 });
+    // La contraseña es opcional: sin ella el usuario solo entra con Microsoft (su username es el correo)
+    if (!username) {
+      return NextResponse.json({ error: 'Username is required' }, { status: 400 });
     }
 
     const existingUser = await prisma.user.findUnique({
@@ -39,7 +42,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Username already exists' }, { status: 400 });
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = password ? await bcrypt.hash(password, 10) : '';
     const permissionsString = JSON.stringify(permissions || []);
 
     const user = await prisma.user.create({
