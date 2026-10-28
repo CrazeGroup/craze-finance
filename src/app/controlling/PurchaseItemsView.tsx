@@ -17,7 +17,7 @@ type Doc = {
   vatProdPostingGroup: string; deferralCode: string; genProdPostingGroup: string; glAccounts: GlAcc[];
 };
 type Vendor = {
-  vendorNo: string; company?: string; name: string; country: string; paymentMethod: string; paymentTerms: string; genBusPostingGroup: string;
+  vendorNo: string; company?: string; name: string; customerGroupCode?: string; customerGroupName?: string; country: string; paymentMethod: string; paymentTerms: string; genBusPostingGroup: string;
   currentPurchAccount: string; currentCrMemoAccount: string; net: number; quantity: number; invoices: number; creditMemos: number; docs: Doc[];
 };
 type Item = { itemNo: string; description: string; genProdPostingGroup: string; setup: { bus: string; purch: string; crMemo: string }[]; net: number; quantity: number; vendors: Vendor[] };
@@ -61,7 +61,7 @@ export default function PurchaseItemsView({ fmt, company: globalCompany }: { fmt
     const s = search.trim().toLowerCase();
     if (!s) return all;
     return all.filter(i => i.itemNo.toLowerCase().includes(s) || i.description.toLowerCase().includes(s)
-      || i.vendors.some(v => v.vendorNo.toLowerCase().includes(s) || v.name.toLowerCase().includes(s)));
+      || i.vendors.some(v => [v.vendorNo, v.name, v.customerGroupCode, v.customerGroupName].some(x => x?.toLowerCase().includes(s))));
   }, [state.data, search]);
 
   // Excel: hoja de artículos y hoja con una fila por línea de factura/abono (artículos filtrados por el buscador)
@@ -73,7 +73,7 @@ export default function PurchaseItemsView({ fmt, company: globalCompany }: { fmt
     }));
     const lineRows = items.flatMap(i => i.vendors.flatMap(v => v.docs.map(doc => ({
       'Item No.': i.itemNo, 'Item Description': i.description, 'Gen. Prod. Posting Group': i.genProdPostingGroup,
-      'Vendor No.': v.vendorNo, 'Vendor Name': v.name, 'Country/Region Code': v.country, 'Payment Method Code': v.paymentMethod,
+      'Vendor No.': v.vendorNo, 'Vendor Name': v.name, 'Customer Group Code': v.customerGroupCode || '', 'Customer Group': v.customerGroupName || '', 'Country/Region Code': v.country, 'Payment Method Code': v.paymentMethod,
       'Payment Terms Code': v.paymentTerms, 'Gen. Bus. Posting Group': v.genBusPostingGroup,
       'Cuenta actual': doc.kind === 'Abono' ? v.currentCrMemoAccount : v.currentPurchAccount,
       'Tipo': doc.kind, 'Document No.': doc.documentNo, 'Document Date': doc.documentDate, 'Posting Date': doc.postingDate,
@@ -166,7 +166,7 @@ export default function PurchaseItemsView({ fmt, company: globalCompany }: { fmt
                               <table className="w-full text-[12px] bg-white rounded-lg border border-gray-200">
                                 <thead>
                                   <tr className="border-b border-gray-200 text-left">
-                                    <th className={th} /><th className={th}>Vendor No.</th><th className={th}>Vendor Name</th><th className={th}>Country/Region</th>
+                                    <th className={th} /><th className={th}>Vendor No.</th><th className={th}>Vendor Name</th><th className={th}>Customer Group</th><th className={th}>Country/Region</th>
                                     <th className={th}>Payment Method</th><th className={th}>Payment Terms</th><th className={th}>Gen. Bus. Posting Group</th>
                                     <th className={th}>Cuenta actual (fact. / abono)</th><th className={`${th} text-right`}>Fact. / Abonos</th>
                                     <th className={`${th} text-right`}>Cantidad</th><th className={`${th} text-right`}>Neto</th>
@@ -181,6 +181,7 @@ export default function PurchaseItemsView({ fmt, company: globalCompany }: { fmt
                                           <td className={td}>{open[vk] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</td>
                                           <td className={`${td} font-mono`}>{v.vendorNo}</td>
                                           <td className="py-1.5 px-2 min-w-[180px] font-medium text-gray-900">{v.name || '–'}</td>
+                                          <td className={td}>{v.customerGroupCode ? <><span className="font-mono">{v.customerGroupCode}</span> <span className="text-gray-500">{v.customerGroupName}</span></> : '–'}</td>
                                           <td className={td}>{v.country || '–'}</td>
                                           <td className={td}>{v.paymentMethod || '–'}</td>
                                           <td className={td}>{v.paymentTerms || '–'}</td>
@@ -193,7 +194,7 @@ export default function PurchaseItemsView({ fmt, company: globalCompany }: { fmt
                                         {open[vk] && (
                                           <tr>
                                             <td />
-                                            <td colSpan={10} className="py-2 pr-2">
+                                            <td colSpan={11} className="py-2 pr-2">
                                               <div className="overflow-x-auto">
                                                 <table className="w-full text-[12px] border border-gray-200 rounded-lg">
                                                   <thead className="bg-gray-50">

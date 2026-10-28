@@ -19,7 +19,7 @@ type Doc = {
   vatProdPostingGroup: string; deferralCode: string; genProdPostingGroup: string; glAccounts: GlAcc[];
 };
 type SrcVendor = {
-  vendorNo: string; company?: string; name: string; country: string; paymentMethod: string; paymentTerms: string; genBusPostingGroup: string;
+  vendorNo: string; company?: string; name: string; customerGroupCode?: string; customerGroupName?: string; country: string; paymentMethod: string; paymentTerms: string; genBusPostingGroup: string;
   currentPurchAccount: string; currentCrMemoAccount: string; net: number; quantity: number; invoices: number; creditMemos: number; docs: Doc[];
 };
 type SrcItem = { itemNo: string; description: string; genProdPostingGroup: string; net: number; quantity: number; vendors: SrcVendor[] };
@@ -69,7 +69,7 @@ export default function PurchaseVendorsView({ fmt, company: globalCompany }: { f
     for (const it of state.data?.items || []) {
       for (const v of it.vendors) {
         const vend = map.get(v.vendorNo) || {
-          vendorNo: v.vendorNo, name: v.name, country: v.country, paymentMethod: v.paymentMethod, paymentTerms: v.paymentTerms,
+          vendorNo: v.vendorNo, name: v.name, customerGroupCode: v.customerGroupCode, customerGroupName: v.customerGroupName, country: v.country, paymentMethod: v.paymentMethod, paymentTerms: v.paymentTerms,
           genBusPostingGroup: v.genBusPostingGroup, currentPurchAccount: v.currentPurchAccount, currentCrMemoAccount: v.currentCrMemoAccount,
           net: 0, quantity: 0, docs: 0, items: [],
         };
@@ -85,13 +85,13 @@ export default function PurchaseVendorsView({ fmt, company: globalCompany }: { f
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase();
     if (!s) return vendors;
-    return vendors.filter(v => v.vendorNo.toLowerCase().includes(s) || v.name.toLowerCase().includes(s)
+    return vendors.filter(v => [v.vendorNo, v.name, v.customerGroupCode, v.customerGroupName].some(x => x?.toLowerCase().includes(s))
       || v.items.some(i => i.itemNo.toLowerCase().includes(s) || i.description.toLowerCase().includes(s)));
   }, [vendors, search]);
 
   const exportExcel = () => {
     const rows = filtered.flatMap(v => v.items.flatMap(i => i.docs.map(doc => ({
-      'Vendor No.': v.vendorNo, 'Vendor Name': v.name, 'Country/Region Code': v.country, 'Item No.': i.itemNo, 'Item Description': i.description,
+      'Vendor No.': v.vendorNo, 'Vendor Name': v.name, 'Customer Group Code': v.customerGroupCode || '', 'Customer Group': v.customerGroupName || '', 'Country/Region Code': v.country, 'Item No.': i.itemNo, 'Item Description': i.description,
       'Gen. Prod. Posting Group': i.genProdPostingGroup, 'Tipo': doc.kind, 'Document No.': doc.documentNo, 'Document Date': doc.documentDate,
       'Posting Date': doc.postingDate, 'Vendor Invoice No.': doc.vendorDocNo, 'Quantity': doc.quantity, 'Direct Unit Cost Excl. VAT': doc.directUnitCost,
       'Importe': doc.amount, 'Currency Code': doc.currency, 'Cuenta G/L registrada': doc.glAccounts.map(a => a.no).join(', '),
@@ -216,7 +216,7 @@ export default function PurchaseVendorsView({ fmt, company: globalCompany }: { f
               <table className="w-full text-[13px]">
                 <thead>
                   <tr className="border-b border-gray-200 text-left">
-                    <th className={th} /><th className={th}>Vendor No.</th><th className={th}>Vendor Name</th><th className={th}>Country</th>
+                    <th className={th} /><th className={th}>Vendor No.</th><th className={th}>Vendor Name</th><th className={th}>Customer Group</th><th className={th}>Country</th>
                     <th className={th}>Gen. Bus. Posting Group</th><th className={th}>Cuenta actual (fact. / abono)</th>
                     <th className={`${th} text-right`}>Artículos</th><th className={`${th} text-right`}>Documentos</th><th className={`${th} text-right`}>Neto</th>
                   </tr>
@@ -228,6 +228,7 @@ export default function PurchaseVendorsView({ fmt, company: globalCompany }: { f
                         <td className={td}>{open[v.vendorNo] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
                         <td className={`${td} font-mono font-semibold text-gray-900`}>{v.vendorNo}</td>
                         <td className="py-1.5 px-2 min-w-[220px] font-medium text-gray-900">{v.name || '–'}</td>
+                        <td className={td}>{v.customerGroupCode ? <><span className="font-mono">{v.customerGroupCode}</span> <span className="text-gray-500">{v.customerGroupName}</span></> : '–'}</td>
                         <td className={td}>{v.country || '–'}</td>
                         <td className={`${td} font-mono`}>{v.genBusPostingGroup || '–'}</td>
                         <td className={`${td} font-mono`}>{v.currentPurchAccount || '–'} / {v.currentCrMemoAccount || '–'}</td>
@@ -238,7 +239,7 @@ export default function PurchaseVendorsView({ fmt, company: globalCompany }: { f
                       {open[v.vendorNo] && (
                         <tr className="bg-gray-50/70">
                           <td />
-                          <td colSpan={8} className="py-2 pr-2">
+                          <td colSpan={9} className="py-2 pr-2">
                             <table className="w-full text-[12px] bg-white rounded-lg border border-gray-200">
                               <thead>
                                 <tr className="border-b border-gray-200 text-left">

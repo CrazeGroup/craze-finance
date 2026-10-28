@@ -8,7 +8,8 @@ import { today } from '@/lib/reporting/period';
 // - Artículo: descripción y grupo contable producto de su ficha (API v2 items) y, con la configuración contable
 //   general (tabla 252, General_Posting_Setup_Excel), la Purch. Account / Purch. Credit Memo Account actuales
 //   para cada grupo contable de negocio.
-// - Proveedor: ficha (Vendor_Card_Excel): país, forma y términos de pago, grupo contable de negocio.
+// - Proveedor: ficha (Vendor_Card_Excel): país, forma y términos de pago, grupo contable de negocio y Customer Group
+//   asignado (Customer_Group_Code_BCT, descripción de la tabla 80008 Customer Group CRZ, API custom customerGroups).
 // - Documento: cabecera (fechas, nº factura proveedor) y línea (coste unitario, grupo IVA, código de periodificación);
 //   cuenta contable histórica = movimientos contables (tabla 17) de compra del documento con el mismo grupo contable
 //   producto que la línea.
@@ -67,12 +68,12 @@ export async function probeSources(ctx: BcContext, from: string, to: string) {
 }
 
 export async function purchaseItemsReport(ctx: BcContext, company: string, from: string, to: string, force = false) {
-  return cached(`ctrl:purchItems4:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
+  return cached(`ctrl:purchItems5:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
     const warnings: string[] = [];
     const cm = await creditMemoServices(ctx);
     const dateFilter = (f: string) => `${f} ge ${from} and ${f} le ${to}`;
 
-    const [invLines, invHeaders, vendors, items, setup, gl, cmHeaders] = await Promise.all([
+    const [invLines, invHeaders, vendors, items, setup, gl, cmHeaders, customerGroups] = await Promise.all([
       bcFetchAll(odataUrl(`${ctx.customApiBase}/purchInvLines`, {
         $filter: dateFilter('postingDate'),
         $select: 'documentNo,lineNo,buyFromVendorNo,type,no,description,quantity,directUnitCost,amount,vatProdPostingGroup,deferralCode,genProdPostingGroup,postingDate',
@@ -81,7 +82,7 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
         $filter: dateFilter('Posting_Date'), $select: 'No,Buy_from_Vendor_No,Document_Date,VAT_Reporting_Date,Vendor_Invoice_No,Currency_Code',
       }), ctx.token),
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Vendor_Card_Excel`, {
-        $select: 'No,Name,Country_Region_Code,Payment_Method_Code,Payment_Terms_Code,Gen_Bus_Posting_Group',
+        $select: 'No,Name,Country_Region_Code,Payment_Method_Code,Payment_Terms_Code,Gen_Bus_Posting_Group,Customer_Group_Code_BCT',
       }), ctx.token),
       // Ficha de artículo por la API v2 (la página Item_Card_Excel tarda más de 30 s)
       bcFetchAll(odataUrl(`${ctx.apiBase}/items`, { $select: 'number,displayName,generalProductPostingGroupCode,type' }), ctx.token),
@@ -96,6 +97,7 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
         ? bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/${cm.header}`, { $filter: dateFilter('Posting_Date') }), ctx.token).catch(e => { warnings.push(`Abonos (${cm.header}): ${e.message}`); return [] as any[]; })
         // Sin la página 140: cabeceras de Document Capture (fecha del documento y nº de abono del proveedor)
         : bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/CS_PostedPurchaseCrMemos`, { $filter: dateFilter('PostingDate') }), ctx.token).catch(() => [] as any[]),
+      bcFetchAll(odataUrl(`${ctx.customApiBase}/customerGroups`, { $select: 'code,description' }), ctx.token).catch(() => [] as any[]),
     ]);
 
     // Líneas de abono de los abonos del periodo
@@ -113,6 +115,7 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
     }
 
     const vendorBy = new Map(vendors.map(v => [str(v.No), v]));
+    const groupName = new Map(customerGroups.map((g: any) => [str(g.code), str(g.description)]));
     const itemBy = new Map(items.map(i => [str(i.number), { Description: i.displayName, Gen_Prod_Posting_Group: i.generalProductPostingGroupCode, type: str(i.type) }]));
     // Artículos de tipo Inventario (mercancía) fuera: solo servicios y no inventariables
     const isInventory = (no: string) => itemBy.get(no)?.type === 'Inventory';
@@ -230,7 +233,8 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
         const bus = str(v?.Gen_Bus_Posting_Group);
         const cfg = (setupByProd.get(prod) || []).find(s => s.bus === bus);
         return {
-          vendorNo, name: str(v?.Name), country: str(v?.Country_Region_Code), paymentMethod: str(v?.Payment_Method_Code),
+          vendorNo, name: str(v?.Name), customerGroupCode: str(v?.Customer_Group_Code_BCT), customerGroupName: groupName.get(str(v?.Customer_Group_Code_BCT)) || '',
+          country: str(v?.Country_Region_Code), paymentMethod: str(v?.Payment_Method_Code),
           paymentTerms: str(v?.Payment_Terms_Code), genBusPostingGroup: bus,
           currentPurchAccount: cfg?.purch || '', currentCrMemoAccount: cfg?.crMemo || '',
           net: r2(docs.reduce((s, d) => s + d.amount, 0)), quantity: r2(docs.reduce((s, d) => s + d.quantity, 0)),
