@@ -242,7 +242,7 @@ export async function createInvoices(ctx: BcContext, input: CreateInput, cfg: Cu
 // asigna a una posición por el "Artikel Nr." que trae la posición, si solo hay una posición a esa, y si no por descripción.
 
 export type TariffItem = {
-  no: string; description: string; qty: number; parent?: string; inInvoice: boolean;
+  no: string; description: string; qty: number; parent?: string; inInvoice: boolean; display: boolean;
   bcTariff: string; bcRate: number | null; via: 'artikel' | 'unica' | 'descripcion' | ''; score?: number;
   status: 'ok' | 'ok8' | 'distinto' | 'sin_codigo' | 'sin_ficha';
 };
@@ -304,6 +304,7 @@ export async function checkTariffs(ctx: BcContext, orders: string[], positions: 
   if (invoices.some(i => i.paymentMethod === 'CHINA TRF')) invoices = invoices.filter(i => i.paymentMethod === 'CHINA TRF');
   if (!orders.length) warnings.push('El PDF no trae el pedido (N380): solo se comparan los artículos con "Artikel Nr.".');
   else if (!invoices.length) warnings.push(`No se ha encontrado en BC la factura de China ${orders.join(', ')}: solo se comparan los artículos con "Artikel Nr.".`);
+  else if (invoices.length > keys.size) warnings.push(`Hay varias facturas con el mismo nº (${invoices.map(i => `${i.no} ${i.vendorInvoiceNo}`).join(', ')}): sus cantidades se suman.`);
 
   // Líneas de artículo de esas facturas
   const lines = (await Promise.all(invoices.map(inv => bcFetchAll(odataUrl(inv.posted ? `${ctx.customApiBase}/purchInvLines` : `${ctx.customApiBase}/purchaseLines`, {
@@ -318,6 +319,7 @@ export async function checkTariffs(ctx: BcContext, orders: string[], positions: 
   const bom = invoiceItems.length ? await chunked(invoiceItems, 15, part => bcFetchAll(odataUrl(`${ctx.customApiBase}/bomComponents`, {
     $filter: inFilter('parentItemNo', part), $select: 'parentItemNo,type,no,quantityPer',
   }), ctx.token)) : [];
+  const displays = new Set(bom.map((c: any) => c.parentItemNo));
   const candidates = new Map<string, { no: string; qty: number; parent?: string; inInvoice: boolean }>();
   for (const [no, qty] of qtyByItem) candidates.set(no, { no, qty, inInvoice: true });
   for (const c of bom.filter((c: any) => c.type === 'Item' && c.no)) {
@@ -368,7 +370,7 @@ export async function checkTariffs(ctx: BcContext, orders: string[], positions: 
       : !tariff ? 'ok' : bcTariff === tariff || (bcTariff.length < tariff.length && tariff.startsWith(bcTariff)) ? 'ok'
       : bcTariff.slice(0, 8) === tariff.slice(0, 8) ? 'ok8' : 'distinto';
     return {
-      no, description: card?.description || '', qty, parent, inInvoice, bcTariff,
+      no, description: card?.description || '', qty, parent, inInvoice, display: displays.has(no), bcTariff,
       bcRate: card?.tariff != null && card.tariff !== '' ? Number(card.tariff) : null, via: a?.via || '', score: a?.score, status,
     };
   };

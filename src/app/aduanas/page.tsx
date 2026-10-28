@@ -3,11 +3,13 @@
 import { useState } from 'react';
 import { AlertCircle, CheckCircle2, FileText, Landmark, RefreshCw, Upload, X } from 'lucide-react';
 import { useCompany } from '@/contexts/CompanyContext';
+import TariffCheck, { Position } from './TariffCheck';
 
 type Existing = { no: string; kind: 'zoll' | 'eust' | 'otro'; posted: boolean; date: string };
 type Doc = {
   file: string; error?: string; atc: string; registration: string; lrn: string; date: string; description: string;
   zoll: number; zollDue: string; eust: number; eustDue: string; total: number | null; warnings: string[]; existing: Existing[];
+  orders: string[]; positions: Position[];
 };
 type Config = { zollVendor: string; eustVendor: string; zollItem: string; eustItem: string; zollVat: string; eustVat: string; noVat: string };
 // Valores editables de cada declaración antes de crear las facturas
@@ -109,7 +111,7 @@ export default function AduanasPage() {
           <div>
             <h1 className="text-3xl font-black text-black tracking-tight flex items-center gap-2"><Landmark /> Aduanas</h1>
             <p className="text-gray-500 mt-1 text-sm">
-              Sube los Einfuhrabgabenbescheide (PDF de ATLAS): cada declaración crea en BC ({selectedCompany}) dos Purchase Invoices, Zoll y EUSt, sin registrar: revísalas y regístralas (Post) en BC.
+              Sube los Einfuhrabgabenbescheide (PDF de ATLAS): cada declaración crea en BC ({selectedCompany}) dos Purchase Invoices, Zoll y EUSt, sin registrar: revísalas y regístralas (Post) en BC. También compara el código arancelario de cada posición con el Tariff No. de los artículos de la factura de China.
             </p>
           </div>
         </header>
@@ -201,6 +203,7 @@ export default function AduanasPage() {
                     })}
                   </tbody>
                 </table>
+                <TariffCheck orders={d.orders || []} positions={d.positions || []} />
                 {d.warnings.map(w => <p key={w} className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {w}</p>)}
                 {st.warnings?.map(w => <p key={w} className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {w}</p>)}
                 {st.error && <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{st.error}</p>}
