@@ -14,7 +14,8 @@ export default function LoginPage() {
 
   // Errores de la vuelta del inicio de sesión con Microsoft (/login?error=...)
   useEffect(() => {
-    const code = new URLSearchParams(window.location.search).get('error');
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('error'), detail = params.get('detail');
     const messages: Record<string, string> = {
       sso_config: 'El inicio de sesión con Microsoft aún no está configurado.',
       sso_usuario: 'Tu cuenta de Microsoft no tiene acceso a esta aplicación.',
@@ -22,7 +23,7 @@ export default function LoginPage() {
       sso_state: 'La sesión de inicio con Microsoft ha caducado. Inténtalo de nuevo.',
       sso_error: 'No se ha podido iniciar sesión con Microsoft.',
     };
-    if (code) setError(messages[code] || 'Error al iniciar sesión');
+    if (code) setError((messages[code] || 'Error al iniciar sesión') + (detail ? ` (${detail})` : ''));
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {

@@ -8,8 +8,10 @@ import { entraConfig, setSessionCookie } from '@/lib/auth';
 // usuario de la tabla User cuyo username es el correo de Microsoft. Un correo que no esté dado de alta no entra.
 export async function GET(req: Request) {
   const { searchParams, origin } = new URL(req.url);
-  const fail = (error: string) => {
-    const response = NextResponse.redirect(new URL(`/login?error=${error}`, origin));
+  const fail = (error: string, detail?: string) => {
+    const url = new URL(`/login?error=${error}`, origin);
+    if (detail) url.searchParams.set('detail', detail.slice(0, 300));
+    const response = NextResponse.redirect(url);
     response.cookies.delete({ name: 'sso-state', path: '/api/auth/microsoft' });
     return response;
   };
@@ -37,16 +39,16 @@ export async function GET(req: Request) {
     const tokens = await tokenRes.json();
     if (!tokenRes.ok || !tokens.id_token) throw new Error(tokens.error_description || 'Sin id_token');
 
-    const jwks = createRemoteJWKSet(new URL(`https://login.microsoftonline.com/${cfg.tenantId}/discovery/v2.0/keys`));
-    const { payload } = await jwtVerify(tokens.id_token, jwks, {
-      issuer: `https://login.microsoftonline.com/${cfg.tenantId}/v2.0`,
-      audience: cfg.clientId,
-    });
+    // Issuer y claves del documento OIDC del tenant (así el tenant puede ser el GUID o el dominio)
+    const oidc = await (await fetch(`https://login.microsoftonline.com/${cfg.tenantId}/v2.0/.well-known/openid-configuration`)).json();
+    if (!oidc.issuer || !oidc.jwks_uri) throw new Error(`Tenant no válido: ${oidc.error_description || cfg.tenantId}`);
+    const jwks = createRemoteJWKSet(new URL(oidc.jwks_uri));
+    const { payload } = await jwtVerify(tokens.id_token, jwks, { issuer: oidc.issuer, audience: cfg.clientId });
     if (payload.nonce !== nonce) return fail('sso_state');
 
     const email = String(payload.preferred_username || payload.email || payload.upn || '').trim().toLowerCase();
     const user = email ? await prisma.user.findFirst({ where: { username: { equals: email, mode: 'insensitive' } } }) : null;
-    if (!user) return fail('sso_usuario');
+    if (!user) return fail('sso_usuario', email);
 
     const response = NextResponse.redirect(new URL('/', origin));
     response.cookies.delete({ name: 'sso-state', path: '/api/auth/microsoft' });
@@ -55,6 +57,7 @@ export async function GET(req: Request) {
     return response;
   } catch (error) {
     console.error('Error SSO Microsoft:', error);
-    return fail('sso_error');
+    // El motivo (p. ej. AADSTS7000215 = client secret incorrecto) se muestra en /login
+    return fail('sso_error', String((error as Error)?.message || error).split('\n')[0]);
   }
 }
