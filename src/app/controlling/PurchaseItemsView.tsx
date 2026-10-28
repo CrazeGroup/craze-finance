@@ -7,6 +7,7 @@ import type { Fmt } from '../reporting/i18n';
 import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
 import CompanySelect, { useReportCompany } from './CompanySelect';
 import { fetchPurchaseItems } from './purchaseData';
+import DocPdfLink from './DocPdfLink';
 
 // Controlling · Compras por artículo (facturas y abonos de compra registrados): artículo → proveedores → documentos.
 type GlAcc = { no: string; name: string; amount: number };
@@ -16,7 +17,7 @@ type Doc = {
   vatProdPostingGroup: string; deferralCode: string; genProdPostingGroup: string; glAccounts: GlAcc[];
 };
 type Vendor = {
-  vendorNo: string; name: string; country: string; paymentMethod: string; paymentTerms: string; genBusPostingGroup: string;
+  vendorNo: string; company?: string; name: string; country: string; paymentMethod: string; paymentTerms: string; genBusPostingGroup: string;
   currentPurchAccount: string; currentCrMemoAccount: string; net: number; quantity: number; invoices: number; creditMemos: number; docs: Doc[];
 };
 type Item = { itemNo: string; description: string; genProdPostingGroup: string; setup: { bus: string; purch: string; crMemo: string }[]; net: number; quantity: number; vendors: Vendor[] };
@@ -209,7 +210,7 @@ export default function PurchaseItemsView({ fmt, company: globalCompany }: { fmt
                                                       return (
                                                         <tr key={`${doc.documentNo}|${doc.lineNo}`} className="border-t border-gray-100">
                                                           <td className={`${td} ${doc.kind === 'Abono' ? 'text-[#C0392B]' : ''}`}>{doc.kind}</td>
-                                                          <td className={`${td} font-mono`}>{doc.documentNo}</td>
+                                                          <td className={`${td} font-mono`}>{doc.documentNo}<DocPdfLink company={v.company || company} documentNo={doc.documentNo} kind={doc.kind === 'Abono' ? 'purchCrMemo' : 'purchInv'} /></td>
                                                           <td className={`${td} font-mono`}>{date(doc.documentDate)}</td>
                                                           <td className={`${td} font-mono`}>{date(doc.postingDate)}</td>
                                                           <td className={`${td} font-mono`}>{date(doc.vatDate)}</td>

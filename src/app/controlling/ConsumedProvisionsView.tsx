@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, FileDown, RefreshCw } fr
 import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
 import { Card, ErrorBox, Grid, Kpi, Loading, Section, Table } from '../reporting/ui';
+import DocPdfLink from './DocPdfLink';
 
 // Controlling · Consumed Provisions: provisión generada en la LM frente a lo consumido por facturas/abonos de compra
 // en las cuentas PROV-*.
@@ -19,6 +20,8 @@ type LmGroup = {
 type Data = { concepts: Concept[]; byMonth: any[]; lmByGroup: LmGroup[]; lmLines: number; excludedJournal: number; glEntries: number };
 
 const iso = (d: Date) => d.toISOString().substring(0, 10);
+// Solo las facturas y abonos de compra tienen PDF adjunto que abrir
+const pdfKind = (type: string) => (type === 'Invoice' ? 'purchInv' : type === 'Credit Memo' ? 'purchCrMemo' : null);
 const LM_COLS: ['conditions' | 'markant' | 'kam' | 'royalties' | 'marketing' | 'amazon', string][] = [
   ['conditions', 'Conditions (sin Markant)'], ['markant', 'Markant (Accounting Partner)'], ['kam', 'KAM'], ['royalties', 'Royalties'], ['marketing', 'Marketing (sin Amazon)'], ['amazon', 'Amazon Promotion'],
 ];
@@ -166,7 +169,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
             <Fragment key={k}>
               <tr className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => toggle(k)}>
                 <td className={td}>{open[k] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</td>
-                <td className={`${td} font-mono`}>{doc.documentNo}</td>
+                <td className={`${td} font-mono`}>{doc.documentNo}{pdfKind(doc.type) && <DocPdfLink company={company} documentNo={doc.documentNo} kind={pdfKind(doc.type)!} />}</td>
                 <td className={td}>{doc.type}</td>
                 <td className={`${td} font-mono`}>{date(doc.firstDate)}</td>
                 <td className="py-1.5 px-2 min-w-[180px]">{doc.vendorName || doc.vendorNo || '–'} <span className="text-gray-400 font-mono">{doc.vendorName ? doc.vendorNo : ''}</span></td>
@@ -401,7 +404,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                                               <td />
                                               <td colSpan={3} className="py-2 pr-2">
                                                 <Table cols={[{ label: 'Document No.', mono: true }, { label: 'Tipo' }, { label: 'Fecha', mono: true }, { label: 'Proveedor', wide: true }, { label: 'Nº doc. proveedor' }, { label: 'Importe', align: 'right', mono: true }]}
-                                                  rows={docs.map(x => [x.documentNo, x.type === 'Invoice' ? 'Factura' : x.type === 'Credit Memo' ? 'Abono' : x.type, date(x.date), `${x.vendorName || ''} ${x.vendorNo}`.trim(), x.externalDocNo || '–', num(x.amount, 2)])}
+                                                  rows={docs.map(x => [<>{x.documentNo}{pdfKind(x.type) && <DocPdfLink company={company} documentNo={x.documentNo} kind={pdfKind(x.type)!} />}</>, x.type === 'Invoice' ? 'Factura' : x.type === 'Credit Memo' ? 'Abono' : x.type, date(x.date), `${x.vendorName || ''} ${x.vendorNo}`.trim(), x.externalDocNo || '–', num(x.amount, 2)])}
                                                   total={['Total', '', '', '', '', num(docs.reduce((t, x) => t + x.amount, 0), 2)]} />
                                               </td>
                                             </tr>

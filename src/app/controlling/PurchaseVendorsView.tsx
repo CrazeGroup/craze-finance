@@ -7,6 +7,7 @@ import type { Fmt } from '../reporting/i18n';
 import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
 import CompanySelect, { useReportCompany } from './CompanySelect';
 import { fetchPurchaseItems } from './purchaseData';
+import DocPdfLink from './DocPdfLink';
 
 // Controlling · Compras por proveedor: los mismos datos que Compras por artículo (facturas y abonos de compra
 // registrados, /api/controlling/purchase-items) vistos al revés: proveedor → artículo → facturas, para validar que cada
@@ -18,13 +19,13 @@ type Doc = {
   vatProdPostingGroup: string; deferralCode: string; genProdPostingGroup: string; glAccounts: GlAcc[];
 };
 type SrcVendor = {
-  vendorNo: string; name: string; country: string; paymentMethod: string; paymentTerms: string; genBusPostingGroup: string;
+  vendorNo: string; company?: string; name: string; country: string; paymentMethod: string; paymentTerms: string; genBusPostingGroup: string;
   currentPurchAccount: string; currentCrMemoAccount: string; net: number; quantity: number; invoices: number; creditMemos: number; docs: Doc[];
 };
 type SrcItem = { itemNo: string; description: string; genProdPostingGroup: string; net: number; quantity: number; vendors: SrcVendor[] };
 type Data = { items: SrcItem[]; cancelledPairs?: number; warnings: string[] };
 
-type VItem = { itemNo: string; description: string; genProdPostingGroup: string; net: number; quantity: number; docs: Doc[]; current: string; currentCr: string };
+type VItem = { company?: string; itemNo: string; description: string; genProdPostingGroup: string; net: number; quantity: number; docs: Doc[]; current: string; currentCr: string };
 type Vendor = Omit<SrcVendor, 'docs' | 'net' | 'quantity' | 'invoices' | 'creditMemos'> & { net: number; quantity: number; docs: number; items: VItem[] };
 
 const MONTHS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
@@ -72,7 +73,7 @@ export default function PurchaseVendorsView({ fmt, company: globalCompany }: { f
           genBusPostingGroup: v.genBusPostingGroup, currentPurchAccount: v.currentPurchAccount, currentCrMemoAccount: v.currentCrMemoAccount,
           net: 0, quantity: 0, docs: 0, items: [],
         };
-        vend.items.push({ itemNo: it.itemNo, description: it.description, genProdPostingGroup: it.genProdPostingGroup, net: v.net, quantity: v.quantity, docs: v.docs, current: v.currentPurchAccount, currentCr: v.currentCrMemoAccount });
+        vend.items.push({ company: v.company, itemNo: it.itemNo, description: it.description, genProdPostingGroup: it.genProdPostingGroup, net: v.net, quantity: v.quantity, docs: v.docs, current: v.currentPurchAccount, currentCr: v.currentCrMemoAccount });
         vend.net += v.net; vend.quantity += v.quantity; vend.docs += new Set(v.docs.map(d => d.documentNo)).size;
         map.set(v.vendorNo, vend);
       }
@@ -107,14 +108,14 @@ export default function PurchaseVendorsView({ fmt, company: globalCompany }: { f
     : grouping === 'kind' ? doc.kind : '';
   const groupLabel = (k: string) => (grouping === 'month' ? `${MONTHS[Number(k.substring(5, 7)) - 1]} ${k.substring(0, 4)}` : k);
 
-  const DocRows = ({ docs, current, currentCr }: { docs: Doc[]; current: string; currentCr: string }) => (
+  const DocRows = ({ docs, current, currentCr, docCompany }: { docs: Doc[]; current: string; currentCr: string; docCompany?: string }) => (
     <>
       {[...docs].sort((a, b) => a.postingDate.localeCompare(b.postingDate) || a.documentNo.localeCompare(b.documentNo)).map(doc => {
         const cur = doc.kind === 'Abono' ? currentCr : current;
         return (
           <tr key={`${doc.documentNo}|${doc.lineNo}`} className="border-t border-gray-100">
             <td className={`${td} ${doc.kind === 'Abono' ? 'text-[#C0392B]' : ''}`}>{doc.kind}</td>
-            <td className={`${td} font-mono`}>{doc.documentNo}</td>
+            <td className={`${td} font-mono`}>{doc.documentNo}<DocPdfLink company={docCompany || company} documentNo={doc.documentNo} kind={doc.kind === 'Abono' ? 'purchCrMemo' : 'purchInv'} /></td>
             <td className={`${td} font-mono`}>{date(doc.postingDate)}</td>
             <td className={td}>{doc.vendorDocNo || '–'}</td>
             <td className={`${td} text-right font-mono`}>{num(doc.quantity)}</td>
@@ -139,7 +140,7 @@ export default function PurchaseVendorsView({ fmt, company: globalCompany }: { f
       </tr>
     );
     if (grouping === 'none') {
-      return <table className="w-full text-[12px] border border-gray-200 rounded-lg"><thead className="bg-gray-50">{head}</thead><tbody><DocRows docs={item.docs} current={item.current} currentCr={item.currentCr} /></tbody></table>;
+      return <table className="w-full text-[12px] border border-gray-200 rounded-lg"><thead className="bg-gray-50">{head}</thead><tbody><DocRows docs={item.docs} current={item.current} currentCr={item.currentCr} docCompany={item.company} /></tbody></table>;
     }
     const groups = new Map<string, Doc[]>();
     for (const d of item.docs) groups.set(groupKey(d), [...(groups.get(groupKey(d)) || []), d]);
@@ -155,7 +156,7 @@ export default function PurchaseVendorsView({ fmt, company: globalCompany }: { f
                 <span className="ml-auto text-xs text-gray-500">{new Set(docs.map(d => d.documentNo)).size} doc. · {num(docs.reduce((s, d) => s + d.quantity, 0))} uds.</span>
                 <span className="w-36 text-right font-semibold font-mono">{money(docs.reduce((s, d) => s + d.amount, 0))}</span>
               </button>
-              {open[gk] && <table className="w-full text-[12px]"><thead>{head}</thead><tbody><DocRows docs={docs} current={item.current} currentCr={item.currentCr} /></tbody></table>}
+              {open[gk] && <table className="w-full text-[12px]"><thead>{head}</thead><tbody><DocRows docs={docs} current={item.current} currentCr={item.currentCr} docCompany={item.company} /></tbody></table>}
             </div>
           );
         })}

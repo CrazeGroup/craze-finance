@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, FileDown, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
+import DocPdfLink from './DocPdfLink';
 
 // Desglose de una cuenta del BWA (Power BI): tipo de movimiento (compras / ventas / asientos) → agrupación elegida
 // (mes, proveedor o cliente, origen) → documentos → movimientos contables y líneas del documento (artículo).
@@ -154,7 +155,7 @@ export default function BwaAccountDrill({ fmt, spec, onClose }: { fmt: Fmt; spec
             <tr className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => { toggle(`doc:${d.key}`); loadLines(d); }}>
               <td className={`${td} w-6`}>{open[`doc:${d.key}`] ? <ChevronDown size={13} className="text-gray-400" /> : <ChevronRight size={13} className="text-gray-400" />}</td>
               {multiCompany && <td className={`${td} text-gray-600`}>{d.company}</td>}
-              <td className={`${td} font-semibold text-gray-900`}>{d.documentNo || '—'}</td>
+              <td className={`${td} font-semibold text-gray-900`}>{d.documentNo || '—'}{lineKind(d) && <DocPdfLink company={d.company} documentNo={d.documentNo} kind={lineKind(d)!} />}</td>
               <td className={`${td} text-gray-600`}>{d.documentType || '—'}</td>
               <td className={`${td} text-gray-600`}>{date(d.date)}</td>
               <td className={`${td} text-gray-900`}>{d.partner}{d.partner && d.partnerNo && d.partner !== d.partnerNo && <span className="text-gray-400"> {d.partnerNo}</span>}</td>

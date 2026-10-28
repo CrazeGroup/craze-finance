@@ -21,7 +21,7 @@ export async function fetchPurchaseItems(company: string, from: string, to: stri
     for (const it of data.items || []) {
       const cur = items.get(it.itemNo) || { ...it, net: 0, quantity: 0, vendors: [] };
       cur.net += it.net; cur.quantity += it.quantity;
-      cur.vendors.push(...it.vendors.map((v: any) => ({ ...v, vendorNo: `${co} · ${v.vendorNo}`, name: v.name ? `${v.name} (${co})` : co })));
+      cur.vendors.push(...it.vendors.map((v: any) => ({ ...v, company: co, vendorNo: `${co} · ${v.vendorNo}`, name: v.name ? `${v.name} (${co})` : co })));
       items.set(it.itemNo, cur);
     }
   }
