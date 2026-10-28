@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { RefreshCw, MessageSquareText, CheckCheck, Undo2, Search } from 'lucide-react';
+import DocPdfLink from '@/components/DocPdfLink';
 import { useCompany } from '@/contexts/CompanyContext';
 
 type Note = {
@@ -149,7 +150,7 @@ export default function PurchaseNotesPage() {
                       <td className="p-2"><input type="checkbox" checked={selected.has(n.linkId)} onChange={() => toggle(n.linkId)} /></td>
                       <td className="p-2 whitespace-nowrap">{fmtDate(n.created)}</td>
                       <td className="p-2 whitespace-nowrap">{docLabel(n)}</td>
-                      <td className="p-2 whitespace-nowrap font-mono">{n.documentNo}</td>
+                      <td className="p-2 whitespace-nowrap font-mono">{n.documentNo}<DocPdfLink documentNo={n.documentNo} kind={n.docType === 'credit' ? 'purchCrMemo' : 'purchInv'} /></td>
                       <td className="p-2">{n.vendorName || n.vendorNo}</td>
                       <td className={`p-2 whitespace-pre-wrap max-w-xl ${n.read ? '' : 'font-medium'}`}>{n.text || <span className="italic text-gray-400">(sin texto)</span>}</td>
                       <td className="p-2 whitespace-nowrap">{n.userId}</td>

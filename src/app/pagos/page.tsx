@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { syncFromBc } from '@/lib/syncClient';
 import { RefreshCcw, CheckCircle, ChevronDown, ChevronRight, FileText, CheckCircle2, XCircle, Clock } from 'lucide-react';
+import DocPdfLink, { purchasePdfKind } from '@/components/DocPdfLink';
 
 // Empresa activa (cookie que escribe CompanyContext)
 const getSelectedCompany = () => decodeURIComponent(document.cookie.match(/(?:^|; )craze_selected_company=([^;]*)/)?.[1] || 'CRAZE');
@@ -329,6 +330,7 @@ export default function PagosPage() {
                                   <div className="flex items-center gap-2">
                                     <FileText size={14} className="text-black" />
                                     {inv.bcId}
+                                    <DocPdfLink company={inv.companyId} documentNo={inv.bcId} kind={purchasePdfKind(inv.type)} />
                                   </div>
                                 </td>
                                 <td className="py-2">

@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { ChevronDown, ChevronRight, Download, RefreshCw } from 'lucide-react';
+import DocPdfLink, { purchasePdfKind } from '@/components/DocPdfLink';
 import { useCompany } from '@/contexts/CompanyContext';
 
 type Entry = {
@@ -252,7 +253,7 @@ function ProposalTable({ title, subtitle, entries, currencies, lcy, groupByPendi
                                 {docs.map(d => (
                                   <tr key={d.entryNo} className="border-t border-gray-200 text-gray-800">
                                     <td className="py-1 pr-3 whitespace-nowrap">{d.docType === 'Credit Memo' ? 'Abono' : 'Factura'}</td>
-                                    <td className="py-1 pr-3 font-mono">{d.docNo}</td>
+                                    <td className="py-1 pr-3 font-mono whitespace-nowrap">{d.docNo}<DocPdfLink documentNo={d.docNo} kind={purchasePdfKind(d.docType)} /></td>
                                     <td className="py-1 pr-3">{d.extDocNo}</td>
                                     <td className="py-1 pr-3">{d.description}</td>
                                     <td className="py-1 pr-3 whitespace-nowrap">{dateEs(d.postingDate)}</td>

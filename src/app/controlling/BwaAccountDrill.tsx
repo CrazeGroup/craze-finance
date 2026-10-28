@@ -4,7 +4,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, FileDown, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
-import DocPdfLink from './DocPdfLink';
+import DocPdfLink from '@/components/DocPdfLink';
 
 // Desglose de una cuenta del BWA (Power BI): tipo de movimiento (compras / ventas / asientos) → agrupación elegida
 // (mes, proveedor o cliente, origen) → documentos → movimientos contables y líneas del documento (artículo).

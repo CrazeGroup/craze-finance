@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { AlertCircle, CheckCircle2, FileText, Landmark, RefreshCw, Upload, X } from 'lucide-react';
+import DocPdfLink from '@/components/DocPdfLink';
 import { useCompany } from '@/contexts/CompanyContext';
 import TariffCheck, { Position } from './TariffCheck';
 
@@ -194,8 +195,8 @@ export default function AduanasPage() {
                           <td className="p-2 text-right"><input value={f[r.amount]} onChange={e => setField(d.file, r.amount, e.target.value)} className={`${input} w-32 text-right tabular-nums`} /></td>
                           <td className="p-2"><input type="date" value={f[r.due]} onChange={e => setField(d.file, r.due, e.target.value)} className={input} /></td>
                           <td className="p-2">
-                            {made.map(c => <span key={c.no} className="inline-flex items-center gap-1 text-emerald-700 font-semibold"><CheckCircle2 size={14} /> Purchase Invoice {c.no}</span>)}
-                            {ex.map(e => <span key={e.no} className="inline-block text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-0.5 text-xs">Ya existe {e.no}{e.posted ? ' (registrada)' : ' (pendiente)'}</span>)}
+                            {made.map(c => <span key={c.no} className="inline-flex items-center gap-1 text-emerald-700 font-semibold"><CheckCircle2 size={14} /> Purchase Invoice {c.no}<DocPdfLink documentNo={c.no} /></span>)}
+                            {ex.map(e => <span key={e.no} className="inline-block text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-0.5 text-xs">Ya existe {e.no}{e.posted ? ' (registrada)' : ' (pendiente)'}<DocPdfLink documentNo={e.no} /></span>)}
                             {!made.length && !ex.length && (toNum(f[r.amount]) > 0 ? <span className="text-gray-400">Pendiente</span> : <span className="text-gray-400">Sin importe: no se crea</span>)}
                           </td>
                         </tr>

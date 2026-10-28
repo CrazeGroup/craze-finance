@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { RefreshCcw, User, Building2, CheckCircle } from 'lucide-react';
+import DocPdfLink, { purchasePdfKind } from '@/components/DocPdfLink';
 
 export default function MovimientosPage() {
   const [entries, setEntries] = useState<any[]>([]);
@@ -231,7 +232,10 @@ export default function MovimientosPage() {
                         {entry.documentType || '-'}
                       </span>
                     </td>
-                    <td className="p-4 text-gray-800 font-medium">{entry.documentNo}</td>
+                    <td className="p-4 text-gray-800 font-medium whitespace-nowrap">
+                      {entry.documentNo}
+                      {entry.type === 'Vendor' && <DocPdfLink documentNo={entry.documentNo} kind={purchasePdfKind(entry.documentType)} />}
+                    </td>
                     <td className="p-4 text-gray-900 font-bold">{entry.externalDocumentNo || '-'}</td>
                     <td className="p-4 text-gray-900 font-bold">{entry.currencyCode || 'EUR'}</td>
                     <td className="p-4 text-right text-gray-800 font-medium">

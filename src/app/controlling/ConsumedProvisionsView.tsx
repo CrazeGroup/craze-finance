@@ -5,7 +5,7 @@ import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, FileDown, RefreshCw } fr
 import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
 import { Card, ErrorBox, Grid, Kpi, Loading, Section, Table } from '../reporting/ui';
-import DocPdfLink from './DocPdfLink';
+import DocPdfLink from '@/components/DocPdfLink';
 
 // Controlling · Consumed Provisions: provisión generada en la LM frente a lo consumido por facturas/abonos de compra
 // en las cuentas PROV-*.

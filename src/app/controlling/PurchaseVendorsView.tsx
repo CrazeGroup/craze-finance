@@ -7,7 +7,7 @@ import type { Fmt } from '../reporting/i18n';
 import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
 import CompanySelect, { useReportCompany } from './CompanySelect';
 import { fetchPurchaseItems } from './purchaseData';
-import DocPdfLink from './DocPdfLink';
+import DocPdfLink from '@/components/DocPdfLink';
 
 // Controlling · Compras por proveedor: los mismos datos que Compras por artículo (facturas y abonos de compra
 // registrados, /api/controlling/purchase-items) vistos al revés: proveedor → artículo → facturas, para validar que cada

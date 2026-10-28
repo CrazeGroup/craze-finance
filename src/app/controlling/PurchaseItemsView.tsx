@@ -7,7 +7,7 @@ import type { Fmt } from '../reporting/i18n';
 import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
 import CompanySelect, { useReportCompany } from './CompanySelect';
 import { fetchPurchaseItems } from './purchaseData';
-import DocPdfLink from './DocPdfLink';
+import DocPdfLink from '@/components/DocPdfLink';
 
 // Controlling · Compras por artículo (facturas y abonos de compra registrados): artículo → proveedores → documentos.
 type GlAcc = { no: string; name: string; amount: number };
