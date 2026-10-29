@@ -31,6 +31,8 @@ function quarter(offset: number) {
   const q = Math.floor(now.getUTCMonth() / 3) + offset;
   return { from: iso(new Date(Date.UTC(now.getUTCFullYear(), q * 3, 1))), to: iso(new Date(Date.UTC(now.getUTCFullYear(), q * 3 + 3, 0))) };
 }
+// Trimestre q (1–4) de un año
+const qRange = (y: number, q: number) => ({ from: iso(new Date(Date.UTC(y, q * 3 - 3, 1))), to: iso(new Date(Date.UTC(y, q * 3, 0))) });
 const yearToDate = () => ({ from: `${new Date().getUTCFullYear()}-01-01`, to: iso(new Date()) });
 
 const nf = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -210,6 +212,11 @@ export default function RoyaltiesPage() {
     { label: 'Trimestre actual', ...quarter(0) },
     { label: 'Año en curso', ...yearToDate() },
   ];
+  // Selector Q1–Q4 del año de la fecha de inicio
+  const qYear = Number(range.from.substring(0, 4)) || new Date().getUTCFullYear();
+  const activeQ = [1, 2, 3, 4].find(q => { const r = qRange(qYear, q); return r.from === range.from && r.to === range.to; });
+  const thisYear = new Date().getUTCFullYear();
+  const qYears = Array.from(new Set([thisYear - 3, thisYear - 2, thisYear - 1, thisYear, qYear])).sort();
 
   return (
     <div className="min-h-screen bg-[#F3F4F7] pb-24">
@@ -225,6 +232,18 @@ export default function RoyaltiesPage() {
                 <button key={p.label} onClick={() => setRange({ from: p.from, to: p.to })}
                   className={`px-3 py-1.5 rounded-md text-xs font-semibold ${range.from === p.from && range.to === p.to ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
                   {p.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center bg-gray-100 rounded-lg p-1">
+              <select value={qYear} onChange={e => setRange(qRange(Number(e.target.value), activeQ || 1))}
+                className="bg-transparent text-xs font-semibold text-gray-900 px-1 py-1.5 focus:outline-none" title="Año del trimestre">
+                {qYears.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+              {[1, 2, 3, 4].map(q => (
+                <button key={q} onClick={() => setRange(qRange(qYear, q))}
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold ${activeQ === q ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
+                  Q{q}
                 </button>
               ))}
             </div>
