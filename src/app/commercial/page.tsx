@@ -27,7 +27,8 @@ export default function CommercialAnalysisPage() {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [dims, setDims] = useState<{ data: Dims | null; error: string | null }>({ data: null, error: null });
   const [loads, setLoads] = useState<Record<string, Load>>({});
-  const [reload, setReload] = useState({ n: 0, force: false });
+  // force: relee el facturado y los pedidos del año elegido; plans: también el presupuesto y el forecast
+  const [reload, setReload] = useState({ n: 0, force: false, plans: false });
   const set = <K extends keyof Filters>(k: K, v: Filters[K]) => setFilters(f => ({ ...f, [k]: v }));
 
   useEffect(() => {
@@ -35,11 +36,12 @@ export default function CommercialAnalysisPage() {
   }, []);
   const changePage = (p: PageId) => { setPage(p); try { localStorage.setItem('crz-commercial-page', p); } catch { /* sin almacenamiento */ } };
 
+  // Datos maestros: se renuevan solos una vez al día (el botón no los fuerza: tardan ~30 s y casi no cambian)
   useEffect(() => {
-    fetch(`/api/commercial/dims${reload.force ? '?force=1' : ''}`, { cache: 'no-store' })
+    fetch('/api/commercial/dims', { cache: 'no-store' })
       .then(async r => { const d = await r.json().catch(() => ({ error: `HTTP ${r.status}` })); setDims(r.ok && !d.error ? { data: d, error: null } : { data: null, error: d.error }); })
       .catch(e => setDims({ data: null, error: e.message }));
-  }, [reload]);
+  }, []);
 
   // Hechos de cada empresa para el año elegido y el anterior (una petición por empresa y año)
   // (lista estable: si se recalculara en cada render, el efecto se relanzaría sin parar)
@@ -54,12 +56,14 @@ export default function CommercialAnalysisPage() {
     const force = reload.force && forced.current !== reload.n;
     if (force) forced.current = reload.n;
     for (const key of wanted) {
-      if (inflight.current.has(key)) continue;
-      if (!force && loads[key]?.data) continue;
       const [company, y] = key.split('|');
+      // Solo se fuerza el año elegido: el anterior está cerrado y se renueva solo una vez al día
+      const forceKey = force && Number(y) === year;
+      if (inflight.current.has(key)) continue;
+      if (!forceKey && loads[key]?.data) continue;
       inflight.current.add(key);
       setLoads(l => ({ ...l, [key]: { key, data: l[key]?.data ?? null, error: null, loading: true } }));
-      fetch(`/api/commercial/facts?company=${company}&year=${y}${force ? '&force=1' : ''}`, { cache: 'no-store' })
+      fetch(`/api/commercial/facts?company=${company}&year=${y}${forceKey ? '&force=1' : ''}${forceKey && reload.plans ? '&plans=1' : ''}`, { cache: 'no-store' })
         .then(async r => {
           const d = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
           const ok = r.ok && !d.error;
@@ -75,11 +79,18 @@ export default function CommercialAnalysisPage() {
   const loading = !dims.data || wanted.some(k => !loads[k] || (loads[k].loading && !loads[k].data));
   const refreshing = wanted.some(k => loads[k]?.loading);
   const errors = wanted.filter(k => loads[k]?.error).map(k => `${k.replace('|', ' ')}: ${loads[k].error}`);
-  const ctx = useMemo(() => (dims.data ? makeCtx(dims.data, facts, year, filters) : null), [dims.data, facts, year, filters]);
+  // Artículos creados después de los datos maestros del día (los trae cada respuesta de hechos)
+  const allDims = useMemo(() => {
+    const d = dims.data;
+    const extra = facts.flatMap(f => f.items || []).filter(i => d && !d.items.some(x => x.no === i.no));
+    if (!d || !extra.length) return d;
+    return { ...d, items: [...d.items, ...Array.from(new Map(extra.map(i => [i.no, i])).values())] };
+  }, [dims.data, facts]);
+  const ctx = useMemo(() => (allDims ? makeCtx(allDims, facts, year, filters) : null), [allDims, facts, year, filters]);
 
   // Opciones de los filtros
   const opts = useMemo(() => {
-    const d = dims.data;
+    const d = allDims;
     if (!d) return null;
     const uniq = (list: string[]) => Array.from(new Set(list.filter(Boolean))).sort();
     const countries = (i: number) => uniq(facts.flatMap(f => f.rows.map(r => r[i] as string)));
@@ -97,8 +108,10 @@ export default function CommercialAnalysisPage() {
       licenses: uniq(items.map(i => i.license)).map(v => ({ value: v, label: v })),
       articles: uniq(items.map(i => i.raw)).map(v => ({ value: v, label: `${v} ${d.rawDesc[v] || ''}`.trim() })),
     };
-  }, [dims.data, facts]);
+  }, [allDims, facts]);
 
+  const plansDate = facts.map(f => f.plansUpdated).filter(Boolean).sort()[0];
+  const plansUpdated = plansDate ? new Date(plansDate).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
   const props = ctx ? { ctx, facts, filters } : null;
   return (
     <div className="min-h-screen bg-[#F3F4F7] pb-24">
@@ -113,7 +126,12 @@ export default function CommercialAnalysisPage() {
               <button key={p.id} onClick={() => changePage(p.id)} className={`px-3 py-1.5 rounded-md text-sm font-semibold ${page === p.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>{p.label}</button>
             ))}
           </div>
-          <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={refreshing} title="Volver a leer de BC"
+          <button onClick={() => setReload(r => ({ n: r.n + 1, force: true, plans: true }))} disabled={refreshing}
+            title={`Volver a leer de BC el presupuesto y el forecast de ${year} (se renuevan solos una vez al día${plansUpdated ? `; última lectura ${plansUpdated}` : ''})`}
+            className="px-3 py-2 rounded-lg border border-gray-300 bg-white text-xs font-semibold text-gray-600 hover:text-gray-900 disabled:opacity-40">
+            Actualizar budget/forecast
+          </button>
+          <button onClick={() => setReload(r => ({ n: r.n + 1, force: true, plans: false }))} disabled={refreshing} title={`Volver a leer de BC el facturado y los pedidos abiertos de ${year}`}
             className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">
             <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
           </button>

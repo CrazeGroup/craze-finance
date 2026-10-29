@@ -9,7 +9,10 @@ export type Dims = {
   kamByGroupBu: Record<string, string>; kams: Record<string, string>; dimensions: Record<string, string>;
 };
 // delta: líneas abiertas de los pedidos de venta con Order Date de hoy (mismas columnas que rows)
-export type Facts = { company: string; currency: string; year: number; cutoff: string; rows: (string | number)[][]; delta?: (string | number)[][]; itemRoyalty: Record<string, string>; warnings: string[] };
+export type Facts = { company: string; currency: string; year: number; cutoff: string; rows: (string | number)[][]; delta?: (string | number)[][]; itemRoyalty: Record<string, string>; warnings: string[];
+  items?: Item[];            // artículos creados después de los datos maestros del día
+  plansUpdated?: string | null;
+};
 
 export const COMPANIES = [
   { abbr: 'GmbH', name: 'Craze GmbH', currency: 'EUR' },
