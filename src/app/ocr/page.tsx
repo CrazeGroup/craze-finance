@@ -247,7 +247,7 @@ function DocCard({ d, f, attachments, st, selected, onToggle, onRemove, onVendor
       {!d.loading && !d.error && d.vendor && !st.created && <input type="checkbox" checked={selected} onChange={onToggle} title="Marcar para enviar junto con las demás" />}
       <FileText size={16} className="text-gray-400" />
       <span className="font-bold text-gray-900">{d.vendor ? `${d.vendor.number} · ${d.vendor.name}` : 'Proveedor sin reconocer'}</span>
-      <span className="text-xs text-gray-500">{d.file}{d.scanned ? ' · escaneado (leído con IA)' : ''}</span>
+      <span className="text-xs text-gray-500">{d.file}{d.scanned ? ' · escaneado (sin texto)' : ''}</span>
       {s && <span className="ml-auto text-sm text-gray-600">PDF: neto <b>{fmt(s.net)}</b> · IVA {fmt(s.vat)} · total <b>{fmt(s.total)} {s.currency || d.currency}</b></span>}
       <button onClick={onRemove} title="Quitar de la lista (no se envía a BC)" className={`${s ? '' : 'ml-auto '}p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50`}><X size={16} /></button>
     </div>

@@ -2,18 +2,15 @@ import { getDocumentProxy, extractText } from 'unpdf';
 import { bcFetchAll, BcContext, odataUrl } from '@/lib/bcClient';
 import { attachFile, bcRequest } from '@/lib/bcWrite';
 import { cached, readSetting, writeSetting, HOUR } from '@/lib/reporting/cache';
-import Anthropic from '@anthropic-ai/sdk';
-import { aiConfigured, generateText, type AiPart } from '@/lib/ai';
 import { companyCurrency } from '@/lib/royalties';
 
 // OCR de facturas de compra: del PDF de un proveedor a una Purchase Invoice sin registrar en BC.
-// 1. Texto del PDF con unpdf (si es un escaneo no hay texto y la IA lee el PDF).
+// Sin IA: reglas sobre el texto y las facturas ya registradas del proveedor.
+// 1. Texto del PDF con unpdf (un escaneo sin texto no se puede leer).
 // 2. Proveedor: identificadores del PDF (NIF/VAT, IBAN, dominio de correo/web) aprendidos de las facturas ya creadas
 //    desde aquí (setting ocr:hints:<empresa>), el VAT y el correo de la ficha del proveedor, las palabras de su nombre,
 //    la divisa y cuántas facturas suyas hay en el último año (los habituales primero).
-// 3. Las últimas facturas registradas de ese proveedor (líneas y el texto del PDF adjunto de unas cuantas) son el
-//    modelo: la IA lee cabecera e importes del PDF nuevo y propone las líneas igual que en esas facturas
-//    (mismo tipo, artículo/cuenta, descripción y grupo de IVA).
+// 3. Sus facturas registradas más recientes (líneas y el texto del PDF adjunto) son el modelo: ver propose().
 
 export type OcrLine = {
   lineType: string; number: string; description: string; description2: string;
@@ -230,7 +227,7 @@ export async function vendorHistory(ctx: BcContext, vendor: string) {
     if (seen.has(sig)) return false;
     seen.add(sig);
     return true;
-  }).slice(0, 3);
+  }).slice(0, 5);
   const examples = (await Promise.all(picks.map(async i => {
     try {
       const atts = (await bcGet(ctx, odataUrl(`${ctx.apiBase}/documentAttachments`, {
@@ -241,7 +238,7 @@ export async function vendorHistory(ctx: BcContext, vendor: string) {
       const res = await fetch(`${ctx.apiBase}/documentAttachments(${pdf.id})/attachmentContent`, { headers: { Authorization: `Bearer ${ctx.token}` } });
       if (!res.ok) return null;
       const text = await pdfText(new Uint8Array(await res.arrayBuffer()));
-      return text ? { number: i.number as string, text: text.substring(0, 3500) } : null;
+      return text ? { number: i.number as string, text: text.substring(0, 20000) } : null;
     } catch {
       return null;
     }
@@ -259,131 +256,185 @@ export async function existingFor(ctx: BcContext, vendor: string, invoiceNo: str
   return rows.filter((r: any) => r.status !== 'Canceled').map((r: any) => ({ no: r.number as string, status: r.status as string }));
 }
 
-// ---------- Propuesta con IA ----------
-const isDate = (d: unknown) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d);
-const num = (v: unknown) => (typeof v === 'number' && isFinite(v) ? v : typeof v === 'string' && v.trim() && isFinite(Number(v)) ? Number(v) : null);
+// ---------- Propuesta sin IA ----------
+// Modelo = la factura anterior cuyo PDF más se parece al nuevo (entre las más recientes con líneas distintas; la más
+// reciente si no hay PDFs). De ella salen las líneas, y los datos variables (nº de factura, fecha, vencimiento,
+// referencias de Description 2 / Posting Description) se leen en el PDF nuevo en el mismo sitio que en el suyo.
+// Importes: solo los totales (sin IVA y con IVA), por coherencia neto + IVA = total.
 
-export async function suggest(text: string, pdf: Uint8Array | null, vendor: VendorCandidate | null, history: HistoryInvoice[], examples: { number: string; text: string }[]): Promise<OcrSuggestion> {
-  const hist = history.map(h => ({
-    invoice: h.number, vendorInvoiceNo: h.vendorInvoiceNumber, invoiceDate: h.invoiceDate, postingDate: h.postingDate, dueDate: h.dueDate,
-    currency: h.currency, netAmount: h.net, totalAmount: h.total, postingDescription: h.postingDescription,
-    lines: h.lines.map(l => ({ type: l.lineType, no: l.number, description: l.description, description2: l.description2, quantity: l.quantity, unitCost: l.unitCost, vatGroup: l.taxCode })),
-  }));
-  const prompt = `Eres contable de CRAZE y registras facturas de proveedor en Microsoft Dynamics 365 Business Central como Purchase Invoice.
-Lee la factura nueva y propón la cabecera y las líneas EXACTAMENTE como se han registrado las facturas anteriores de este proveedor.
+export type Example = { number: string; text: string };
+const flat = (t: string) => t.replace(/\s+/g, ' ');
 
-Proveedor: ${vendor ? `${vendor.number} ${vendor.name} (divisa ${vendor.currency})` : 'desconocido'}
-
-Facturas anteriores registradas de este proveedor, de la más reciente a la más antigua, con sus líneas en BC.
-La forma de registrarlas ha ido mejorando: la PRIMERA (la más reciente) es el modelo; si las anteriores son distintas, sigue la más reciente.
-${hist.length ? JSON.stringify(hist) : 'ninguna'}
-
-${examples.map(e => `Texto del PDF de la factura anterior ${e.number} (para ver cómo se pasó del PDF a las líneas):\n"""\n${e.text}\n"""`).join('\n\n')}
-
-${text ? `Texto de la factura NUEVA:\n"""\n${text.substring(0, 15000)}\n"""` : 'La factura NUEVA es el PDF adjunto (escaneado).'}
-
-Reglas:
-- Usa solo combinaciones de tipo (type), nº (no) y grupo de IVA (vatGroup) que aparezcan en las facturas anteriores; elige la que corresponda al concepto de cada cargo de la factura nueva (compara con los PDFs anteriores). Si no hay facturas anteriores, deja "no" y "vatGroup" vacíos.
-- postingDescription (Posting Description de la cabecera) con el mismo patrón que las anteriores (p. ej. pedido / contenedor, periodo, "Invoice <nº>"…), adaptando los datos de la factura nueva.
-- Descripción y Description 2 con el mismo estilo que las anteriores, adaptando lo que cambie (periodo, nº de contenedor, referencia…).
-- Misma forma de cantidades que las anteriores (p. ej. 1 × importe). unitCost en la divisa de la factura, SIN IVA (los importes de las líneas no llevan IVA).
-- La suma de quantity × unitCost debe ser el importe neto (sin IVA) de la factura nueva.
-- postingDate: sigue la costumbre de las anteriores (normalmente = invoiceDate). dueDate: el vencimiento que indique la factura, o "" si no lo indica.
-- documentType "credit_note" si el documento es un abono (Gutschrift, credit note, nota de crédito), si no "invoice".
-- Fechas en formato YYYY-MM-DD; importes como números con punto decimal.
-
-Responde SOLO con este JSON:
-{"documentType":"invoice","invoiceNo":"","invoiceDate":"","postingDate":"","dueDate":"","postingDescription":"","currency":"","net":0,"vat":0,"total":0,"lines":[{"type":"Item","no":"","description":"","description2":"","quantity":1,"unitCost":0,"vatGroup":""}],"comment":"breve explicación en español de cómo has elegido las líneas o de lo que haya que revisar"}`;
-  const raw = await askAi(prompt, !text && pdf ? pdf : null);
-  const j = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] ?? raw);
-  return {
-    documentType: j.documentType === 'credit_note' ? 'credit_note' : 'invoice',
-    invoiceNo: String(j.invoiceNo || '').trim(),
-    invoiceDate: isDate(j.invoiceDate) ? j.invoiceDate : '',
-    postingDate: isDate(j.postingDate) ? j.postingDate : isDate(j.invoiceDate) ? j.invoiceDate : '',
-    dueDate: isDate(j.dueDate) ? j.dueDate : '',
-    postingDescription: String(j.postingDescription || '').substring(0, 100),
-    currency: String(j.currency || '').toUpperCase(),
-    net: num(j.net), vat: num(j.vat), total: num(j.total),
-    lines: (Array.isArray(j.lines) ? j.lines : []).map((l: any) => ({
-      lineType: String(l.type || 'Item'), number: String(l.no || ''), description: String(l.description || '').substring(0, 100),
-      description2: String(l.description2 || '').substring(0, 50), quantity: num(l.quantity) ?? 1, unitCost: num(l.unitCost) ?? 0, taxCode: String(l.vatGroup || ''),
-    })),
-    comment: String(j.comment || ''),
-  };
-}
-
-export const ocrAiConfigured = () => aiConfigured() || !!process.env.ANTHROPIC_API_KEY;
-
-// IA: OpenRouter si está configurado (src/lib/ai.ts); si no, Claude con ANTHROPIC_API_KEY; si no, Gemini.
-// Límite de 40 s: la lectura en BC ya usa parte de los 60 s de Vercel
-async function askAi(prompt: string, pdf: Uint8Array | null): Promise<string> {
-  const data = pdf ? Buffer.from(pdf).toString('base64') : '';
-  if (process.env.OPENROUTER_API_KEY || !process.env.ANTHROPIC_API_KEY) {
-    const parts: AiPart[] = [prompt];
-    if (pdf) parts.push({ inlineData: { data, mimeType: 'application/pdf' } });
-    const start = Date.now();
-    try {
-      return await generateText(parts, { json: true, timeoutMs: 40_000 });
-    } catch (e) {
-      // Gemini devuelve 503 cuando está saturado: un reintento si queda tiempo
-      if (Date.now() - start > 12_000) throw e;
-      await new Promise(r => setTimeout(r, 1500));
-      return generateText(parts, { json: true, timeoutMs: 35_000 });
-    }
-  }
-  const client = new Anthropic({ timeout: 40_000, maxRetries: 1 });
-  try {
-    const response = await client.messages.create({
-      model: 'claude-sonnet-5-5',
-      max_tokens: 4000,
-      messages: [{
-        role: 'user',
-        content: [
-          ...(pdf ? [{ type: 'document' as const, source: { type: 'base64' as const, media_type: 'application/pdf' as const, data } }] : []),
-          { type: 'text' as const, text: prompt },
-        ],
-      }],
-    });
-    return response.content.map(b => (b.type === 'text' ? b.text : '')).join('');
-  } catch (error) {
-    if (error instanceof Anthropic.AuthenticationError) throw new Error('La clave ANTHROPIC_API_KEY no es válida.');
-    if (error instanceof Anthropic.APIError) throw new Error(`Claude ${error.status}: ${String(error.message).substring(0, 160)}`);
-    throw error;
-  }
-}
-
-// Sin IA: nº y fecha de factura por las etiquetas habituales (EN/DE/ES/FR)
 const MONTHS: Record<string, string> = {
-  jan: '01', ene: '01', feb: '02', mar: '03', mär: '03', apr: '04', abr: '04', may: '05', mai: '05', jun: '06', jul: '07',
+  jan: '01', ene: '01', feb: '02', mar: '03', mär: '03', mae: '03', apr: '04', abr: '04', may: '05', mai: '05', jun: '06', jul: '07',
   aug: '08', ago: '08', sep: '09', oct: '10', okt: '10', nov: '11', dec: '12', dez: '12', dic: '12',
 };
+// Fechas: 2026-10-24, 24.10.2026, 24/10/26, 24-OCT-26, 24 Aug 2026, Aug 24, 2026
+const DATE_RE = /\d{4}-\d{2}-\d{2}|\d{1,2}[./]\d{1,2}[./]\d{2,4}|\d{1,2}[ -][A-Za-zä]{3,9}\.?[ -]\d{2,4}|[A-Za-z]{3,9}\.? \d{1,2},? \d{4}/g;
 function parseDate(s: string) {
-  let m = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-  m = s.match(/(\d{1,2})[./](\d{1,2})[./](\d{2,4})/);
+  m = s.match(/^(\d{1,2})[./](\d{1,2})[./](\d{2,4})$/);
   if (m) return `${m[3].length === 2 ? '20' + m[3] : m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
-  m = s.match(/(\d{1,2})[ -]([A-Za-zä]{3})[a-zä]*[ -](\d{2,4})/);
+  m = s.match(/^(\d{1,2})[ -]([A-Za-zä]{3})[A-Za-zä]*\.?[ -](\d{2,4})$/);
   if (m && MONTHS[m[2].toLowerCase()]) return `${m[3].length === 2 ? '20' + m[3] : m[3]}-${MONTHS[m[2].toLowerCase()]}-${m[1].padStart(2, '0')}`;
-  m = s.match(/([A-Za-z]{3})[a-z]* (\d{1,2}),? (\d{4})/);
+  m = s.match(/^([A-Za-z]{3})[A-Za-z]*\.? (\d{1,2}),? (\d{4})$/);
   if (m && MONTHS[m[1].toLowerCase()]) return `${m[3]}-${MONTHS[m[1].toLowerCase()]}-${m[2].padStart(2, '0')}`;
   return '';
 }
-function guessHeader(text: string) {
-  const t = text.replace(/\s+/g, ' ');
-  const invoiceNo = t.match(/(?:Invoice|Rechnungs?|Debit Note|Factura|Facture|Beleg)[ -]?(?:Number|No\.?|Nr\.?|nummer|n[º°o]\.?)\s*:?\s*([A-Z0-9][A-Z0-9\-\/.]{3,})/i)?.[1]?.replace(/\.$/, '') || '';
-  const dateText = t.match(/(?:Invoice Date|Debit Note Date|Rechnungsdatum|Fecha(?: de)? factura|Date de facture|Datum|Date|Fecha)\s*:?\s*([0-9A-Za-zä.\/\- ,]{6,20})/i)?.[1] || '';
-  return { invoiceNo, invoiceDate: parseDate(dateText) };
+const dates = (t: string) => [...t.matchAll(DATE_RE)].map(m => ({ index: m.index!, raw: m[0], iso: parseDate(m[0]) })).filter(d => d.iso);
+
+// Texto que precede a la posición i (la etiqueta: "Invoice Number:", "Your reference:"…)
+const before = (t: string, i: number) => t.slice(Math.max(0, i - 30), i).replace(/^\S*\s/, '');
+// Valor con la misma etiqueta en el texto nuevo: prueba la etiqueta entera y luego sus finales (≥ 6 caracteres)
+function sameSpot(text: string, label: string, read: (rest: string) => string | null) {
+  for (let n = label.length; n >= 6; n--) {
+    const l = label.slice(-n);
+    if (!/[A-Za-z]{3}/.test(l)) break;
+    for (let i = text.indexOf(l); i >= 0; i = text.indexOf(l, i + 1)) {
+      const v = read(text.slice(i + l.length).replace(/^\s+/, ''));
+      if (v) return v;
+    }
+  }
+  return null;
+}
+// Patrón con la forma de un valor: letras → letras, dígitos → dígitos, separadores tal cual
+const shapeOf = (v: string, exact = false) => new RegExp('^' + v.replace(/[A-Za-z]+|\d+|[^A-Za-z\d]/g, p =>
+  /^[A-Za-z]/.test(p) ? (exact ? `[A-Za-z]{${p.length}}` : '[A-Za-z]+') : /^\d/.test(p) ? (exact ? `\\d{${p.length}}` : '\\d+') : `\\${p}`) + '(?![A-Za-z\\d])');
+
+// Etiquetas genéricas, si no hay PDF modelo o no se encuentra su etiqueta
+function guessHeader(t: string) {
+  const invoiceNo = t.match(/(?:Invoice|Rechnungs?|Debit Note|Credit Note|Gutschrift|Factura|Facture|Beleg)[ -]?(?:Number|No\.?|Nr\.?|nummer|n[º°o]\.?)\s*:?\s*([A-Z0-9][A-Z0-9\-\/.]{3,})/i)?.[1]?.replace(/\.$/, '') || '';
+  let invoiceDate = '';
+  for (const re of [/(?:Invoice Date|Debit Note Date|Rechnungsdatum|Belegdatum|Fecha(?: de)? (?:la )?factura|Date de (?:la )?facture)\s*:?\s*/i, /(?:Datum|Date|Fecha)\s*:?\s*/i]) {
+    const m = t.match(re);
+    if (m) { invoiceDate = dates(t.slice(m.index! + m[0].length, m.index! + m[0].length + 25))[0]?.iso || ''; if (invoiceDate) break; }
+  }
+  return { invoiceNo, invoiceDate };
 }
 
-// Sin IA: las líneas de la última factura del proveedor, a revisar a mano
-function fromLastInvoice(history: HistoryInvoice[], text: string): OcrSuggestion {
-  const last = history[0];
-  const { invoiceNo, invoiceDate } = guessHeader(text);
+// Importes con 2 decimales ("1,454.67", "1.454,67", "4150.00"); los separadores de miles no pueden ser espacios
+// (en las tablas "1 108.80" es cantidad + precio)
+function amounts(t: string) {
+  const out: number[] = [];
+  for (const m of t.matchAll(/(?<![\d.,])\d{1,3}(?:([.,'])\d{3})*[.,]\d{2}(?![\d.,]?\d)|(?<![\d.,])\d+[.,]\d{2}(?![\d.,]?\d)/g)) {
+    const s = m[0], dec = s.length - 3;
+    const v = parseFloat(s.slice(0, dec).replace(/[.,']/g, '') + '.' + s.slice(dec + 1));
+    if (isFinite(v)) out.push(Math.round(v * 100) / 100);
+  }
+  return out;
+}
+const RATES = [0.19, 0.07, 0.21, 0.2, 0.22, 0.1, 0.081, 0.077, 0.05, 0.16];
+// Totales: neto y total con IVA que cuadren (total = neto × (1 + tipo) y el IVA también aparece), con el tipo de la
+// factura modelo primero; si el modelo no lleva IVA (o el PDF dice que está exento), neto = total = el importe que
+// más se repite entre los mayores
+function totals(t: string, model: HistoryInvoice | undefined) {
+  const list = amounts(t);
+  const set = [...new Set(list)].filter(v => v > 0).sort((a, b) => b - a);
+  const near = (v: number) => set.find(x => Math.abs(x - v) <= Math.max(0.02, v * 0.0002));
+  const modelRate = model && model.net ? Math.round((model.total / model.net - 1) * 1000) / 1000 : null;
+  const taxFree = (modelRate != null && Math.abs(modelRate) < 0.001) || /tax ?free|steuerfrei|exento|reverse charge|nicht steuerbar|0[.,]00 ?%/i.test(t);
+  const rates = [...new Set([...(modelRate && modelRate > 0 ? [modelRate] : []), ...RATES])];
+  for (const r of rates) {
+    for (const net of set) {
+      const gross = Math.round(net * (1 + r) * 100) / 100;
+      const total = near(gross), vat = near(Math.round((gross - net) * 100) / 100);
+      if (total != null && vat != null) return { net, vat, total };
+    }
+  }
+  if (taxFree && set.length) {
+    const top = set.slice(0, 5);
+    const count = (v: number) => list.filter(x => x === v).length;
+    const best = top.reduce((a, b) => (count(b) > count(a) ? b : a), top[0]);
+    return { net: best, vat: 0, total: best };
+  }
+  return { net: null, vat: null, total: null };
+}
+
+// Parecido entre dos textos: palabras en común (Jaccard)
+function similarity(a: string, b: string) {
+  const words = (t: string) => new Set(norm(t).split(/[^a-z]+/).filter(w => w.length >= 3));
+  const A = words(a), B = words(b);
+  let common = 0;
+  for (const w of A) if (B.has(w)) common++;
+  return common / (A.size + B.size - common || 1);
+}
+
+// Adapta un texto del modelo (Description 2, Posting Description…) al PDF nuevo: cada referencia del modelo que salía
+// en su PDF se busca en el PDF nuevo junto a la misma etiqueta, o con exactamente la misma forma si solo hay una.
+// Lo que no estaba en su PDF (textos fijos) se deja igual. ok = false si alguna referencia no se ha encontrado
+function adapt(value: string, oldText: string, newText: string) {
+  let ok = true;
+  const out = value.replace(/[A-Za-z0-9][A-Za-z0-9\-\/.]*\d[A-Za-z0-9\-\/.]*/g, token => {
+    const t = token.replace(/[.\/-]+$/, '');
+    if (t.length < 5) return token;
+    const i = oldText.indexOf(t);
+    if (i < 0) return token;
+    const found = sameSpot(newText, before(oldText, i), rest => rest.match(shapeOf(t))?.[0] ?? null);
+    if (found) return token.replace(t, found);
+    const exact = shapeOf(t, true);
+    const same = [...new Set(newText.split(/\s+/).map(w => w.replace(/[,;:]+$/, '')).filter(w => exact.test(w)))];
+    if (same.length === 1) return token.replace(t, same[0]);
+    ok = false;
+    return token;
+  });
+  return { value: out, ok };
+}
+
+export function propose(text: string, history: HistoryInvoice[], examples: Example[]): OcrSuggestion | null {
+  if (!history.length) return null;
+  const t = flat(text);
+  const warnings: string[] = [];
+  // Modelo: el PDF anterior más parecido; a igualdad, el más reciente (examples va de más reciente a más antiguo)
+  const scored = examples.map(e => ({ e, s: similarity(t, e.text) }));
+  const best = scored.reduce<{ e: Example; s: number } | null>((a, b) => (!a || b.s > a.s + 0.02 ? b : a), null);
+  const model = (best && history.find(h => h.number === best.e.number)) || history[0];
+  const oldText = best && model.number === best.e.number ? flat(best.e.text) : '';
+
+  // Nº de factura y fechas: en el mismo sitio que en el PDF del modelo, si no por las etiquetas habituales
+  const generic = guessHeader(t);
+  let invoiceNo = '';
+  if (oldText && model.vendorInvoiceNumber) {
+    const i = oldText.indexOf(model.vendorInvoiceNumber);
+    if (i >= 0) invoiceNo = sameSpot(t, before(oldText, i), rest => rest.match(shapeOf(model.vendorInvoiceNumber))?.[0] ?? null) || '';
+  }
+  const dateAt = (iso: string) => {
+    if (!oldText || !iso) return '';
+    const d = dates(oldText).find(x => x.iso === iso);
+    return d ? sameSpot(t, before(oldText, d.index), rest => { const m = dates(rest.slice(0, 30))[0]; return m && m.index === 0 ? m.iso : null; }) || '' : '';
+  };
+  const invoiceDate = dateAt(model.invoiceDate) || generic.invoiceDate;
+  // Vencimiento solo si el PDF del modelo lo traía; si no, BC lo calcula con los términos de pago
+  const dueDate = dateAt(model.dueDate);
+  const postingDate = invoiceDate;
+
+  const { net, vat, total } = totals(t, model);
+  if (net == null) warnings.push('No se han encontrado los totales en el PDF: escribe los importes.');
+  // Líneas del modelo: una línea = el neto; varias = repartido en la misma proporción que en el modelo
+  const lines = model.lines.map(l => ({ ...l }));
+  const priced = lines.filter(l => l.lineType !== 'Comment');
+  const modelSum = priced.reduce((a, l) => a + l.quantity * l.unitCost, 0);
+  for (const l of priced) {
+    if (net == null) l.unitCost = 0;
+    else if (priced.length === 1) l.unitCost = Math.round((net / (l.quantity || 1)) * 100) / 100;
+    else if (modelSum) l.unitCost = Math.round(l.unitCost * (net / modelSum) * 100) / 100;
+  }
+  if (net != null && priced.length > 1 && !modelSum) warnings.push('El modelo tiene varias líneas que suman 0: reparte los importes.');
+
+  // Referencias de las descripciones; la Posting Description por defecto de BC ("Invoice 10044") no se copia
+  let refsOk = true;
+  const fix = (v: string) => { if (!oldText) return v; const r = adapt(v, oldText, t); refsOk &&= r.ok; return r.value; };
+  for (const l of lines) { l.description = fix(l.description); l.description2 = fix(l.description2); }
+  const postingDescription = /^(Invoice|Rechnung|Factura|Facture|Credit Memo|Gutschrift)\s+\S+$/i.test(model.postingDescription) ? '' : fix(model.postingDescription);
+  if (!refsOk) warnings.push('Alguna referencia de Description 2 / Posting Description no está en el PDF: revísalas.');
+  if (!oldText && model.lines.some(l => /\d{3,}/.test(l.description2)) ) warnings.push('La factura modelo no tiene PDF adjunto: revisa las referencias de Description 2 / Posting Description.');
+
+  const creditNote = /\b(credit note|gutschrift|nota de cr[eé]dito|avoir|abono)\b/i.test(t.slice(0, 1500)) && !/\b(invoice|rechnung|factura|facture)\b/i.test(t.slice(0, 300));
   return {
-    documentType: 'invoice', invoiceNo, invoiceDate, postingDate: invoiceDate, dueDate: '', postingDescription: last?.postingDescription || '', currency: last?.currency || '',
-    net: null, vat: null, total: null, lines: last ? last.lines.map(l => ({ ...l, unitCost: 0 })) : [],
-    comment: last ? `Líneas copiadas de la última factura ${last.number} sin importes: escribe los importes del PDF.` : '',
+    documentType: creditNote ? 'credit_note' : 'invoice',
+    invoiceNo: invoiceNo || generic.invoiceNo, invoiceDate, postingDate, dueDate, postingDescription,
+    currency: model.currency, net, vat, total, lines,
+    comment: `Modelo: factura ${model.number} (${model.postingDate})${best && oldText ? `, la más parecida al PDF (${Math.round(best.s * 100)} %)` : ', la más reciente'}.${warnings.length ? ' ' + warnings.join(' ') : ''}`,
   };
 }
 
@@ -393,34 +444,24 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
   let text = '';
   try { text = await pdfText(data); } catch (e: any) { warnings.push(`No se ha podido leer el texto del PDF (${e.message}).`); }
   const scanned = text.replace(/\s/g, '').length < 40;
-  if (scanned) text = '';
+  if (scanned) { text = ''; warnings.push('PDF escaneado (sin texto): no se puede leer. Elige el proveedor y escribe los datos a mano.'); }
   const ids = identifiers(text);
   const currency = detectCurrency(text);
   const candidates = text ? await matchVendors(ctx, text, ids, currency) : [];
   const vendor = vendorNo ? await vendorByNumber(ctx, vendorNo) : candidates[0] || null;
   if (vendorNo && !vendor) warnings.push(`El proveedor ${vendorNo} no existe en ${ctx.companyName}.`);
-  if (!vendor) warnings.push(scanned ? 'PDF escaneado: elige el proveedor a mano.' : 'No se ha reconocido el proveedor: elígelo a mano.');
-  else if (!vendorNo && candidates[1] && candidates[1].score >= candidates[0].score - 0.5) {
+  if (!vendor && !scanned) warnings.push('No se ha reconocido el proveedor: elígelo a mano.');
+  else if (vendor && !vendorNo && candidates[1] && candidates[1].score >= candidates[0].score - 0.5) {
     warnings.push(`Proveedor dudoso: ${candidates[1].number} ${candidates[1].name} también encaja. Revísalo.`);
   }
 
   const { history, examples } = vendor ? await vendorHistory(ctx, vendor.number) : { history: [], examples: [] };
   if (vendor && !history.length) warnings.push('Este proveedor no tiene facturas registradas: completa artículo/cuenta y grupo de IVA a mano.');
 
-  let suggestion: OcrSuggestion | null = null;
-  if (ocrAiConfigured()) {
-    try {
-      suggestion = await suggest(text, scanned ? data : null, vendor, history, examples);
-    } catch (e: any) {
-      warnings.push(`La IA no ha podido proponer la factura (${String(e.message).substring(0, 200)}).`);
-    }
-  } else {
-    warnings.push('Sin IA configurada (OPENROUTER_API_KEY o ANTHROPIC_API_KEY): se copian las líneas de la última factura.');
-  }
-  if (!suggestion && vendor) suggestion = fromLastInvoice(history, text);
+  const suggestion = propose(text, history, examples);
   if (suggestion?.documentType === 'credit_note') warnings.push('Parece un abono (credit note): aquí solo se crean facturas; regístralo como Credit Memo en BC.');
-  if (suggestion && vendor && suggestion.currency && suggestion.currency !== vendor.currency) {
-    warnings.push(`La factura está en ${suggestion.currency} y el proveedor ${vendor.number} en ${vendor.currency}: ¿es otro proveedor (p. ej. la ficha en ${suggestion.currency})?`);
+  if (vendor && currency && currency !== vendor.currency) {
+    warnings.push(`La factura está en ${currency} y el proveedor ${vendor.number} en ${vendor.currency}: ¿es otro proveedor (p. ej. la ficha en ${currency})?`);
   }
   const existing = vendor && suggestion?.invoiceNo ? await existingFor(ctx, vendor.number, suggestion.invoiceNo) : [];
   return { file, scanned, currency, ids, candidates, vendor, history, suggestion, existing, warnings };
