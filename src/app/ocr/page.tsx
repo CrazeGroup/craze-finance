@@ -4,6 +4,7 @@ import { Fragment, useState } from 'react';
 import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, FileText, Paperclip, Plus, RefreshCw, ScanText, Search, Trash2, Upload, X } from 'lucide-react';
 import DocPdfLink from '@/components/DocPdfLink';
 import { useCompany } from '@/contexts/CompanyContext';
+import { ACCEPT, droppedFiles, expandFiles, isPdf, pickInvoice } from './emailFiles';
 
 type Line = { lineType: string; number: string; description: string; description2: string; quantity: number; unitCost: number; taxCode: string };
 type Candidate = { number: string; name: string; currency: string; score: number; reasons: string[]; invoices: number };
@@ -35,7 +36,6 @@ type Attachment = { file: File; target: string; done?: string; error?: string };
 // Fila de "Factura + adjuntos" antes de procesar
 type Row = { id: number; invoice: File | null; attachments: File[] };
 const emptyRow = (): Row => ({ id: Date.now() + Math.random(), invoice: null, attachments: [] });
-const isPdf = (f: File) => /\.pdf$/i.test(f.name);
 
 const toForm = (s: Suggestion | null): Form => ({
   invoiceNo: s?.invoiceNo || '', invoiceDate: s?.invoiceDate || '', postingDate: s?.postingDate || '', dueDate: s?.dueDate || '',
@@ -106,6 +106,25 @@ export default function OcrPage() {
 
   // Opción 1: cada PDF es una factura
   const addBatch = (list: File[]) => setBatch(b => [...b, ...list.filter(f => isPdf(f) && !b.some(x => x.name === f.name))]);
+  // Ficheros elegidos o soltados: PDFs, o correos de Outlook (.msg/.eml) de los que se sacan sus PDFs
+  const NO_FILES = 'No ha llegado ningún fichero. Desde Outlook arrastra el adjunto o el correo entero; si no funciona, guárdalo primero en el escritorio y arrástralo desde ahí.';
+  const expand = async (list: File[]) => {
+    if (!list.length) { setNotice(NO_FILES); return []; }
+    const { pdfs, notes } = await expandFiles(list);
+    setNotice(notes.length ? notes.join(' · ') : null);
+    return pdfs;
+  };
+  const toBatch = async (list: File[]) => addBatch(await expand(list));
+  // Fila: al cuadro de adjuntos todo son adjuntos; a la factura o a la fila sin factura, el que parece la factura
+  // (por el nombre) es la factura y el resto adjuntos
+  const toRow = async (r: Row, list: File[], box: 'invoice' | 'att' | 'row') => {
+    const pdfs = await expand(list);
+    if (!pdfs.length) return;
+    if (box === 'att' || r.invoice) { addRowAttachments(r.id, pdfs); return; }
+    const { invoice, rest } = pickInvoice(pdfs);
+    setRowInvoice(r.id, invoice);
+    if (rest.length) addRowAttachments(r.id, rest);
+  };
   const processBatch = () => { const list = batch; setBatch([]); read(list); };
   // Opción 2: filas factura + adjuntos; al poner la factura en la última fila se añade otra vacía
   const setRowInvoice = (id: number, f: File | null) => setRows(rs => {
@@ -121,7 +140,7 @@ export default function OcrPage() {
   const drop = (key: string, onFiles: (l: File[]) => void) => ({
     onDragOver: (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setDragOver(key); },
     onDragLeave: () => setDragOver(k => (k === key ? null : k)),
-    onDrop: (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setDragOver(null); onFiles(Array.from(e.dataTransfer.files)); },
+    onDrop: (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setDragOver(null); onFiles(droppedFiles(e)); },
   });
   const processRows = () => {
     const ready = filledRows.filter(r => !files.some(x => x.name === r.invoice!.name));
@@ -201,15 +220,15 @@ export default function OcrPage() {
             {/* Opción 1: varios PDFs, cada uno una factura */}
             <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3"
               onDragOver={e => e.preventDefault()}
-              onDrop={e => { e.preventDefault(); addBatch(Array.from(e.dataTransfer.files)); }}>
+              onDrop={e => { e.preventDefault(); toBatch(droppedFiles(e)); }}>
               <div>
                 <p className="font-bold text-gray-900">1 · Solo facturas</p>
-                <p className="text-xs text-gray-500">Cada PDF es una factura. Elige o arrastra todos los que quieras.</p>
+                <p className="text-xs text-gray-500">Cada PDF es una factura. Elige o arrastra todos los que quieras, también desde Outlook (adjuntos o el correo entero).</p>
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 <label className="cursor-pointer inline-flex items-center gap-2 bg-white border border-gray-300 text-gray-900 text-sm font-semibold px-4 py-2 rounded-lg hover:bg-gray-50">
                   <Upload size={16} /> Elegir facturas PDF
-                  <input type="file" accept=".pdf" multiple className="hidden" onChange={e => { addBatch(Array.from(e.target.files || [])); e.target.value = ''; }} />
+                  <input type="file" accept={ACCEPT} multiple className="hidden" onChange={e => { toBatch(Array.from(e.target.files || [])); e.target.value = ''; }} />
                 </label>
                 <button onClick={processBatch} disabled={!batch.length}
                   className="ml-auto inline-flex items-center gap-2 bg-black text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-gray-800 disabled:opacity-40">
@@ -237,29 +256,23 @@ export default function OcrPage() {
               </div>
               <div className="space-y-2">
                 {rows.map((r, i) => (
-                  <div key={r.id} {...drop(`${r.id}:row`, l => {
-                    const pdfs = l.filter(isPdf);
-                    if (!pdfs.length) return;
-                    if (r.invoice) { addRowAttachments(r.id, pdfs); return; }
-                    setRowInvoice(r.id, pdfs[0]);
-                    if (pdfs.length > 1) addRowAttachments(r.id, pdfs.slice(1));
-                  })}
+                  <div key={r.id} {...drop(`${r.id}:row`, l => toRow(r, l, 'row'))}
                     className={`flex flex-wrap items-center gap-2 border rounded-lg px-3 py-2 ${dragOver === `${r.id}:row` ? 'border-indigo-500 border-dashed bg-indigo-50/40' : 'border-gray-200'}`}>
                     <span className="text-xs font-bold text-gray-400 w-5">{i + 1}</span>
                     {r.invoice ? <FileChip name={r.invoice.name} strong onRemove={() => setRowInvoice(r.id, null)} /> : (
-                      <label {...drop(`${r.id}:invoice`, l => { const f = l.find(isPdf); if (f) setRowInvoice(r.id, f); })}
+                      <label {...drop(`${r.id}:invoice`, l => toRow(r, l, 'invoice'))}
                         className={`cursor-pointer inline-flex items-center gap-1.5 text-sm font-semibold text-gray-900 border rounded-lg px-3 py-1.5 hover:bg-gray-50 ${dragOver === `${r.id}:invoice` ? 'border-indigo-500 bg-indigo-50 border-dashed' : 'border-gray-300'}`}
                         title="Elige o arrastra aquí la factura">
                         <Upload size={14} /> Factura PDF
-                        <input type="file" accept=".pdf" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) setRowInvoice(r.id, f); e.target.value = ''; }} />
+                        <input type="file" accept={ACCEPT} className="hidden" onChange={e => { toRow(r, Array.from(e.target.files || []), 'invoice'); e.target.value = ''; }} />
                       </label>
                     )}
                     {r.attachments.map(a => <FileChip key={a.name} name={a.name} attachment onRemove={() => removeRowAttachment(r.id, a.name)} />)}
-                    <label {...(r.invoice ? drop(`${r.id}:att`, l => addRowAttachments(r.id, l.filter(isPdf))) : {})}
+                    <label {...(r.invoice ? drop(`${r.id}:att`, l => toRow(r, l, 'att')) : {})}
                       title={r.invoice ? 'Elige o arrastra aquí los adjuntos' : 'Primero la factura'}
                       className={`inline-flex items-center gap-1.5 text-sm font-semibold rounded-lg px-3 py-1.5 border ${!r.invoice ? 'text-gray-300 border-gray-200 cursor-not-allowed' : dragOver === `${r.id}:att` ? 'cursor-pointer text-gray-700 border-indigo-500 bg-indigo-50 border-dashed' : 'cursor-pointer text-gray-700 border-gray-300 hover:bg-gray-50'}`}>
                       <Paperclip size={14} /> Adjuntos
-                      <input type="file" accept=".pdf" multiple disabled={!r.invoice} className="hidden" onChange={e => { addRowAttachments(r.id, Array.from(e.target.files || [])); e.target.value = ''; }} />
+                      <input type="file" accept={ACCEPT} multiple disabled={!r.invoice} className="hidden" onChange={e => { toRow(r, Array.from(e.target.files || []), 'att'); e.target.value = ''; }} />
                     </label>
                     {(r.invoice || r.attachments.length > 0) && (
                       <button onClick={() => removeRow(r.id)} title="Quitar la fila" className="ml-auto p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"><Trash2 size={14} /></button>

@@ -288,7 +288,7 @@ const dates = (t: string) => [...t.matchAll(DATE_RE)].map(m => ({ index: m.index
 const before = (t: string, i: number) => t.slice(Math.max(0, i - 30), i).replace(/^\S*\s/, '');
 // Valor con la misma etiqueta en el texto nuevo: prueba la etiqueta entera y luego sus finales (≥ 6 caracteres)
 function sameSpot(text: string, label: string, read: (rest: string) => string | null) {
-  for (let n = label.length; n >= 6; n--) {
+  for (let n = label.length; n >= 4; n--) {
     const l = label.slice(-n);
     if (!/[A-Za-z]{3}/.test(l)) break;
     for (let i = text.indexOf(l); i >= 0; i = text.indexOf(l, i + 1)) {
@@ -429,15 +429,20 @@ export function propose(text: string, history: HistoryInvoice[], examples: Examp
     const i = oldText.indexOf(model.vendorInvoiceNumber);
     if (i >= 0) invoiceNo = sameSpot(t, before(oldText, i), rest => rest.match(shapeOf(model.vendorInvoiceNumber))?.[0] ?? null) || '';
   }
+  // Estimada o real es la misma fecha de transporte: ETS = ATS, ETD = ATD, ETA = ATA
+  const transport = (x: string) => x.replace(/\b[EA]T([SDA])\b/g, 'ET$1');
+  const tDates = transport(t), oldDates = transport(oldText);
   const dateAt = (iso: string) => {
     if (!oldText || !iso) return '';
-    const d = dates(oldText).find(x => x.iso === iso);
-    return d ? sameSpot(t, before(oldText, d.index), rest => { const m = dates(rest.slice(0, 30))[0]; return m && m.index === 0 ? m.iso : null; }) || '' : '';
+    const d = dates(oldDates).find(x => x.iso === iso);
+    return d ? sameSpot(tDates, before(oldDates, d.index), rest => { const m = dates(rest.slice(0, 30))[0]; return m && m.index === 0 ? m.iso : null; }) || '' : '';
   };
   const invoiceDate = dateAt(model.invoiceDate) || generic.invoiceDate;
   // Vencimiento solo si el PDF del modelo lo traía; si no, BC lo calcula con los términos de pago
   const dueDate = dateAt(model.dueDate);
-  const postingDate = invoiceDate;
+  // Fecha de registro: la del sitio del PDF donde estaba la del modelo (p. ej. Meyer's Sohn GmbH: ETS/ATS), si no la
+  // fecha de factura
+  const postingDate = (model.postingDate !== model.invoiceDate && dateAt(model.postingDate)) || invoiceDate;
 
   const { net, vat, total, taxable, free } = totals(t, model);
   if (net == null) warnings.push('No se han encontrado los totales en el PDF: escribe los importes.');
