@@ -1,15 +1,15 @@
 'use client';
 
 import { Fragment, useState } from 'react';
-import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, FileText, Plus, RefreshCw, ScanText, Search, Trash2, Upload, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, FileText, Paperclip, Plus, RefreshCw, ScanText, Search, Trash2, Upload, X } from 'lucide-react';
 import DocPdfLink from '@/components/DocPdfLink';
 import { useCompany } from '@/contexts/CompanyContext';
 
 type Line = { lineType: string; number: string; description: string; description2: string; quantity: number; unitCost: number; taxCode: string };
 type Candidate = { number: string; name: string; currency: string; score: number; reasons: string[]; invoices: number };
-type HistoryInvoice = { number: string; vendorInvoiceNumber: string; invoiceDate: string; postingDate: string; currency: string; net: number; total: number; lines: Line[] };
+type HistoryInvoice = { number: string; vendorInvoiceNumber: string; invoiceDate: string; postingDate: string; currency: string; net: number; total: number; postingDescription: string; lines: Line[] };
 type Suggestion = {
-  documentType: string; invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string;
+  documentType: string; invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string; postingDescription: string;
   currency: string; net: number | null; vat: number | null; total: number | null; lines: Line[]; comment: string;
 };
 type Doc = {
@@ -19,8 +19,8 @@ type Doc = {
 };
 // Valores editables de cada factura antes de crearla (importes como texto, formato es-ES)
 type FormLine = Omit<Line, 'quantity' | 'unitCost'> & { quantity: string; unitCost: string };
-type Form = { invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string; lines: FormLine[] };
-type Status = { saving?: boolean; created?: { no: string; net: number | null; total: number | null; currency: string }; warnings?: string[]; error?: string | null };
+type Form = { invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string; postingDescription: string; lines: FormLine[] };
+type Status = { saving?: boolean; created?: { id: string; no: string; net: number | null; total: number | null; currency: string }; warnings?: string[]; error?: string | null };
 
 const nf = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmt = (v: number | null | undefined) => (v == null ? '—' : nf.format(v));
@@ -30,8 +30,12 @@ const input = 'border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white';
 const LINE_TYPES = ['Item', 'Account', 'Resource', 'Fixed Asset', 'Charge', 'Comment'];
 const blank: FormLine = { lineType: 'Item', number: '', description: '', description2: '', quantity: '1', unitCost: '0', taxCode: '' };
 
+// Adjunto extra (no se lee): va a la factura elegida al enviarla a BC
+type Attachment = { file: File; target: string; done?: string; error?: string };
+
 const toForm = (s: Suggestion | null): Form => ({
   invoiceNo: s?.invoiceNo || '', invoiceDate: s?.invoiceDate || '', postingDate: s?.postingDate || '', dueDate: s?.dueDate || '',
+  postingDescription: s?.postingDescription || '',
   lines: (s?.lines || []).map(l => ({ ...l, quantity: toText(l.quantity), unitCost: toText(l.unitCost) })),
 });
 
@@ -44,6 +48,7 @@ export default function OcrPage() {
   const [forms, setForms] = useState<Record<string, Form>>({});
   const [status, setStatus] = useState<Record<string, Status>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
 
   // Un PDF por llamada (límite de 4,5 MB por petición en Vercel), dos a la vez
   const parse = async (file: File, vendor?: string) => {
@@ -84,7 +89,31 @@ export default function OcrPage() {
     setForms(({ [file]: _f, ...rest }) => rest);
     setStatus(({ [file]: _s, ...rest }) => rest);
     setSelected(prev => { const n = new Set(prev); n.delete(file); return n; });
+    setAttachments(l => l.map(a => (a.target === file ? { ...a, target: '' } : a)));
   };
+  // Adjuntos: a la factura cuyo nº sale en el nombre del fichero, o a la única que haya; si no, se elige en la lista
+  const guessTarget = (name: string) => {
+    const n = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const byNo = docs.find(d => { const no = (forms[d.file]?.invoiceNo || '').toLowerCase().replace(/[^a-z0-9]/g, ''); return no.length >= 4 && n.includes(no); });
+    return byNo?.file || (docs.length === 1 ? docs[0].file : '');
+  };
+  const addAttachments = (list: File[]) => setAttachments(a => [...a, ...list.filter(f => !a.some(x => x.file.name === f.name)).map(f => ({ file: f, target: guessTarget(f.name) }))]);
+  const uploadAttachments = async (file: string, id: string) => {
+    for (const a of attachments.filter(x => x.target === file && !x.done)) {
+      try {
+        const form = new FormData();
+        form.append('id', id);
+        form.append('file', a.file);
+        const res = await fetch('/api/ocr/attach', { method: 'POST', body: form });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Error al adjuntar');
+        setAttachments(l => l.map(x => (x.file === a.file ? { ...x, done: id, error: undefined } : x)));
+      } catch (e: any) {
+        setAttachments(l => l.map(x => (x.file === a.file ? { ...x, error: e.message } : x)));
+      }
+    }
+  };
+
   const changeVendor = (d: Doc, vendor: string) => { const f = files.find(x => x.name === d.file); if (f && vendor) parse(f, vendor); };
 
   const create = async (d: Doc, confirmed = false) => {
@@ -96,7 +125,8 @@ export default function OcrPage() {
     try {
       const form = new FormData();
       form.append('data', JSON.stringify({
-        vendor: d.vendor.number, invoiceNo: f.invoiceNo.trim(), invoiceDate: f.invoiceDate, postingDate: f.postingDate, dueDate: f.dueDate, ids: d.ids, force,
+        vendor: d.vendor.number, invoiceNo: f.invoiceNo.trim(), invoiceDate: f.invoiceDate, postingDate: f.postingDate, dueDate: f.dueDate,
+        postingDescription: f.postingDescription, ids: d.ids, force,
         lines: f.lines.map(l => ({ ...l, quantity: toNum(l.quantity), unitCost: toNum(l.unitCost) })),
       }));
       const pdf = files.find(x => x.name === d.file);
@@ -105,6 +135,7 @@ export default function OcrPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Error al crear la factura');
       setStatus(s => ({ ...s, [d.file]: { created: json, warnings: json.warnings } }));
+      await uploadAttachments(d.file, json.id);
       setSelected(prev => { const n = new Set(prev); n.delete(d.file); return n; });
     } catch (e: any) {
       setStatus(s => ({ ...s, [d.file]: { error: e.message } }));
@@ -138,11 +169,17 @@ export default function OcrPage() {
           <div className="bg-white border border-gray-200 rounded-xl p-4 flex flex-wrap items-center gap-3"
             onDragOver={e => e.preventDefault()}
             onDrop={e => { e.preventDefault(); read(Array.from(e.dataTransfer.files)); }}>
-            <label className="cursor-pointer inline-flex items-center gap-2 bg-black text-white text-sm font-semibold px-4 py-2.5 rounded-lg hover:bg-gray-800">
+            <label className="cursor-pointer inline-flex items-center gap-2 bg-black text-white text-sm font-semibold px-4 py-2.5 rounded-lg hover:bg-gray-800"
+              title="Se leen: proveedor, importes, fechas, Posting Description y líneas según sus facturas registradas en BC">
               <Upload size={16} /> Subir facturas PDF
               <input type="file" accept=".pdf" multiple className="hidden" onChange={e => { read(Array.from(e.target.files || [])); e.target.value = ''; }} />
             </label>
-            <span className="text-sm text-gray-500">{files.length ? `${files.length} PDF` : 'o arrástralas aquí (varias a la vez)'}</span>
+            <label className="cursor-pointer inline-flex items-center gap-2 bg-white border border-gray-300 text-gray-900 text-sm font-semibold px-4 py-2.5 rounded-lg hover:bg-gray-50"
+              title="No se leen: se añaden como Attachment a la factura elegida al enviarla a BC">
+              <Paperclip size={16} /> Subir adjuntos PDF
+              <input type="file" accept=".pdf" multiple className="hidden" onChange={e => { addAttachments(Array.from(e.target.files || [])); e.target.value = ''; }} />
+            </label>
+            <span className="text-sm text-gray-500">{files.length ? `${files.length} factura${files.length > 1 ? 's' : ''}` : 'Facturas: también puedes arrastrarlas aquí'}{attachments.length ? ` · ${attachments.length} adjunto${attachments.length > 1 ? 's' : ''}` : ''}</span>
             {docs.some(d => d.loading) && <span className="text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Leyendo y buscando las facturas anteriores del proveedor…</span>}
             {valid.length > 1 && (
               <div className="ml-auto flex items-center gap-3">
@@ -159,8 +196,35 @@ export default function OcrPage() {
           </div>
         )}
 
+        {attachments.length > 0 && (
+          <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-2">
+            <p className="text-sm font-semibold text-gray-900 flex items-center gap-2"><Paperclip size={15} /> Adjuntos <span className="font-normal text-gray-500">(no se leen; se añaden a la factura elegida al enviarla a BC)</span></p>
+            {attachments.map(a => {
+              const created = status[a.target]?.created;
+              return (
+                <div key={a.file.name} className="flex flex-wrap items-center gap-2 text-sm">
+                  <FileText size={14} className="text-gray-400" />
+                  <span className="font-medium">{a.file.name}</span>
+                  <span className="text-gray-400">→</span>
+                  <select value={a.target} disabled={!!a.done} onChange={e => setAttachments(l => l.map(x => (x.file === a.file ? { ...x, target: e.target.value } : x)))} className={`${input} max-w-[420px]`}>
+                    <option value="">— elige la factura —</option>
+                    {docs.filter(d => !d.error).map(d => (
+                      <option key={d.file} value={d.file}>{forms[d.file]?.invoiceNo || d.file}{d.vendor ? ` · ${d.vendor.name}` : ''}</option>
+                    ))}
+                  </select>
+                  {a.done ? <span className="inline-flex items-center gap-1 text-emerald-700 text-xs font-semibold"><CheckCircle2 size={13} /> Adjuntado a {created?.no}</span>
+                    : created ? <button onClick={() => uploadAttachments(a.target, created.id)} className="text-xs font-semibold text-indigo-700 hover:underline">Adjuntar ahora a {created.no}</button>
+                    : !a.target ? <span className="text-xs text-amber-800">Sin factura: no se envía</span> : null}
+                  {a.error && <span className="text-xs text-red-700">{a.error}</span>}
+                  {!a.done && <button onClick={() => setAttachments(l => l.filter(x => x.file !== a.file))} title="Quitar" className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"><X size={14} /></button>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {docs.map(d => (
-          <DocCard key={d.file} d={d} f={forms[d.file]} st={status[d.file] || {}} selected={selected.has(d.file)}
+          <DocCard key={d.file} d={d} f={forms[d.file]} attachments={attachments.filter(a => a.target === d.file).map(a => a.file.name)} st={status[d.file] || {}} selected={selected.has(d.file)}
             onToggle={() => toggle(d.file)} onRemove={() => remove(d.file)} onVendor={v => changeVendor(d, v)} onCreate={() => create(d)}
             setField={(k, v) => setField(d.file, k, v)} setLine={(i, k, v) => setLine(d.file, i, k, v)}
             addLine={l => addLine(d.file, l)} removeLine={i => removeLine(d.file, i)} />
@@ -170,8 +234,8 @@ export default function OcrPage() {
   );
 }
 
-function DocCard({ d, f, st, selected, onToggle, onRemove, onVendor, onCreate, setField, setLine, addLine, removeLine }: {
-  d: Doc; f?: Form; st: Status; selected: boolean;
+function DocCard({ d, f, attachments, st, selected, onToggle, onRemove, onVendor, onCreate, setField, setLine, addLine, removeLine }: {
+  d: Doc; f?: Form; attachments: string[]; st: Status; selected: boolean;
   onToggle: () => void; onRemove: () => void; onVendor: (v: string) => void; onCreate: () => void;
   setField: (k: Exclude<keyof Form, 'lines'>, v: string) => void; setLine: (i: number, k: keyof FormLine, v: string) => void;
   addLine: (l?: Line) => void; removeLine: (i: number) => void;
@@ -212,6 +276,9 @@ function DocCard({ d, f, st, selected, onToggle, onRemove, onVendor, onCreate, s
           <label className="text-xs font-semibold text-gray-500">Vencimiento <span className="font-normal">(vacío: según términos de pago)</span>
             <input type="date" value={f.dueDate} onChange={e => setField('dueDate', e.target.value)} className={`${input} block mt-1`} />
           </label>
+          <label className="text-xs font-semibold text-gray-500 flex-1 min-w-[260px]">Posting Description
+            <input value={f.postingDescription} maxLength={100} onChange={e => setField('postingDescription', e.target.value)} className={`${input} block mt-1 w-full`} />
+          </label>
         </div>
 
         <table className="w-full text-sm">
@@ -247,6 +314,7 @@ function DocCard({ d, f, st, selected, onToggle, onRemove, onVendor, onCreate, s
         {diff != null && Math.abs(diff) >= 0.01 && (
           <p className="text-xs text-red-700 flex items-center gap-1"><AlertCircle size={13} /> Las líneas suman {fmt(sum)} y el neto del PDF es {fmt(s!.net)} (diferencia {fmt(diff)}).</p>
         )}
+        {attachments.length > 0 && <p className="text-xs text-gray-600 flex items-center gap-1"><Paperclip size={13} /> Se adjuntarán también: {attachments.join(', ')}</p>}
         {s?.comment && <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2"><b>Propuesta:</b> {s.comment}</p>}
         {d.warnings.map(w => <p key={w} className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {w}</p>)}
         {d.existing.map(e => <p key={e.no} className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> Ya existe en BC: {e.no} ({e.status === 'Draft' ? 'pendiente' : 'registrada'})<DocPdfLink documentNo={e.no} /></p>)}
@@ -269,7 +337,7 @@ function DocCard({ d, f, st, selected, onToggle, onRemove, onVendor, onCreate, s
                     <Fragment key={h.number}>
                       {h.lines.map((l, i) => (
                         <tr key={i} className={i ? '' : 'border-t border-gray-200'}>
-                          <td className="p-2 whitespace-nowrap">{i ? '' : <><b>{h.number}</b> <span className="text-xs text-gray-500">{h.vendorInvoiceNumber}</span><DocPdfLink documentNo={h.number} /></>}</td>
+                          <td className="p-2 whitespace-nowrap">{i ? '' : <><b>{h.number}</b> <span className="text-xs text-gray-500">{h.vendorInvoiceNumber}</span><DocPdfLink documentNo={h.number} />{h.postingDescription && <span className="block text-xs text-gray-500">{h.postingDescription}</span>}</>}</td>
                           <td className="p-2 text-gray-500 whitespace-nowrap">{i ? '' : h.postingDate}</td>
                           <td className="p-2 font-mono text-xs whitespace-nowrap">{l.lineType} · {l.number}</td>
                           <td className="p-2">{l.description}{l.description2 && <span className="text-gray-500"> · {l.description2}</span>}</td>

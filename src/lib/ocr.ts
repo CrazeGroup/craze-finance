@@ -22,10 +22,10 @@ export type OcrLine = {
 export type VendorCandidate = { number: string; name: string; currency: string; score: number; reasons: string[]; invoices: number };
 export type HistoryInvoice = {
   number: string; vendorInvoiceNumber: string; invoiceDate: string; postingDate: string; dueDate: string;
-  currency: string; net: number; total: number; lines: OcrLine[];
+  currency: string; net: number; total: number; postingDescription: string; lines: OcrLine[];
 };
 export type OcrSuggestion = {
-  documentType: 'invoice' | 'credit_note'; invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string;
+  documentType: 'invoice' | 'credit_note'; invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string; postingDescription: string;
   currency: string; net: number | null; vat: number | null; total: number | null; lines: OcrLine[]; comment: string;
 };
 export type OcrResult = {
@@ -179,9 +179,12 @@ export async function searchVendors(ctx: BcContext, term: string) {
 }
 
 // ---------- Facturas anteriores del proveedor ----------
+// Línea registrada (custom purchInvLines = Posted Purchase Invoice Lines) en el formato de la API v2 para crearla:
+// tipo v2 y taxCode = VAT Prod. Posting Group
+const LINE_TYPE: Record<string, string> = { Item: 'Item', G_x002F_L_x0020_Account: 'Account', 'G/L Account': 'Account', Resource: 'Resource', Fixed_x0020_Asset: 'Fixed Asset', 'Fixed Asset': 'Fixed Asset', Charge_x0020__x0028_Item_x0029_: 'Charge', 'Charge (Item)': 'Charge', _x0020_: 'Comment', '': 'Comment' };
 const toLine = (l: any): OcrLine => ({
-  lineType: l.lineType, number: l.lineObjectNumber || '', description: l.description || '', description2: l.description2 || '',
-  quantity: l.quantity, unitCost: l.unitCost ?? l.directUnitCost ?? 0, taxCode: l.taxCode || '',
+  lineType: LINE_TYPE[l.type] ?? String(l.type), number: l.no || '', description: l.description || '', description2: l.description2 || '',
+  quantity: l.quantity, unitCost: l.directUnitCost ?? 0, taxCode: l.vatProdPostingGroup || '',
 });
 
 async function bcGet(ctx: BcContext, url: string) {
@@ -194,18 +197,36 @@ async function bcGet(ctx: BcContext, url: string) {
 export async function vendorHistory(ctx: BcContext, vendor: string) {
   const data = await bcGet(ctx, odataUrl(`${ctx.apiBase}/purchaseInvoices`, {
     $filter: `vendorNumber eq '${q(vendor)}' and status ne 'Draft' and status ne 'Canceled'`,
-    $orderby: 'postingDate desc', $top: '15', $expand: 'purchaseInvoiceLines',
+    $orderby: 'postingDate desc', $top: '30',
   }));
-  const raw: any[] = data.value || [];
+  // La más reciente primero por nº de documento (BC lo numera al registrar; la fecha de registro puede ser anterior):
+  // la forma de registrarlas va mejorando y la última es el modelo
+  const raw: any[] = (data.value || []).sort((a: any, b: any) => b.number.localeCompare(a.number, undefined, { numeric: true })).slice(0, 15);
+  if (!raw.length) return { history: [] as HistoryInvoice[], examples: [] as { number: string; text: string }[] };
+  // Líneas de Posted Purchase Invoice Lines y Posting Description = descripción del movimiento de proveedor
+  // (la cabecera registrada no la publica)
+  const oldest = raw[raw.length - 1].postingDate;
+  const [lines, entries] = await Promise.all([
+    bcFetchAll(odataUrl(`${ctx.customApiBase}/purchInvLines`, {
+      $filter: raw.map(i => `documentNo eq '${q(i.number)}'`).join(' or '),
+      $select: 'documentNo,lineNo,type,no,description,description2,quantity,directUnitCost,vatProdPostingGroup',
+    }), ctx.token),
+    bcFetchAll(odataUrl(`${ctx.customApiBase}/vendorLedgerEntries`, {
+      $filter: `vendorNo eq '${q(vendor)}' and documentType eq 'Invoice' and postingDate ge ${oldest}`, $select: 'documentNo,description',
+    }), ctx.token).catch(() => []),
+  ]);
+  const linesBy = new Map<string, any[]>();
+  for (const l of lines.sort((a: any, b: any) => a.lineNo - b.lineNo)) linesBy.set(l.documentNo, [...(linesBy.get(l.documentNo) || []), l]);
+  const descBy = new Map<string, string>(entries.map((e: any) => [e.documentNo, e.description || '']));
   const history: HistoryInvoice[] = raw.map(i => ({
     number: i.number, vendorInvoiceNumber: i.vendorInvoiceNumber, invoiceDate: i.invoiceDate, postingDate: i.postingDate, dueDate: i.dueDate,
-    currency: i.currencyCode, net: i.totalAmountExcludingTax, total: i.totalAmountIncludingTax,
-    lines: (i.purchaseInvoiceLines || []).sort((a: any, b: any) => a.sequence - b.sequence).map(toLine).filter((l: OcrLine) => l.lineType !== 'Comment' || l.description),
+    currency: i.currencyCode, net: i.totalAmountExcludingTax, total: i.totalAmountIncludingTax, postingDescription: descBy.get(i.number) || '',
+    lines: (linesBy.get(i.number) || []).map(toLine).filter((l: OcrLine) => l.lineType !== 'Comment' || l.description),
   }));
   // Ejemplos con PDF: uno por cada combinación distinta de artículos/cuentas, de las más recientes
   const seen = new Set<string>();
   const picks = raw.filter(i => {
-    const sig = (i.purchaseInvoiceLines || []).map((l: any) => l.lineObjectNumber).sort().join('|');
+    const sig = (linesBy.get(i.number) || []).map((l: any) => l.no).sort().join('|');
     if (seen.has(sig)) return false;
     seen.add(sig);
     return true;
@@ -245,7 +266,7 @@ const num = (v: unknown) => (typeof v === 'number' && isFinite(v) ? v : typeof v
 export async function suggest(text: string, pdf: Uint8Array | null, vendor: VendorCandidate | null, history: HistoryInvoice[], examples: { number: string; text: string }[]): Promise<OcrSuggestion> {
   const hist = history.map(h => ({
     invoice: h.number, vendorInvoiceNo: h.vendorInvoiceNumber, invoiceDate: h.invoiceDate, postingDate: h.postingDate, dueDate: h.dueDate,
-    currency: h.currency, netAmount: h.net, totalAmount: h.total,
+    currency: h.currency, netAmount: h.net, totalAmount: h.total, postingDescription: h.postingDescription,
     lines: h.lines.map(l => ({ type: l.lineType, no: l.number, description: l.description, description2: l.description2, quantity: l.quantity, unitCost: l.unitCost, vatGroup: l.taxCode })),
   }));
   const prompt = `Eres contable de CRAZE y registras facturas de proveedor en Microsoft Dynamics 365 Business Central como Purchase Invoice.
@@ -253,7 +274,8 @@ Lee la factura nueva y propón la cabecera y las líneas EXACTAMENTE como se han
 
 Proveedor: ${vendor ? `${vendor.number} ${vendor.name} (divisa ${vendor.currency})` : 'desconocido'}
 
-Facturas anteriores registradas de este proveedor (más recientes primero), con sus líneas en BC:
+Facturas anteriores registradas de este proveedor, de la más reciente a la más antigua, con sus líneas en BC.
+La forma de registrarlas ha ido mejorando: la PRIMERA (la más reciente) es el modelo; si las anteriores son distintas, sigue la más reciente.
 ${hist.length ? JSON.stringify(hist) : 'ninguna'}
 
 ${examples.map(e => `Texto del PDF de la factura anterior ${e.number} (para ver cómo se pasó del PDF a las líneas):\n"""\n${e.text}\n"""`).join('\n\n')}
@@ -262,6 +284,7 @@ ${text ? `Texto de la factura NUEVA:\n"""\n${text.substring(0, 15000)}\n"""` : '
 
 Reglas:
 - Usa solo combinaciones de tipo (type), nº (no) y grupo de IVA (vatGroup) que aparezcan en las facturas anteriores; elige la que corresponda al concepto de cada cargo de la factura nueva (compara con los PDFs anteriores). Si no hay facturas anteriores, deja "no" y "vatGroup" vacíos.
+- postingDescription (Posting Description de la cabecera) con el mismo patrón que las anteriores (p. ej. pedido / contenedor, periodo, "Invoice <nº>"…), adaptando los datos de la factura nueva.
 - Descripción y Description 2 con el mismo estilo que las anteriores, adaptando lo que cambie (periodo, nº de contenedor, referencia…).
 - Misma forma de cantidades que las anteriores (p. ej. 1 × importe). unitCost en la divisa de la factura, SIN IVA (los importes de las líneas no llevan IVA).
 - La suma de quantity × unitCost debe ser el importe neto (sin IVA) de la factura nueva.
@@ -270,7 +293,7 @@ Reglas:
 - Fechas en formato YYYY-MM-DD; importes como números con punto decimal.
 
 Responde SOLO con este JSON:
-{"documentType":"invoice","invoiceNo":"","invoiceDate":"","postingDate":"","dueDate":"","currency":"","net":0,"vat":0,"total":0,"lines":[{"type":"Item","no":"","description":"","description2":"","quantity":1,"unitCost":0,"vatGroup":""}],"comment":"breve explicación en español de cómo has elegido las líneas o de lo que haya que revisar"}`;
+{"documentType":"invoice","invoiceNo":"","invoiceDate":"","postingDate":"","dueDate":"","postingDescription":"","currency":"","net":0,"vat":0,"total":0,"lines":[{"type":"Item","no":"","description":"","description2":"","quantity":1,"unitCost":0,"vatGroup":""}],"comment":"breve explicación en español de cómo has elegido las líneas o de lo que haya que revisar"}`;
   const raw = await askAi(prompt, !text && pdf ? pdf : null);
   const j = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] ?? raw);
   return {
@@ -279,6 +302,7 @@ Responde SOLO con este JSON:
     invoiceDate: isDate(j.invoiceDate) ? j.invoiceDate : '',
     postingDate: isDate(j.postingDate) ? j.postingDate : isDate(j.invoiceDate) ? j.invoiceDate : '',
     dueDate: isDate(j.dueDate) ? j.dueDate : '',
+    postingDescription: String(j.postingDescription || '').substring(0, 100),
     currency: String(j.currency || '').toUpperCase(),
     net: num(j.net), vat: num(j.vat), total: num(j.total),
     lines: (Array.isArray(j.lines) ? j.lines : []).map((l: any) => ({
@@ -349,7 +373,7 @@ function fromLastInvoice(history: HistoryInvoice[], text: string): OcrSuggestion
   const last = history[0];
   const { invoiceNo, invoiceDate } = guessHeader(text);
   return {
-    documentType: 'invoice', invoiceNo, invoiceDate, postingDate: invoiceDate, dueDate: '', currency: last?.currency || '',
+    documentType: 'invoice', invoiceNo, invoiceDate, postingDate: invoiceDate, dueDate: '', postingDescription: last?.postingDescription || '', currency: last?.currency || '',
     net: null, vat: null, total: null, lines: last ? last.lines.map(l => ({ ...l })) : [],
     comment: last ? `Líneas copiadas de la última factura ${last.number}: revisa importes y datos.` : '',
   };
@@ -396,7 +420,7 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
 
 // ---------- Crear en BC ----------
 export type OcrCreateInput = {
-  vendor: string; invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string;
+  vendor: string; invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string; postingDescription?: string;
   lines: OcrLine[]; ids?: string[]; force?: boolean;
 };
 
@@ -430,6 +454,14 @@ export async function createOcrInvoice(ctx: BcContext, input: OcrCreateInput, pd
     await bcRequest('DELETE', headUrl, ctx.token).catch(() => {});
     throw e;
   }
+  // La Posting Description no está en v2: por la página OData purchaseDocuments (por SystemId), como en Aduanas
+  if (input.postingDescription?.trim()) {
+    try {
+      await bcRequest('PATCH', `${ctx.odataCompanyBase}/purchaseDocuments(${id})`, ctx.token, { postingDescription: input.postingDescription.trim().substring(0, 100) });
+    } catch (e: any) {
+      warnings.push(`No se ha podido poner la Posting Description (${String(e.message).substring(0, 160)}); escríbela en BC.`);
+    }
+  }
   if (pdf) {
     try {
       await attachFile(ctx, id, pdf);
@@ -438,5 +470,5 @@ export async function createOcrInvoice(ctx: BcContext, input: OcrCreateInput, pd
     }
   }
   const after = await bcRequest('GET', headUrl, ctx.token).catch(() => null);
-  return { no, net: after?.totalAmountExcludingTax ?? null, total: after?.totalAmountIncludingTax ?? null, currency: after?.currencyCode || '', warnings };
+  return { id, no, net: after?.totalAmountExcludingTax ?? null, total: after?.totalAmountIncludingTax ?? null, currency: after?.currencyCode || '', warnings };
 }
