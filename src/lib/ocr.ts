@@ -2,6 +2,7 @@ import { getDocumentProxy, extractText } from 'unpdf';
 import { bcFetchAll, BcContext, odataUrl } from '@/lib/bcClient';
 import { attachFile, bcRequest } from '@/lib/bcWrite';
 import { cached, readSetting, writeSetting, HOUR } from '@/lib/reporting/cache';
+import Anthropic from '@anthropic-ai/sdk';
 import { aiConfigured, generateText, type AiPart } from '@/lib/ai';
 import { companyCurrency } from '@/lib/royalties';
 
@@ -81,20 +82,22 @@ export function detectCurrency(text: string) {
 // ---------- Proveedores ----------
 type VendorRow = { number: string; name: string; email: string; website: string; vat: string; currency: string; blocked: boolean; invoices: number };
 
-// Proveedores de la empresa con su nº de facturas del último año (caché 6 h)
-async function vendorIndex(ctx: BcContext): Promise<VendorRow[]> {
-  return cached(`ocr:vendors:${ctx.companyName}`, 6 * HOUR, async () => {
+// Proveedores de la empresa con su nº de facturas del último año y nuestro propio VAT (caché 6 h)
+async function vendorIndex(ctx: BcContext): Promise<{ vendors: VendorRow[]; ownVat: string }> {
+  return cached(`ocr:vendors2:${ctx.companyName}`, 6 * HOUR, async () => {
     const since = new Date(Date.now() - 365 * 24 * HOUR).toISOString().substring(0, 10);
-    const [vendors, invoices] = await Promise.all([
+    const [vendors, invoices, info] = await Promise.all([
       bcFetchAll(odataUrl(`${ctx.apiBase}/vendors`, { $select: 'number,displayName,email,website,taxRegistrationNumber,currencyCode,blocked' }), ctx.token),
       bcFetchAll(odataUrl(`${ctx.apiBase}/purchaseInvoices`, { $filter: `postingDate ge ${since}`, $select: 'vendorNumber' }), ctx.token).catch(() => []),
+      bcFetchAll(odataUrl(`${ctx.apiBase}/companyInformation`, { $select: 'taxRegistrationNumber' }), ctx.token).catch(() => []),
     ]);
     const count = new Map<string, number>();
     for (const i of invoices) count.set(i.vendorNumber, (count.get(i.vendorNumber) || 0) + 1);
-    return vendors.map((v: any) => ({
+    const rows = vendors.map((v: any) => ({
       number: v.number, name: v.displayName || '', email: v.email || '', website: v.website || '', vat: squash(v.taxRegistrationNumber || ''),
       currency: v.currencyCode || '', blocked: !!v.blocked && v.blocked.trim?.() !== '' && v.blocked !== '_x0020_', invoices: count.get(v.number) || 0,
     }));
+    return { vendors: rows, ownVat: squash(info[0]?.taxRegistrationNumber || '') };
   });
 }
 
@@ -109,7 +112,9 @@ type Hints = Record<string, string | null>;
 const hintsKey = (company: string) => `ocr:hints:${company}`;
 
 export async function matchVendors(ctx: BcContext, text: string, ids: string[], currency: string): Promise<VendorCandidate[]> {
-  const [vendors, hints] = await Promise.all([vendorIndex(ctx), readSetting<Hints>(hintsKey(ctx.companyName), {})]);
+  const [{ vendors, ownVat }, hints] = await Promise.all([vendorIndex(ctx), readSetting<Hints>(hintsKey(ctx.companyName), {})]);
+  // Nuestro VAT sale en todas las facturas: no identifica al proveedor
+  ids = ids.filter(id => id !== `vat:${ownVat}`);
   const words = new Set(norm(text).split(/[^a-z0-9]+/));
   const flat = norm(text).replace(/[^a-z0-9]+/g, ' ');
   const lcy = companyCurrency(ctx.companyName);
@@ -128,8 +133,10 @@ export async function matchVendors(ctx: BcContext, text: string, ids: string[], 
     const nw = nameWords(v.name);
     const hit = nw.filter(w => words.has(w));
     if (hit.length && hit.some(w => w.length >= 4)) {
-      score += 3 * hit.length / nw.length;
-      if (nw.length > 1 && flat.includes(nw.join(' '))) score += 1;
+      // Más palabras coincidentes = nombre más concreto ("Amazon EU SARL, Niederlassung Deutschland" frente a "Amazon EU SARL")
+      score += 3 * hit.length / nw.length + 0.5 * (hit.length - 1);
+      const full = norm(v.name.replace(/\([^)]*\)/g, ' ')).replace(/[^a-z0-9]+/g, ' ').trim();
+      if (full.split(' ').length > 1 && flat.includes(full)) score += 1;
       reasons.push(`nombre (${hit.length}/${nw.length} palabras)`);
     }
     if (score < 1) continue;
@@ -156,7 +163,7 @@ export async function learnVendor(company: string, ids: string[], vendor: string
 }
 
 export async function vendorByNumber(ctx: BcContext, number: string): Promise<VendorCandidate | null> {
-  const v = (await vendorIndex(ctx)).find(x => x.number.toLowerCase() === number.trim().toLowerCase());
+  const v = (await vendorIndex(ctx)).vendors.find(x => x.number.toLowerCase() === number.trim().toLowerCase());
   return v ? { number: v.number, name: v.name, currency: vendorCurrency(v) || companyCurrency(ctx.companyName), score: 0, reasons: ['elegido a mano'], invoices: v.invoices } : null;
 }
 
@@ -164,7 +171,7 @@ export async function vendorByNumber(ctx: BcContext, number: string): Promise<Ve
 export async function searchVendors(ctx: BcContext, term: string) {
   const t = norm(term.trim());
   if (t.length < 2) return [];
-  return (await vendorIndex(ctx))
+  return (await vendorIndex(ctx)).vendors
     .filter(v => v.number.toLowerCase().includes(t) || norm(v.name).includes(t))
     .sort((a, b) => b.invoices - a.invoices)
     .slice(0, 20)
@@ -264,10 +271,8 @@ Reglas:
 
 Responde SOLO con este JSON:
 {"documentType":"invoice","invoiceNo":"","invoiceDate":"","postingDate":"","dueDate":"","currency":"","net":0,"vat":0,"total":0,"lines":[{"type":"Item","no":"","description":"","description2":"","quantity":1,"unitCost":0,"vatGroup":""}],"comment":"breve explicación en español de cómo has elegido las líneas o de lo que haya que revisar"}`;
-  const parts: AiPart[] = [prompt];
-  if (!text && pdf) parts.push({ inlineData: { data: Buffer.from(pdf).toString('base64'), mimeType: 'application/pdf' } });
-  const raw = await generateText(parts, { json: true, timeoutMs: 40_000 });
-  const j = JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, ''));
+  const raw = await askAi(prompt, !text && pdf ? pdf : null);
+  const j = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] ?? raw);
   return {
     documentType: j.documentType === 'credit_note' ? 'credit_note' : 'invoice',
     invoiceNo: String(j.invoiceNo || '').trim(),
@@ -284,11 +289,67 @@ Responde SOLO con este JSON:
   };
 }
 
+export const ocrAiConfigured = () => aiConfigured() || !!process.env.ANTHROPIC_API_KEY;
+
+// IA: OpenRouter si está configurado (src/lib/ai.ts); si no, Claude con ANTHROPIC_API_KEY; si no, Gemini.
+// Límite de 40 s: la lectura en BC ya usa parte de los 60 s de Vercel
+async function askAi(prompt: string, pdf: Uint8Array | null): Promise<string> {
+  const data = pdf ? Buffer.from(pdf).toString('base64') : '';
+  if (process.env.OPENROUTER_API_KEY || !process.env.ANTHROPIC_API_KEY) {
+    const parts: AiPart[] = [prompt];
+    if (pdf) parts.push({ inlineData: { data, mimeType: 'application/pdf' } });
+    return generateText(parts, { json: true, timeoutMs: 40_000 });
+  }
+  const client = new Anthropic({ timeout: 40_000, maxRetries: 1 });
+  try {
+    const response = await client.messages.create({
+      model: 'claude-sonnet-5-5',
+      max_tokens: 4000,
+      messages: [{
+        role: 'user',
+        content: [
+          ...(pdf ? [{ type: 'document' as const, source: { type: 'base64' as const, media_type: 'application/pdf' as const, data } }] : []),
+          { type: 'text' as const, text: prompt },
+        ],
+      }],
+    });
+    return response.content.map(b => (b.type === 'text' ? b.text : '')).join('');
+  } catch (error) {
+    if (error instanceof Anthropic.AuthenticationError) throw new Error('La clave ANTHROPIC_API_KEY no es válida.');
+    if (error instanceof Anthropic.APIError) throw new Error(`Claude ${error.status}: ${String(error.message).substring(0, 160)}`);
+    throw error;
+  }
+}
+
+// Sin IA: nº y fecha de factura por las etiquetas habituales (EN/DE/ES/FR)
+const MONTHS: Record<string, string> = {
+  jan: '01', ene: '01', feb: '02', mar: '03', mär: '03', apr: '04', abr: '04', may: '05', mai: '05', jun: '06', jul: '07',
+  aug: '08', ago: '08', sep: '09', oct: '10', okt: '10', nov: '11', dec: '12', dez: '12', dic: '12',
+};
+function parseDate(s: string) {
+  let m = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = s.match(/(\d{1,2})[./](\d{1,2})[./](\d{2,4})/);
+  if (m) return `${m[3].length === 2 ? '20' + m[3] : m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  m = s.match(/(\d{1,2})[ -]([A-Za-zä]{3})[a-zä]*[ -](\d{2,4})/);
+  if (m && MONTHS[m[2].toLowerCase()]) return `${m[3].length === 2 ? '20' + m[3] : m[3]}-${MONTHS[m[2].toLowerCase()]}-${m[1].padStart(2, '0')}`;
+  m = s.match(/([A-Za-z]{3})[a-z]* (\d{1,2}),? (\d{4})/);
+  if (m && MONTHS[m[1].toLowerCase()]) return `${m[3]}-${MONTHS[m[1].toLowerCase()]}-${m[2].padStart(2, '0')}`;
+  return '';
+}
+function guessHeader(text: string) {
+  const t = text.replace(/\s+/g, ' ');
+  const invoiceNo = t.match(/(?:Invoice|Rechnungs?|Debit Note|Factura|Facture|Beleg)[ -]?(?:Number|No\.?|Nr\.?|nummer|n[º°o]\.?)\s*:?\s*([A-Z0-9][A-Z0-9\-\/.]{3,})/i)?.[1]?.replace(/\.$/, '') || '';
+  const dateText = t.match(/(?:Invoice Date|Debit Note Date|Rechnungsdatum|Fecha(?: de)? factura|Date de facture|Datum|Date|Fecha)\s*:?\s*([0-9A-Za-zä.\/\- ,]{6,20})/i)?.[1] || '';
+  return { invoiceNo, invoiceDate: parseDate(dateText) };
+}
+
 // Sin IA: las líneas de la última factura del proveedor, a revisar a mano
-function fromLastInvoice(history: HistoryInvoice[]): OcrSuggestion {
+function fromLastInvoice(history: HistoryInvoice[], text: string): OcrSuggestion {
   const last = history[0];
+  const { invoiceNo, invoiceDate } = guessHeader(text);
   return {
-    documentType: 'invoice', invoiceNo: '', invoiceDate: '', postingDate: '', dueDate: '', currency: last?.currency || '',
+    documentType: 'invoice', invoiceNo, invoiceDate, postingDate: invoiceDate, dueDate: '', currency: last?.currency || '',
     net: null, vat: null, total: null, lines: last ? last.lines.map(l => ({ ...l })) : [],
     comment: last ? `Líneas copiadas de la última factura ${last.number}: revisa importes y datos.` : '',
   };
@@ -315,16 +376,16 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
   if (vendor && !history.length) warnings.push('Este proveedor no tiene facturas registradas: completa artículo/cuenta y grupo de IVA a mano.');
 
   let suggestion: OcrSuggestion | null = null;
-  if (aiConfigured()) {
+  if (ocrAiConfigured()) {
     try {
       suggestion = await suggest(text, scanned ? data : null, vendor, history, examples);
     } catch (e: any) {
       warnings.push(`La IA no ha podido proponer la factura (${String(e.message).substring(0, 200)}).`);
     }
   } else {
-    warnings.push('Sin IA configurada (OPENROUTER_API_KEY): se copian las líneas de la última factura.');
+    warnings.push('Sin IA configurada (OPENROUTER_API_KEY o ANTHROPIC_API_KEY): se copian las líneas de la última factura.');
   }
-  if (!suggestion && vendor) suggestion = fromLastInvoice(history);
+  if (!suggestion && vendor) suggestion = fromLastInvoice(history, text);
   if (suggestion?.documentType === 'credit_note') warnings.push('Parece un abono (credit note): aquí solo se crean facturas; regístralo como Credit Memo en BC.');
   if (suggestion && vendor && suggestion.currency && suggestion.currency !== vendor.currency) {
     warnings.push(`La factura está en ${suggestion.currency} y el proveedor ${vendor.number} en ${vendor.currency}: ¿es otro proveedor (p. ej. la ficha en ${suggestion.currency})?`);
