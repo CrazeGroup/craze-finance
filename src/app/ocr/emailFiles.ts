@@ -48,11 +48,29 @@ export async function expandFiles(list: File[]): Promise<{ pdfs: File[]; notes: 
   return { pdfs, notes };
 }
 
-// Ficheros de un arrastre. Si el navegador no recibe ninguno (p. ej. algunos arrastres desde Outlook), se avisa
-export function droppedFiles(e: React.DragEvent): File[] {
-  const files = Array.from(e.dataTransfer.files);
-  if (files.length) return files;
-  return Array.from(e.dataTransfer.items || []).filter(i => i.kind === 'file').map(i => i.getAsFile()).filter((f): f is File => !!f);
+// Ficheros de un arrastre. Algunos programas (Outlook) no pasan el fichero sino un enlace: si es descargable desde el
+// navegador se descarga; si no llega nada, "types" dice qué se ha recibido (para el aviso)
+export async function droppedFiles(e: React.DragEvent): Promise<{ files: File[]; types: string[] }> {
+  const dt = e.dataTransfer;
+  const types = Array.from(dt.types || []);
+  let files = Array.from(dt.files);
+  if (!files.length) files = Array.from(dt.items || []).filter(i => i.kind === 'file').map(i => i.getAsFile()).filter((f): f is File => !!f);
+  if (files.length) return { files, types };
+  // Chrome: "DownloadURL" = "mime:nombre:url"; si no, text/uri-list
+  const download = dt.getData('DownloadURL');
+  const m = download.match(/^([^:]*):([^:]*):(.+)$/);
+  const urls = m ? [{ url: m[3], name: m[2] }] : dt.getData('text/uri-list').split(/\r?\n/).filter(u => /^https?:/i.test(u)).map(url => ({ url, name: decodeURIComponent(url.split('/').pop()?.split('?')[0] || 'documento.pdf') }));
+  for (const u of urls) {
+    try {
+      const res = await fetch(u.url, { credentials: 'include' });
+      if (!res.ok) continue;
+      const blob = await res.blob();
+      if (blob.type === 'application/pdf' || /\.pdf$/i.test(u.name)) files.push(new File([blob], /\.pdf$/i.test(u.name) ? u.name : `${u.name}.pdf`, { type: 'application/pdf' }));
+    } catch {
+      // el enlace no es descargable desde aquí (p. ej. otro dominio)
+    }
+  }
+  return { files, types };
 }
 
 // De los PDFs de un correo, el que parece la factura (por el nombre); el resto son adjuntos
