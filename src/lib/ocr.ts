@@ -205,7 +205,7 @@ export async function vendorHistory(ctx: BcContext, vendor: string) {
   if (!raw.length) return { history: [] as HistoryInvoice[], examples: [] as { number: string; text: string }[] };
   // Líneas de Posted Purchase Invoice Lines y Posting Description = descripción del movimiento de proveedor
   // (la cabecera registrada no la publica)
-  const oldest = raw[raw.length - 1].postingDate;
+  const oldest = raw.map(i => i.postingDate as string).sort()[0];
   const [lines, entries] = await Promise.all([
     bcFetchAll(odataUrl(`${ctx.customApiBase}/purchInvLines`, {
       $filter: raw.map(i => `documentNo eq '${q(i.number)}'`).join(' or '),
@@ -322,7 +322,15 @@ async function askAi(prompt: string, pdf: Uint8Array | null): Promise<string> {
   if (process.env.OPENROUTER_API_KEY || !process.env.ANTHROPIC_API_KEY) {
     const parts: AiPart[] = [prompt];
     if (pdf) parts.push({ inlineData: { data, mimeType: 'application/pdf' } });
-    return generateText(parts, { json: true, timeoutMs: 40_000 });
+    const start = Date.now();
+    try {
+      return await generateText(parts, { json: true, timeoutMs: 40_000 });
+    } catch (e) {
+      // Gemini devuelve 503 cuando está saturado: un reintento si queda tiempo
+      if (Date.now() - start > 12_000) throw e;
+      await new Promise(r => setTimeout(r, 1500));
+      return generateText(parts, { json: true, timeoutMs: 35_000 });
+    }
   }
   const client = new Anthropic({ timeout: 40_000, maxRetries: 1 });
   try {
