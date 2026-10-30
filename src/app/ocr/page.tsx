@@ -30,8 +30,12 @@ const input = 'border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white';
 const LINE_TYPES = ['Item', 'Account', 'Resource', 'Fixed Asset', 'Charge', 'Comment'];
 const blank: FormLine = { lineType: 'Item', number: '', description: '', description2: '', quantity: '1', unitCost: '0', taxCode: '' };
 
-// Adjunto extra (no se lee): va a la factura elegida al enviarla a BC
+// Adjunto (no se lee): va a su factura (target = nombre del PDF de la factura) al enviarla a BC
 type Attachment = { file: File; target: string; done?: string; error?: string };
+// Fila de "Factura + adjuntos" antes de procesar
+type Row = { id: number; invoice: File | null; attachments: File[] };
+const emptyRow = (): Row => ({ id: Date.now() + Math.random(), invoice: null, attachments: [] });
+const isPdf = (f: File) => /\.pdf$/i.test(f.name);
 
 const toForm = (s: Suggestion | null): Form => ({
   invoiceNo: s?.invoiceNo || '', invoiceDate: s?.invoiceDate || '', postingDate: s?.postingDate || '', dueDate: s?.dueDate || '',
@@ -49,6 +53,10 @@ export default function OcrPage() {
   const [status, setStatus] = useState<Record<string, Status>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // Pendientes de procesar: opción 1 (solo facturas) y opción 2 (filas factura + adjuntos)
+  const [batch, setBatch] = useState<File[]>([]);
+  const [rows, setRows] = useState<Row[]>([emptyRow()]);
+  const [notice, setNotice] = useState<string | null>(null);
 
   // Un PDF por llamada (límite de 4,5 MB por petición en Vercel), dos a la vez
   const parse = async (file: File, vendor?: string) => {
@@ -69,7 +77,9 @@ export default function OcrPage() {
     }
   };
   const read = async (list: File[]) => {
-    const pdfs = list.filter(f => /\.pdf$/i.test(f.name) && !files.some(x => x.name === f.name));
+    const pdfs = list.filter(f => isPdf(f) && !files.some(x => x.name === f.name));
+    const dup = list.filter(f => files.some(x => x.name === f.name));
+    setNotice(dup.length ? `Ya están en la lista y no se procesan otra vez: ${dup.map(f => f.name).join(', ')}` : null);
     if (!pdfs.length) return;
     setFiles(l => [...l, ...pdfs]);
     setDocs(l => [...l, ...pdfs.map(f => ({ file: f.name, loading: true, scanned: false, currency: '', ids: [], candidates: [], vendor: null, history: [], suggestion: null, existing: [], warnings: [] }))]);
@@ -89,15 +99,28 @@ export default function OcrPage() {
     setForms(({ [file]: _f, ...rest }) => rest);
     setStatus(({ [file]: _s, ...rest }) => rest);
     setSelected(prev => { const n = new Set(prev); n.delete(file); return n; });
-    setAttachments(l => l.map(a => (a.target === file ? { ...a, target: '' } : a)));
+    setAttachments(l => l.filter(a => a.target !== file));
   };
-  // Adjuntos: a la factura cuyo nº sale en el nombre del fichero, o a la única que haya; si no, se elige en la lista
-  const guessTarget = (name: string) => {
-    const n = name.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const byNo = docs.find(d => { const no = (forms[d.file]?.invoiceNo || '').toLowerCase().replace(/[^a-z0-9]/g, ''); return no.length >= 4 && n.includes(no); });
-    return byNo?.file || (docs.length === 1 ? docs[0].file : '');
+
+  // Opción 1: cada PDF es una factura
+  const addBatch = (list: File[]) => setBatch(b => [...b, ...list.filter(f => isPdf(f) && !b.some(x => x.name === f.name))]);
+  const processBatch = () => { const list = batch; setBatch([]); read(list); };
+  // Opción 2: filas factura + adjuntos; al poner la factura en la última fila se añade otra vacía
+  const setRowInvoice = (id: number, f: File | null) => setRows(rs => {
+    const next = rs.map(r => (r.id === id ? { ...r, invoice: f } : r));
+    return next[next.length - 1].invoice ? [...next, emptyRow()] : next;
+  });
+  const addRowAttachments = (id: number, list: File[]) =>
+    setRows(rs => rs.map(r => (r.id === id ? { ...r, attachments: [...r.attachments, ...list.filter(f => !r.attachments.some(x => x.name === f.name))] } : r)));
+  const removeRowAttachment = (id: number, name: string) => setRows(rs => rs.map(r => (r.id === id ? { ...r, attachments: r.attachments.filter(a => a.name !== name) } : r)));
+  const removeRow = (id: number) => setRows(rs => { const next = rs.filter(r => r.id !== id); return next.length && !next[next.length - 1].invoice ? next : [...next, emptyRow()]; });
+  const filledRows = rows.filter(r => r.invoice);
+  const processRows = () => {
+    const ready = filledRows.filter(r => !files.some(x => x.name === r.invoice!.name));
+    setAttachments(a => [...a, ...ready.flatMap(r => r.attachments.map(f => ({ file: f, target: r.invoice!.name })))]);
+    setRows([emptyRow()]);
+    read(filledRows.map(r => r.invoice!));
   };
-  const addAttachments = (list: File[]) => setAttachments(a => [...a, ...list.filter(f => !a.some(x => x.file.name === f.name)).map(f => ({ file: f, target: guessTarget(f.name) }))]);
   const uploadAttachments = async (file: string, id: string) => {
     for (const a of attachments.filter(x => x.target === file && !x.done)) {
       try {
@@ -166,20 +189,72 @@ export default function OcrPage() {
         {selectedCompany === 'ALL' ? (
           <div className="bg-white border rounded-lg p-4 text-sm text-gray-600">Selecciona una empresa en el menú.</div>
         ) : (
-          <div className="bg-white border border-gray-200 rounded-xl p-4 flex flex-wrap items-center gap-3"
-            onDragOver={e => e.preventDefault()}
-            onDrop={e => { e.preventDefault(); read(Array.from(e.dataTransfer.files)); }}>
-            <label className="cursor-pointer inline-flex items-center gap-2 bg-black text-white text-sm font-semibold px-4 py-2.5 rounded-lg hover:bg-gray-800"
-              title="Se leen: proveedor, importes, fechas, Posting Description y líneas según sus facturas registradas en BC">
-              <Upload size={16} /> Subir facturas PDF
-              <input type="file" accept=".pdf" multiple className="hidden" onChange={e => { read(Array.from(e.target.files || [])); e.target.value = ''; }} />
-            </label>
-            <label className="cursor-pointer inline-flex items-center gap-2 bg-white border border-gray-300 text-gray-900 text-sm font-semibold px-4 py-2.5 rounded-lg hover:bg-gray-50"
-              title="No se leen: se añaden como Attachment a la factura elegida al enviarla a BC">
-              <Paperclip size={16} /> Subir adjuntos PDF
-              <input type="file" accept=".pdf" multiple className="hidden" onChange={e => { addAttachments(Array.from(e.target.files || [])); e.target.value = ''; }} />
-            </label>
-            <span className="text-sm text-gray-500">{files.length ? `${files.length} factura${files.length > 1 ? 's' : ''}` : 'Facturas: también puedes arrastrarlas aquí'}{attachments.length ? ` · ${attachments.length} adjunto${attachments.length > 1 ? 's' : ''}` : ''}</span>
+          <div className="grid gap-4 lg:grid-cols-2 items-start">
+            {/* Opción 1: varios PDFs, cada uno una factura */}
+            <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3"
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => { e.preventDefault(); addBatch(Array.from(e.dataTransfer.files)); }}>
+              <div>
+                <p className="font-bold text-gray-900">1 · Solo facturas</p>
+                <p className="text-xs text-gray-500">Cada PDF es una factura. Elige o arrastra todos los que quieras.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="cursor-pointer inline-flex items-center gap-2 bg-white border border-gray-300 text-gray-900 text-sm font-semibold px-4 py-2 rounded-lg hover:bg-gray-50">
+                  <Upload size={16} /> Elegir facturas PDF
+                  <input type="file" accept=".pdf" multiple className="hidden" onChange={e => { addBatch(Array.from(e.target.files || [])); e.target.value = ''; }} />
+                </label>
+                <button onClick={processBatch} disabled={!batch.length}
+                  className="ml-auto inline-flex items-center gap-2 bg-black text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-gray-800 disabled:opacity-40">
+                  <ScanText size={16} /> Procesar{batch.length ? ` (${batch.length})` : ''}
+                </button>
+              </div>
+              {batch.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {batch.map(f => <FileChip key={f.name} name={f.name} onRemove={() => setBatch(b => b.filter(x => x !== f))} />)}
+                </div>
+              ) : <p className="text-sm text-gray-400 border border-dashed border-gray-300 rounded-lg px-3 py-4 text-center">Arrastra aquí las facturas</p>}
+            </div>
+
+            {/* Opción 2: una fila por factura con sus adjuntos */}
+            <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+              <div className="flex items-start gap-3">
+                <div>
+                  <p className="font-bold text-gray-900">2 · Factura + adjuntos</p>
+                  <p className="text-xs text-gray-500">Una fila por factura: se lee la factura y los adjuntos se añaden como Attachment al enviarla a BC.</p>
+                </div>
+                <button onClick={processRows} disabled={!filledRows.length}
+                  className="ml-auto inline-flex items-center gap-2 bg-black text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-gray-800 disabled:opacity-40">
+                  <ScanText size={16} /> Procesar{filledRows.length ? ` (${filledRows.length})` : ''}
+                </button>
+              </div>
+              <div className="space-y-2">
+                {rows.map((r, i) => (
+                  <div key={r.id} className="flex flex-wrap items-center gap-2 border border-gray-200 rounded-lg px-3 py-2">
+                    <span className="text-xs font-bold text-gray-400 w-5">{i + 1}</span>
+                    {r.invoice ? <FileChip name={r.invoice.name} strong onRemove={() => setRowInvoice(r.id, null)} /> : (
+                      <label className="cursor-pointer inline-flex items-center gap-1.5 text-sm font-semibold text-gray-900 border border-gray-300 rounded-lg px-3 py-1.5 hover:bg-gray-50">
+                        <Upload size={14} /> Factura PDF
+                        <input type="file" accept=".pdf" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) setRowInvoice(r.id, f); e.target.value = ''; }} />
+                      </label>
+                    )}
+                    {r.attachments.map(a => <FileChip key={a.name} name={a.name} attachment onRemove={() => removeRowAttachment(r.id, a.name)} />)}
+                    <label className={`inline-flex items-center gap-1.5 text-sm font-semibold rounded-lg px-3 py-1.5 border ${r.invoice ? 'cursor-pointer text-gray-700 border-gray-300 hover:bg-gray-50' : 'text-gray-300 border-gray-200 cursor-not-allowed'}`}>
+                      <Paperclip size={14} /> Adjuntos
+                      <input type="file" accept=".pdf" multiple disabled={!r.invoice} className="hidden" onChange={e => { addRowAttachments(r.id, Array.from(e.target.files || [])); e.target.value = ''; }} />
+                    </label>
+                    {(r.invoice || r.attachments.length > 0) && (
+                      <button onClick={() => removeRow(r.id)} title="Quitar la fila" className="ml-auto p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"><Trash2 size={14} /></button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {notice && <div className="rounded-lg border px-4 py-2 text-sm bg-amber-50 border-amber-200 text-amber-800">{notice}</div>}
+        {(docs.some(d => d.loading) || valid.length > 1) && (
+          <div className="flex flex-wrap items-center gap-3">
             {docs.some(d => d.loading) && <span className="text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Leyendo y buscando las facturas anteriores del proveedor…</span>}
             {valid.length > 1 && (
               <div className="ml-auto flex items-center gap-3">
@@ -196,35 +271,9 @@ export default function OcrPage() {
           </div>
         )}
 
-        {attachments.length > 0 && (
-          <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-2">
-            <p className="text-sm font-semibold text-gray-900 flex items-center gap-2"><Paperclip size={15} /> Adjuntos <span className="font-normal text-gray-500">(no se leen; se añaden a la factura elegida al enviarla a BC)</span></p>
-            {attachments.map(a => {
-              const created = status[a.target]?.created;
-              return (
-                <div key={a.file.name} className="flex flex-wrap items-center gap-2 text-sm">
-                  <FileText size={14} className="text-gray-400" />
-                  <span className="font-medium">{a.file.name}</span>
-                  <span className="text-gray-400">→</span>
-                  <select value={a.target} disabled={!!a.done} onChange={e => setAttachments(l => l.map(x => (x.file === a.file ? { ...x, target: e.target.value } : x)))} className={`${input} max-w-[420px]`}>
-                    <option value="">— elige la factura —</option>
-                    {docs.filter(d => !d.error).map(d => (
-                      <option key={d.file} value={d.file}>{forms[d.file]?.invoiceNo || d.file}{d.vendor ? ` · ${d.vendor.name}` : ''}</option>
-                    ))}
-                  </select>
-                  {a.done ? <span className="inline-flex items-center gap-1 text-emerald-700 text-xs font-semibold"><CheckCircle2 size={13} /> Adjuntado a {created?.no}</span>
-                    : created ? <button onClick={() => uploadAttachments(a.target, created.id)} className="text-xs font-semibold text-indigo-700 hover:underline">Adjuntar ahora a {created.no}</button>
-                    : !a.target ? <span className="text-xs text-amber-800">Sin factura: no se envía</span> : null}
-                  {a.error && <span className="text-xs text-red-700">{a.error}</span>}
-                  {!a.done && <button onClick={() => setAttachments(l => l.filter(x => x.file !== a.file))} title="Quitar" className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"><X size={14} /></button>}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
         {docs.map(d => (
-          <DocCard key={d.file} d={d} f={forms[d.file]} attachments={attachments.filter(a => a.target === d.file).map(a => a.file.name)} st={status[d.file] || {}} selected={selected.has(d.file)}
+          <DocCard key={d.file} d={d} f={forms[d.file]} attachments={attachments.filter(a => a.target === d.file)}
+            onAttachNow={() => status[d.file]?.created && uploadAttachments(d.file, status[d.file].created!.id)} st={status[d.file] || {}} selected={selected.has(d.file)}
             onToggle={() => toggle(d.file)} onRemove={() => remove(d.file)} onVendor={v => changeVendor(d, v)} onCreate={() => create(d)}
             setField={(k, v) => setField(d.file, k, v)} setLine={(i, k, v) => setLine(d.file, i, k, v)}
             addLine={l => addLine(d.file, l)} removeLine={i => removeLine(d.file, i)} />
@@ -234,8 +283,8 @@ export default function OcrPage() {
   );
 }
 
-function DocCard({ d, f, attachments, st, selected, onToggle, onRemove, onVendor, onCreate, setField, setLine, addLine, removeLine }: {
-  d: Doc; f?: Form; attachments: string[]; st: Status; selected: boolean;
+function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRemove, onVendor, onCreate, setField, setLine, addLine, removeLine }: {
+  d: Doc; f?: Form; attachments: Attachment[]; onAttachNow: () => void; st: Status; selected: boolean;
   onToggle: () => void; onRemove: () => void; onVendor: (v: string) => void; onCreate: () => void;
   setField: (k: Exclude<keyof Form, 'lines'>, v: string) => void; setLine: (i: number, k: keyof FormLine, v: string) => void;
   addLine: (l?: Line) => void; removeLine: (i: number) => void;
@@ -314,7 +363,17 @@ function DocCard({ d, f, attachments, st, selected, onToggle, onRemove, onVendor
         {diff != null && Math.abs(diff) >= 0.01 && (
           <p className="text-xs text-red-700 flex items-center gap-1"><AlertCircle size={13} /> Las líneas suman {fmt(sum)} y el neto del PDF es {fmt(s!.net)} (diferencia {fmt(diff)}).</p>
         )}
-        {attachments.length > 0 && <p className="text-xs text-gray-600 flex items-center gap-1"><Paperclip size={13} /> Se adjuntarán también: {attachments.join(', ')}</p>}
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-600">
+            <Paperclip size={13} /> Adjuntos:
+            {attachments.map(a => (
+              <span key={a.file.name} className={`inline-flex items-center gap-1 border rounded px-2 py-0.5 ${a.done ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : a.error ? 'border-red-200 bg-red-50 text-red-700' : 'border-gray-200 bg-gray-50'}`} title={a.error}>
+                {a.done && <CheckCircle2 size={12} />}{a.file.name}{a.error ? ' (error)' : ''}
+              </span>
+            ))}
+            {st.created && attachments.some(a => !a.done) && <button onClick={onAttachNow} className="font-semibold text-indigo-700 hover:underline">Adjuntar ahora a {st.created.no}</button>}
+          </div>
+        )}
         {s?.comment && <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2"><b>Propuesta:</b> {s.comment}</p>}
         {d.warnings.map(w => <p key={w} className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {w}</p>)}
         {d.existing.map(e => <p key={e.no} className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> Ya existe en BC: {e.no} ({e.status === 'Draft' ? 'pendiente' : 'registrada'})<DocPdfLink documentNo={e.no} /></p>)}
@@ -411,5 +470,15 @@ function VendorPicker({ d, onVendor }: { d: Doc; onVendor: (v: string) => void }
       </div>
       {results.length > 0 && <span className="text-xs text-gray-500">{results.length} encontrados: elígelo en el desplegable</span>}
     </div>
+  );
+}
+
+function FileChip({ name, onRemove, strong, attachment }: { name: string; onRemove: () => void; strong?: boolean; attachment?: boolean }) {
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs max-w-[280px] ${strong ? 'border-gray-900 bg-gray-50 font-semibold text-gray-900' : 'border-gray-200 bg-gray-50 text-gray-700'}`}>
+      {attachment ? <Paperclip size={12} className="shrink-0" /> : <FileText size={12} className="shrink-0" />}
+      <span className="truncate" title={name}>{name}</span>
+      <button onClick={onRemove} title="Quitar" className="shrink-0 text-gray-400 hover:text-red-600"><X size={12} /></button>
+    </span>
   );
 }
