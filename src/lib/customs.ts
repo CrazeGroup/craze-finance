@@ -1,6 +1,7 @@
 import { getDocumentProxy, extractText } from 'unpdf';
 import { bcFetchAll, BcContext, odataUrl } from '@/lib/bcClient';
 import { readSetting } from '@/lib/reporting/cache';
+import { attachFile, bcRequest } from '@/lib/bcWrite';
 
 // Aduanas: el Einfuhrabgabenbescheid (PDF de ATLAS, "FMSG-SYS_TAX_ASSESSMENT-…") de cada declaración genera dos
 // facturas de compra en BC, como se registran a mano:
@@ -153,20 +154,7 @@ export async function existingInvoices(ctx: BcContext, atc: string, cfg: Customs
 export type InvoiceInput = { kind: 'zoll' | 'eust'; amount: number; dueDate: string };
 export type CreateInput = { atc: string; date: string; description: string; invoices: InvoiceInput[]; force?: boolean };
 
-async function bc(method: string, url: string, token: string, body?: any) {
-  const res = await fetch(url, {
-    method,
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json', ...(method === 'PATCH' || method === 'DELETE' ? { 'If-Match': '*' } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    let msg = text;
-    try { msg = JSON.parse(text).error?.message || text; } catch { /* texto */ }
-    throw new Error(`BC ${method} ${url.split('/').pop()?.split('?')[0]}: ${msg.substring(0, 300)}`);
-  }
-  return text ? JSON.parse(text) : null;
-}
+const bc = bcRequest;
 
 // Crea en BC (sin registrar) una factura de compra por importe. La API custom (purchaseHeaders/purchaseLines) es
 // de solo lectura: cabecera y líneas por la API v2 (purchaseInvoices + purchaseInvoiceLines: Description 2 y taxCode =
@@ -211,13 +199,7 @@ export async function createInvoices(ctx: BcContext, input: CreateInput, cfg: Cu
       created.push({ kind: inv.kind, no, amount: inv.amount });
       if (pdf) {
         try {
-          const att = await bc('POST', `${ctx.apiBase}/documentAttachments`, ctx.token, { fileName: pdf.name, parentType: 'Purchase Invoice', parentId: id });
-          const res = await fetch(`${ctx.apiBase}/documentAttachments(${att.id})/attachmentContent`, {
-            method: 'PATCH',
-            headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/octet-stream', 'If-Match': '*' },
-            body: Buffer.from(pdf.data),
-          });
-          if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).substring(0, 160)}`);
+          await attachFile(ctx, id, pdf);
         } catch (e: any) {
           warnings.push(`${no}: no se ha podido adjuntar el PDF (${String(e.message).substring(0, 160)}); adjúntalo en BC.`);
         }

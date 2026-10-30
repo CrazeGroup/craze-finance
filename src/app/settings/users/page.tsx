@@ -22,6 +22,7 @@ const MODULES = [
   { id: 'payment_proposal', label: 'Payment Proposal' },
   { id: 'notas_compra', label: 'Notas de compra' },
   { id: 'aduanas', label: 'Aduanas' },
+  { id: 'ocr', label: 'OCR' },
   { id: 'dforce', label: 'D-FORCE (Craze Entertainment)' },
   { id: 'seguros', label: 'Seguros' },
   { id: 'configuracion', label: 'Configuración y Usuarios' },
