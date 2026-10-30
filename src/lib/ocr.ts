@@ -217,7 +217,7 @@ export async function vendorHistory(ctx: BcContext, vendor: string) {
   ]);
   const linesBy = new Map<string, any[]>();
   for (const l of lines.sort((a: any, b: any) => a.lineNo - b.lineNo)) linesBy.set(l.documentNo, [...(linesBy.get(l.documentNo) || []), l]);
-  const descBy = new Map<string, string>(entries.map((e: any) => [e.documentNo, e.description || '']));
+  const descBy = new Map<string, string>(entries.map((e: any) => [e.documentNo, String(e.description || '').replace(/[\x00-\x1f]/g, '')]));
   const history: HistoryInvoice[] = raw.map(i => ({
     number: i.number, vendorInvoiceNumber: i.vendorInvoiceNumber, invoiceDate: i.invoiceDate, postingDate: i.postingDate, dueDate: i.dueDate,
     currency: i.currencyCode, net: i.totalAmountExcludingTax, total: i.totalAmountIncludingTax, postingDescription: descBy.get(i.number) || '',
@@ -382,8 +382,8 @@ function fromLastInvoice(history: HistoryInvoice[], text: string): OcrSuggestion
   const { invoiceNo, invoiceDate } = guessHeader(text);
   return {
     documentType: 'invoice', invoiceNo, invoiceDate, postingDate: invoiceDate, dueDate: '', postingDescription: last?.postingDescription || '', currency: last?.currency || '',
-    net: null, vat: null, total: null, lines: last ? last.lines.map(l => ({ ...l })) : [],
-    comment: last ? `Líneas copiadas de la última factura ${last.number}: revisa importes y datos.` : '',
+    net: null, vat: null, total: null, lines: last ? last.lines.map(l => ({ ...l, unitCost: 0 })) : [],
+    comment: last ? `Líneas copiadas de la última factura ${last.number} sin importes: escribe los importes del PDF.` : '',
   };
 }
 
