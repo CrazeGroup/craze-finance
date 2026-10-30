@@ -325,30 +325,61 @@ function amounts(t: string) {
   return out;
 }
 const RATES = [0.19, 0.07, 0.21, 0.2, 0.22, 0.1, 0.081, 0.077, 0.05, 0.16];
-// Totales: neto y total con IVA que cuadren (total = neto × (1 + tipo) y el IVA también aparece), con el tipo de la
-// factura modelo primero; si el modelo no lleva IVA (o el PDF dice que está exento), neto = total = el importe que
-// más se repite entre los mayores
+const r2 = (v: number) => Math.round(v * 100) / 100;
+
+// Líneas con IVA del modelo y su tipo: el subconjunto de líneas cuyo importe × tipo = IVA de la factura (p. ej.
+// Meyer's Sohn GmbH: 1.816,80 con IVA (KZ. 66.2) + 45,00 OHNE MWST). Sin IVA: ninguna línea con IVA
+function modelSplit(model: HistoryInvoice) {
+  const priced = model.lines.map((l, i) => ({ i, amount: l.quantity * l.unitCost, comment: l.lineType === 'Comment' })).filter(l => !l.comment);
+  const vat = r2(model.total - model.net);
+  if (Math.abs(vat) < 0.01) return { rate: 0, taxed: new Set<number>() };
+  if (priced.length <= 8) {
+    for (const rate of RATES) {
+      for (let mask = (1 << priced.length) - 1; mask > 0; mask--) {
+        const sum = priced.filter((_, k) => mask & (1 << k)).reduce((x, l) => x + l.amount, 0);
+        if (Math.abs(sum * rate - vat) <= 0.02) return { rate, taxed: new Set(priced.filter((_, k) => mask & (1 << k)).map(l => l.i)) };
+      }
+    }
+  }
+  return { rate: model.net ? Math.round((vat / model.net) * 1000) / 1000 : 0, taxed: new Set(priced.map(l => l.i)) };
+}
+
+// Totales: base con IVA + IVA (+ parte exenta) = total, y los tres (o cuatro) importes aparecen en el texto; el tipo
+// del modelo primero. Si el modelo no lleva IVA (o el PDF dice que está exento), neto = total = el importe que más se
+// repite entre los mayores
 function totals(t: string, model: HistoryInvoice | undefined) {
   const list = amounts(t);
   const set = [...new Set(list)].filter(v => v > 0).sort((a, b) => b - a);
   const near = (v: number) => set.find(x => Math.abs(x - v) <= Math.max(0.02, v * 0.0002));
-  const modelRate = model && model.net ? Math.round((model.total / model.net - 1) * 1000) / 1000 : null;
-  const taxFree = (modelRate != null && Math.abs(modelRate) < 0.001) || /tax ?free|steuerfrei|exento|reverse charge|nicht steuerbar|0[.,]00 ?%/i.test(t);
-  const rates = [...new Set([...(modelRate && modelRate > 0 ? [modelRate] : []), ...RATES])];
-  for (const r of rates) {
-    for (const net of set) {
-      const gross = Math.round(net * (1 + r) * 100) / 100;
-      const total = near(gross), vat = near(Math.round((gross - net) * 100) / 100);
-      if (total != null && vat != null) return { net, vat, total };
+  const split = model ? modelSplit(model) : null;
+  const taxFree = split?.rate === 0 || /tax ?free|steuerfrei|exento|reverse charge|nicht steuerbar|0[.,]00 ?%/i.test(t);
+  const rates = [...new Set([...(split?.rate ? [split.rate] : []), ...RATES])];
+  // Sin parte exenta primero; luego con una parte exenta que también aparezca ("MwSt frei")
+  for (const withFree of [false, true]) {
+    for (const r of rates) {
+      for (const taxable of set) {
+        const vat = near(r2(taxable * r));
+        if (vat == null || vat === taxable) continue;
+        if (!withFree) {
+          const total = near(r2(taxable + vat));
+          if (total != null && total !== vat) return { net: taxable, vat, total, taxable, free: 0 };
+          continue;
+        }
+        for (const free of set) {
+          if (free === taxable || free === vat) continue;
+          const total = near(r2(taxable + vat + free));
+          if (total != null && total !== taxable && total !== free) return { net: r2(taxable + free), vat, total, taxable, free };
+        }
+      }
     }
   }
   if (taxFree && set.length) {
     const top = set.slice(0, 5);
     const count = (v: number) => list.filter(x => x === v).length;
     const best = top.reduce((a, b) => (count(b) > count(a) ? b : a), top[0]);
-    return { net: best, vat: 0, total: best };
+    return { net: best, vat: 0, total: best, taxable: 0, free: best };
   }
-  return { net: null, vat: null, total: null };
+  return { net: null, vat: null, total: null, taxable: null, free: null };
 }
 
 // Parecido entre dos textos: palabras en común (Jaccard)
@@ -408,18 +439,35 @@ export function propose(text: string, history: HistoryInvoice[], examples: Examp
   const dueDate = dateAt(model.dueDate);
   const postingDate = invoiceDate;
 
-  const { net, vat, total } = totals(t, model);
+  const { net, vat, total, taxable, free } = totals(t, model);
   if (net == null) warnings.push('No se han encontrado los totales en el PDF: escribe los importes.');
-  // Líneas del modelo: una línea = el neto; varias = repartido en la misma proporción que en el modelo
+  // Líneas del modelo: la base con IVA se reparte entre sus líneas con IVA y la parte exenta entre las exentas, en la
+  // misma proporción que en el modelo; si el modelo no las distingue, el neto entre todas
   const lines = model.lines.map(l => ({ ...l }));
-  const priced = lines.filter(l => l.lineType !== 'Comment');
-  const modelSum = priced.reduce((a, l) => a + l.quantity * l.unitCost, 0);
-  for (const l of priced) {
-    if (net == null) l.unitCost = 0;
-    else if (priced.length === 1) l.unitCost = Math.round((net / (l.quantity || 1)) * 100) / 100;
-    else if (modelSum) l.unitCost = Math.round(l.unitCost * (net / modelSum) * 100) / 100;
+  const idx = lines.map((l, i) => i).filter(i => lines[i].lineType !== 'Comment');
+  const share = (group: number[], amount: number) => {
+    const sum = group.reduce((a, i) => a + lines[i].quantity * lines[i].unitCost, 0);
+    let rest = amount;
+    group.forEach((i, k) => {
+      const l = lines[i];
+      const part = k === group.length - 1 ? r2(rest) : r2(sum ? amount * (l.quantity * l.unitCost) / sum : amount / group.length);
+      rest -= part;
+      l.unitCost = r2(part / (l.quantity || 1));
+    });
+  };
+  if (net == null) idx.forEach(i => { lines[i].unitCost = 0; });
+  else {
+    const { taxed } = modelSplit(model);
+    const withVat = idx.filter(i => taxed.has(i)), noVat = idx.filter(i => !taxed.has(i));
+    if (withVat.length && noVat.length && taxable != null && free != null) {
+      share(withVat, taxable);
+      share(noVat, free);
+      if (free === 0) warnings.push('El PDF no tiene parte exenta y el modelo sí: revisa la línea sin IVA.');
+    } else {
+      share(idx, net);
+      if (free && !noVat.length && vat) warnings.push(`El PDF tiene una parte sin IVA (${free}) que el modelo no tiene: revisa las líneas.`);
+    }
   }
-  if (net != null && priced.length > 1 && !modelSum) warnings.push('El modelo tiene varias líneas que suman 0: reparte los importes.');
 
   // Referencias de las descripciones; la Posting Description por defecto de BC ("Invoice 10044") no se copia
   let refsOk = true;

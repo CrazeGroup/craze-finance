@@ -57,6 +57,8 @@ export default function OcrPage() {
   const [batch, setBatch] = useState<File[]>([]);
   const [rows, setRows] = useState<Row[]>([emptyRow()]);
   const [notice, setNotice] = useState<string | null>(null);
+  // Cuadro sobre el que se está arrastrando ("<fila>:invoice" / "<fila>:att")
+  const [dragOver, setDragOver] = useState<string | null>(null);
 
   // Un PDF por llamada (límite de 4,5 MB por petición en Vercel), dos a la vez
   const parse = async (file: File, vendor?: string) => {
@@ -115,6 +117,12 @@ export default function OcrPage() {
   const removeRowAttachment = (id: number, name: string) => setRows(rs => rs.map(r => (r.id === id ? { ...r, attachments: r.attachments.filter(a => a.name !== name) } : r)));
   const removeRow = (id: number) => setRows(rs => { const next = rs.filter(r => r.id !== id); return next.length && !next[next.length - 1].invoice ? next : [...next, emptyRow()]; });
   const filledRows = rows.filter(r => r.invoice);
+  // Arrastrar ficheros sobre un cuadro de la fila (factura o adjuntos)
+  const drop = (key: string, onFiles: (l: File[]) => void) => ({
+    onDragOver: (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setDragOver(key); },
+    onDragLeave: () => setDragOver(k => (k === key ? null : k)),
+    onDrop: (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setDragOver(null); onFiles(Array.from(e.dataTransfer.files)); },
+  });
   const processRows = () => {
     const ready = filledRows.filter(r => !files.some(x => x.name === r.invoice!.name));
     setAttachments(a => [...a, ...ready.flatMap(r => r.attachments.map(f => ({ file: f, target: r.invoice!.name })))]);
@@ -229,16 +237,27 @@ export default function OcrPage() {
               </div>
               <div className="space-y-2">
                 {rows.map((r, i) => (
-                  <div key={r.id} className="flex flex-wrap items-center gap-2 border border-gray-200 rounded-lg px-3 py-2">
+                  <div key={r.id} {...drop(`${r.id}:row`, l => {
+                    const pdfs = l.filter(isPdf);
+                    if (!pdfs.length) return;
+                    if (r.invoice) { addRowAttachments(r.id, pdfs); return; }
+                    setRowInvoice(r.id, pdfs[0]);
+                    if (pdfs.length > 1) addRowAttachments(r.id, pdfs.slice(1));
+                  })}
+                    className={`flex flex-wrap items-center gap-2 border rounded-lg px-3 py-2 ${dragOver === `${r.id}:row` ? 'border-indigo-500 border-dashed bg-indigo-50/40' : 'border-gray-200'}`}>
                     <span className="text-xs font-bold text-gray-400 w-5">{i + 1}</span>
                     {r.invoice ? <FileChip name={r.invoice.name} strong onRemove={() => setRowInvoice(r.id, null)} /> : (
-                      <label className="cursor-pointer inline-flex items-center gap-1.5 text-sm font-semibold text-gray-900 border border-gray-300 rounded-lg px-3 py-1.5 hover:bg-gray-50">
+                      <label {...drop(`${r.id}:invoice`, l => { const f = l.find(isPdf); if (f) setRowInvoice(r.id, f); })}
+                        className={`cursor-pointer inline-flex items-center gap-1.5 text-sm font-semibold text-gray-900 border rounded-lg px-3 py-1.5 hover:bg-gray-50 ${dragOver === `${r.id}:invoice` ? 'border-indigo-500 bg-indigo-50 border-dashed' : 'border-gray-300'}`}
+                        title="Elige o arrastra aquí la factura">
                         <Upload size={14} /> Factura PDF
                         <input type="file" accept=".pdf" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) setRowInvoice(r.id, f); e.target.value = ''; }} />
                       </label>
                     )}
                     {r.attachments.map(a => <FileChip key={a.name} name={a.name} attachment onRemove={() => removeRowAttachment(r.id, a.name)} />)}
-                    <label className={`inline-flex items-center gap-1.5 text-sm font-semibold rounded-lg px-3 py-1.5 border ${r.invoice ? 'cursor-pointer text-gray-700 border-gray-300 hover:bg-gray-50' : 'text-gray-300 border-gray-200 cursor-not-allowed'}`}>
+                    <label {...(r.invoice ? drop(`${r.id}:att`, l => addRowAttachments(r.id, l.filter(isPdf))) : {})}
+                      title={r.invoice ? 'Elige o arrastra aquí los adjuntos' : 'Primero la factura'}
+                      className={`inline-flex items-center gap-1.5 text-sm font-semibold rounded-lg px-3 py-1.5 border ${!r.invoice ? 'text-gray-300 border-gray-200 cursor-not-allowed' : dragOver === `${r.id}:att` ? 'cursor-pointer text-gray-700 border-indigo-500 bg-indigo-50 border-dashed' : 'cursor-pointer text-gray-700 border-gray-300 hover:bg-gray-50'}`}>
                       <Paperclip size={14} /> Adjuntos
                       <input type="file" accept=".pdf" multiple disabled={!r.invoice} className="hidden" onChange={e => { addRowAttachments(r.id, Array.from(e.target.files || [])); e.target.value = ''; }} />
                     </label>
