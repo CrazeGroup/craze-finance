@@ -161,7 +161,8 @@ export async function createDocument(ctx: BcContext, input: DocInput, files: Att
         }))(line as PurchaseLine);
       const created = await bcRequest('POST', `${headUrl}/${d.lines}`, ctx.token, body);
       const s = line as SalesLine;
-      extras.set(Number(created.sequence), { project: line.project, task: line.task, task2: s.task2 || undefined, returnReason: s.returnReason || undefined });
+      // Líneas sin revista (cargos generales de la compra): sin proyecto ni tarea
+      if (line.project) extras.set(Number(created.sequence), { project: line.project, task: line.task, task2: s.task2 || undefined, returnReason: s.returnReason || undefined });
     }
   } catch (e) {
     // No dejar un documento a medias

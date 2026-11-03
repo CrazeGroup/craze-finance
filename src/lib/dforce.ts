@@ -201,9 +201,12 @@ export function buildDocuments(pdf: Awaited<ReturnType<typeof parsePdf>>, excel:
   invoice.forEach((l, i) => { l.lineNo = (i + 1) * 10000; });
   credit.forEach((l, i) => { l.lineNo = (i + 1) * 10000; });
 
-  // Compras, del Excel: por concepto, revista y número
+  // Compras, del Excel: por concepto, revista y número. Las filas sin revista (TitelNr 0, p. ej. "OHL Transport Galupy und
+  // Inkee Mailfinish") van en una línea de su concepto sin proyecto, al final, como en CEN-PI26-00030 y CEN-PI26-00066
   const purchase: PurchaseLine[] = [];
+  const noTitle = (title: string) => !Number(title);
   const titleOrder = Object.keys(TITLES);
+  const order = (title: string) => (noTitle(title) ? titleOrder.length : titleOrder.indexOf(title));
   for (const t of PURCHASE_TYPES) {
     const groups = new Map<string, { title: string; issue: string; amount: number }>();
     for (const r of excel.rows.filter(r => r.vorgang === t.vorgang)) {
@@ -213,8 +216,13 @@ export function buildDocuments(pdf: Awaited<ReturnType<typeof parsePdf>>, excel:
       groups.set(key, g);
     }
     const sorted = Array.from(groups.values()).sort((a, b) =>
-      (titleOrder.indexOf(a.title) - titleOrder.indexOf(b.title)) || yymm(a.issue).localeCompare(yymm(b.issue)));
+      (order(a.title) - order(b.title)) || yymm(a.issue).localeCompare(yymm(b.issue)));
     for (const g of sorted) {
+      if (noTitle(g.title)) {
+        const cost = r2(-g.amount);
+        purchase.push({ lineNo: 0, no: t.item, description: t.description, description2: t.description2, quantity: 1, directUnitCost: cost, project: '', task: '', lineAmount: cost, title: g.title, issue: '' });
+        continue;
+      }
       const map = itemFor(g.title, g.issue);
       if (!map) { unknownTitles.add(g.title); continue; }
       const cost = r2(-g.amount);
