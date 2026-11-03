@@ -65,6 +65,8 @@ export default function CashflowPage() {
   const [allBalances, setAllBalances] = useState<Record<string, number>>({});
   const [totalEurSum, setTotalEurSum] = useState<number | null>(null);
   const [exchangeRates, setExchangeRates] = useState<Record<string, number>>({ EUR: 1 });
+  // Movimientos de las otras cuentas, para el saldo consolidado proyectado (aviso de mínimo)
+  const [otherEntries, setOtherEntries] = useState<Record<string, any[]>>({});
 
   
   // Email states
@@ -121,6 +123,11 @@ export default function CashflowPage() {
       if (balRes.ok) {
         const balances = await balRes.json();
         setAllBalances(balances);
+
+        const others = Object.keys(balances).filter(c => c !== currentCurrency);
+        const otherData = await Promise.all(others.map(c =>
+          fetch(`/api/cashflow?currency=${c}${showArchived ? '&archived=true' : ''}`).then(r => r.ok ? r.json() : null).catch(() => null)));
+        setOtherEntries(Object.fromEntries(others.map((c, i) => [c, otherData[i]?.entries || []])));
         
         if (rateRes.ok) {
           const ratesData = await rateRes.json();
@@ -668,11 +675,24 @@ export default function CashflowPage() {
   // Mínimo de saldo: importes pasados a la divisa del mínimo con los tipos del día (base EUR)
   const toMinCurrency = (value: number, from: string) =>
     minBalance ? (value / (exchangeRates[from] || 1)) * (exchangeRates[minBalance.currency] || 1) : value;
-  const belowMin = (balance: number) => !!minBalance && toMinCurrency(balance, currentCurrency) < minBalance.amount;
+  // Saldo de otra cuenta a una fecha: saldo actual + sus movimientos hasta ese día
+  const otherBalanceAt = (curr: string, date: string) => {
+    const t = new Date(date).getTime();
+    return (otherEntries[curr] || []).reduce((acc: number, e: any) => {
+      if (new Date(e.date).getTime() > t) return acc;
+      const excluded = excludeClaimed ? claimedInvoices(e).reduce((a: number, i: any) => a + i.amount, 0) : 0;
+      return acc + e.amount - excluded;
+    }, allBalances[curr] || 0);
+  };
+  // Saldo consolidado (todas las cuentas) en la divisa del mínimo tras cada movimiento de esta cuenta
+  const consolidatedAt = (entry: any) => toMinCurrency(entry.balance, currentCurrency) +
+    Object.keys(allBalances).filter(c => c !== currentCurrency).reduce((acc, c) => acc + toMinCurrency(otherBalanceAt(c, entry.date), c), 0);
+  const consolidatedByEntry = new Map<any, number>(minBalance ? balancedEntries.map(e => [e, consolidatedAt(e)]) : []);
+  const belowMin = (entry: any) => !!minBalance && (consolidatedByEntry.get(entry) ?? Infinity) < minBalance.amount;
   const consolidatedInMin = totalEurSum !== null && minBalance ? totalEurSum * (exchangeRates[minBalance.currency] || 1) : null;
   const consolidatedBelowMin = consolidatedInMin !== null && minBalance !== null && consolidatedInMin < minBalance.amount;
-  const firstBelowMin = minBalance ? balancedEntries.find(e => belowMin(e.balance)) : undefined;
-  const belowMinCount = minBalance ? balancedEntries.filter(e => belowMin(e.balance)).length : 0;
+  const firstBelowMin = minBalance ? balancedEntries.find(e => belowMin(e)) : undefined;
+  const belowMinCount = minBalance ? balancedEntries.filter(e => belowMin(e)).length : 0;
   const fmtMoney = (v: number, curr: string) => `${getCurrencySymbol(curr)}${v.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   // Líneas visibles: filtro de tipo + buscador de texto (descripción, cliente y nº de las facturas agrupadas)
@@ -895,7 +915,7 @@ export default function CashflowPage() {
               )}
               {firstBelowMin && (
                 <p>
-                  Cuenta {currentCurrency}: el saldo baja del mínimo el <b>{new Date(firstBelowMin.date).toLocaleDateString('es-ES')}</b> ({fmtMoney(firstBelowMin.balance, currentCurrency)}) · {belowMinCount} movimiento(s) por debajo, marcados en la tabla.
+                  Contando todas las cuentas, el saldo consolidado baja del mínimo el <b>{new Date(firstBelowMin.date).toLocaleDateString('es-ES')}</b> ({fmtMoney(consolidatedByEntry.get(firstBelowMin)!, minBalance.currency)}; cuenta {currentCurrency}: {fmtMoney(firstBelowMin.balance, currentCurrency)}) · {belowMinCount} movimiento(s) por debajo, marcados en la tabla.
                 </p>
               )}
             </div>
@@ -1022,9 +1042,9 @@ export default function CashflowPage() {
                               <div className="text-[11px] text-amber-700 font-semibold">−{getCurrencySymbol(currentCurrency)}{entry.excludedAmount.toLocaleString('es-ES', { minimumFractionDigits: 2 })} reclamado, fuera del saldo</div>
                             )}
                           </td>
-                          <td className={`p-4 text-right ${belowMin(entry.balance) ? 'bg-red-50' : ''}`}>
-                            {belowMin(entry.balance) && (
-                              <span className="inline-flex items-center gap-1 mr-2 bg-red-500/15 text-red-700 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-red-500/30" title={`Por debajo del mínimo de ${fmtMoney(minBalance!.amount, minBalance!.currency)}`}>
+                          <td className={`p-4 text-right ${belowMin(entry) ? 'bg-red-50' : ''}`}>
+                            {belowMin(entry) && (
+                              <span className="inline-flex items-center gap-1 mr-2 bg-red-500/15 text-red-700 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-red-500/30" title={`Saldo consolidado ${fmtMoney(consolidatedByEntry.get(entry)!, minBalance!.currency)}, por debajo del mínimo de ${fmtMoney(minBalance!.amount, minBalance!.currency)}`}>
                                 <AlertTriangle size={11} /> Bajo mínimo
                               </span>
                             )}
