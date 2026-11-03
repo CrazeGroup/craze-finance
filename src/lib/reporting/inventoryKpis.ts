@@ -1,6 +1,6 @@
 import { bcFetchAll, bcFetchByEntryRanges, BcContext, odataUrl } from '@/lib/bcClient';
 import { cached, HOUR } from './cache';
-import { analysisDates, indexer } from './inventoryAnalysis';
+import { analysisDates, indexer, palletSizes } from './inventoryAnalysis';
 
 // KPIs de Análisis Inventario (además del valor): valor destruido en M+F, nº de palets y Average Days in Stock (FIFO).
 // Se guardan en caché y se renuevan una vez al día (o con el botón de actualizar), para que carguen al momento.
@@ -13,11 +13,10 @@ import { analysisDates, indexer } from './inventoryAnalysis';
 //   ponderado por uds. ADS de un mes = media de las salidas de ese mes.
 
 const DESTR_LOCATION = 'DESTR-M+F';
-const PALLET_UOM = 'PAL';
 const DAY = 86400000;
 
 export async function inventoryKpis(ctx: BcContext, company: string, month: string, force = false) {
-  return cached(`invKpis:${company}:${month}`, 24 * HOUR, async () => {
+  return cached(`invKpis2:${company}:${month}`, 24 * HOUR, async () => {
     const { year, cur, prev } = analysisDates(month);
     const date = cur[cur.length - 1];
     const from = `${year - 1}-01-01`;
@@ -28,8 +27,7 @@ export async function inventoryKpis(ctx: BcContext, company: string, month: stri
       }), ctx.token),
       bcFetchByEntryRanges(`${ctx.odataCompanyBase}/Item_Ledger_Entries_Excel`, ctx.token, 'Entry_No',
         'Entry_No,Posting_Date,Entry_Type,Item_No,Item_Description,Location_Code,Quantity', `Posting_Date le ${date}`),
-      bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Item_Units_of_Measure_Excel`, { $filter: `Code eq '${PALLET_UOM}'`, $select: 'Item_No,Qty_per_Unit_of_Measure' }), ctx.token)
-        .catch(() => [] as any[]),
+      palletSizes(ctx),
       bcFetchAll(odataUrl(`${ctx.apiBase}/items`, { $select: 'number,type' }), ctx.token),
       indexer(force),
     ]);
@@ -54,7 +52,7 @@ export async function inventoryKpis(ctx: BcContext, company: string, month: stri
     const inventoryItems = new Set(items.filter((i: any) => i.type === 'Inventory').map((i: any) => i.number));
     const stock = new Map<string, number>();
     for (const e of ile) stock.set(e.Item_No, (stock.get(e.Item_No) || 0) + (e.Quantity || 0));
-    const perPallet = new Map<string, number>(uoms.filter((u: any) => u.Qty_per_Unit_of_Measure > 0).map((u: any) => [u.Item_No, u.Qty_per_Unit_of_Measure]));
+    const perPallet = new Map<string, number>(Object.entries(uoms));
     let pallets = 0;
     const noPallet: string[] = [];
     for (const [no, qty] of stock) {

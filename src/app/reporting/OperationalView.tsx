@@ -1,6 +1,8 @@
 'use client';
 
 import React from 'react';
+import * as XLSX from 'xlsx';
+import { FileDown } from 'lucide-react';
 import type { Fmt } from './i18n';
 import { BridgeChart, Card, ErrorBox, Grid, Hl, Kpi, Loading, Note, Section, Signed, Table } from './ui';
 import InventoryBreakdown, { Analysis, Delta } from './InventoryBreakdown';
@@ -15,13 +17,29 @@ function Block<T>({ state, fmt, children }: { state: Loaded<T>; fmt: Fmt; childr
 
 const share = (part: number, whole: number) => (whole ? (part / whole) * 100 : 0);
 
+// Excel con todos los productos que suben (o bajan) de valor entre los dos cierres, no solo el top 10
+function exportChanges(fmt: Fmt, d: any, dir: 'up' | 'down') {
+  const { t } = fmt;
+  const list = (d.changes || []).filter((c: any) => (dir === 'up' ? c.dv > 0 : c.dv < 0));
+  if (dir === 'down') list.reverse();
+  const rows = list.map((c: any) => ({
+    [t('code')]: c.code, [t('product')]: c.desc,
+    [t('unitsAt', { date: fmt.date(d.prevDate) })]: c.qa, [t('unitsAt', { date: fmt.date(d.date) })]: c.qs,
+    [t('valueAt', { date: fmt.date(d.prevDate) })]: Math.round(c.va * 100) / 100, [t('valueAt', { date: fmt.date(d.date) })]: Math.round(c.vs * 100) / 100,
+    [t('deltaValue')]: Math.round(c.dv * 100) / 100,
+  }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), dir === 'up' ? 'Up' : 'Down');
+  XLSX.writeFile(wb, `Inventory_${dir === 'up' ? 'up' : 'down'}_${d.prevDate}_${d.date}.xlsx`);
+}
+
 // KPIs de /api/reporting/inventory-analysis?kind=kpis (src/lib/reporting/inventoryKpis.ts) y desglose del ADS
 export type InvKpis = Analysis & {
   destroyed: { value: number; qty: number }[]; pallets: number; noPallet: number; ads: { days: number | null; qty: number }[];
 };
 
 export function InventorySection({ fmt, inv, an, kp }: { fmt: Fmt; inv: Loaded; an: Loaded<Analysis>; kp: Loaded<InvKpis> }) {
-  const { t, short, num, date } = fmt;
+  const { t, short, num, date, eur } = fmt;
   const k = kp.data;
   const cur = k ? k.prevDates.length + k.curDates.length - 1 : -1;     // mes del informe
   const ly = k && k.curDates.length <= k.prevDates.length ? k.curDates.length - 1 : -1;
@@ -66,10 +84,25 @@ export function InventorySection({ fmt, inv, an, kp }: { fmt: Fmt; inv: Loaded; 
             </Grid>
             {an.error ? <ErrorBox message={an.error} />
               : an.loading || !an.data ? <Loading text={t('anLoading')} />
-              : <InventoryBreakdown fmt={fmt} an={an.data} />}
+              : <InventoryBreakdown fmt={fmt} an={an.data} adsData={k} />}
             {kp.error ? <ErrorBox message={kp.error} />
               : kp.loading || !k ? <Loading text={t('anLoading')} />
               : <InventoryBreakdown fmt={fmt} an={k} kind="ads" />}
+            <div className="space-y-4">
+              {(['up', 'down'] as const).map(dir => (
+                <Card key={dir} title={t(dir === 'up' ? 'topUp' : 'topDown')} sub={`(${date(d.prevDate)} → ${date(d.date)})`}>
+                  <div className="rpt-noprint flex justify-end -mt-9 mb-2">
+                    <button onClick={() => exportChanges(fmt, d, dir)} className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 border border-gray-300 rounded-lg px-2.5 py-1.5 hover:text-gray-900 bg-white">
+                      <FileDown size={14} /> {t('downloadAll')}
+                    </button>
+                  </div>
+                  <Table
+                    cols={[{ label: t('code'), nowrap: true }, { label: t('product'), wide: true }, { label: t('unitsAt', { date: fmt.shortDate(d.prevDate) }), align: 'right', mono: true, hideMobile: true }, { label: t('unitsAt', { date: fmt.shortDate(d.date) }), align: 'right', mono: true, hideMobile: true }, { label: t('valueAt', { date: fmt.shortDate(d.date) }), align: 'right', mono: true }, { label: t('deltaValue'), align: 'right', mono: true }]}
+                    rows={d[dir].map((i: any) => [i.code, i.desc, num(i.qa), num(i.qs), eur(i.vs), <Signed key="d" v={i.dv} text={(i.dv > 0 ? '+' : '') + eur(i.dv)} />])}
+                  />
+                </Card>
+              ))}
+            </div>
           </>
         );
       }}</Block>

@@ -349,7 +349,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
           <label className={label}>
             Hasta mes
             <select value={toMonth} onChange={e => setToMonth(Number(e.target.value))} className={select}>
-              {MONTHS_ES.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+              {MONTHS_ES.map((m, i) => <option key={m} value={i + 1}>{String(i + 1).padStart(2, '0')}/{String(year).slice(2)}</option>)}
             </select>
           </label>
         )}

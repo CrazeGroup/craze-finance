@@ -86,8 +86,12 @@ export default function InventarioPage() {
           <div className="p-6 md:col-span-1 shadow-sm border border-gray-100 flex flex-col gap-6 bg-white rounded-xl">
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">Mes de Cierre</label>
-              <input type="month" value={month} onChange={e => { setMonth(e.target.value); setSaved(false); }}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500 outline-none shadow-sm" />
+              {/* Meses en formato 01/26, como el resto de selectores de la app */}
+              <select value={month} onChange={e => { setMonth(e.target.value); setSaved(false); }}
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white focus:ring-blue-500 focus:border-blue-500 outline-none shadow-sm">
+                {Array.from({ length: 36 }, (_, i) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; })
+                  .map(m => <option key={m} value={m}>{m.substring(5, 7)}/{m.substring(2, 4)}</option>)}
+              </select>
             </div>
             <div className="pt-4 border-t border-gray-100 space-y-2">
               <button onClick={() => calculate()} disabled={isProcessing || !month}

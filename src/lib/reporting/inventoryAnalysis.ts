@@ -8,25 +8,41 @@ import { cutoffDate, monthEnd, today } from './period';
 // Análisis Inventario: inventario a cada fin de mes del año del informe (hasta el mes elegido) y de todo el año
 // anterior, por artículo × location (valor = uds de la location × coste unitario del artículo, como la página 80016),
 // con los atributos del artículo para que la página agrupe y filtre en el navegador. Los atributos (Product Range,
-// Categorization Code, Product Line, License, Business Unit, Raw Article, Article To Root) son los de la ficha en
-// CRAZE GmbH (como Commercial Analysis) y el Royalty Code el que usa Royalties.
+// Categorization Code, Product Line, License, Business Unit, Raw Article, Article To Root, Customer Group Code y
+// PM Classification) son los de la ficha en CRAZE GmbH (como Commercial Analysis) y el Royalty Code el que usa Royalties.
+// El inventario lleva también las uds por palet de cada artículo (unidad PAL) para contar palets por grupo.
 // Compras de inventario: lo mismo con las líneas de las facturas CHINA TRF de cada mes (importe en divisa local).
 
-export type InvAttrs = { no: string; desc: string; range: string; cat: string; line: string; license: string; bu: string; raw: string; root: string; royalty: string };
+export type InvAttrs = { no: string; desc: string; range: string; cat: string; line: string; license: string; bu: string; raw: string; root: string; royalty: string; cg: string; pmc: string };
 
 const s = (v: any) => (v == null ? '' : String(v).trim());
-const ITEM_FIELDS = 'no,description,range,categorizationCode,line,license,businessUnit,rawArticle,itemToRoot';
+const ITEM_FIELDS = 'no,description,range,categorizationCode,line,license,businessUnit,rawArticle,itemToRoot,customerGroupCode';
 
-// Atributos de artículo de CRAZE GmbH (una vez al día)
+// Atributos de artículo de CRAZE GmbH (una vez al día). PM Classification solo está en la página Item_Card_Excel;
+// el Customer Group Code se muestra con la descripción del grupo.
 async function itemAttributes(force: boolean) {
-  return cached('invAnalysis:items', 24 * HOUR, async () => {
+  return cached('invAnalysis:items2', 24 * HOUR, async () => {
     const ctx = await getBcContext('CRAZE');
-    const rows = await bcFetchAll(odataUrl(`${ctx.customApiBase}/items`, { $select: ITEM_FIELDS }), ctx.token, 55_000);
+    const [rows, cards, groups] = await Promise.all([
+      bcFetchAll(odataUrl(`${ctx.customApiBase}/items`, { $select: ITEM_FIELDS }), ctx.token, 55_000),
+      bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Item_Card_Excel`, { $select: 'No,PM_Classification_BCT' }), ctx.token, 55_000).catch(() => [] as any[]),
+      bcFetchAll(odataUrl(`${ctx.customApiBase}/customerGroups`, { $select: 'code,description' }), ctx.token).catch(() => [] as any[]),
+    ]);
+    const pmc = new Map(cards.map((c: any) => [s(c.No), s(c.PM_Classification_BCT)]));
+    const group = new Map(groups.map((g: any) => [s(g.code), s(g.description)]));
     return rows.map((i: any) => ({
       no: s(i.no), desc: s(i.description), range: s(i.range), cat: s(i.categorizationCode), line: s(i.line),
       license: s(i.license), bu: s(i.businessUnit), raw: s(i.rawArticle), root: s(i.itemToRoot),
+      cg: s(i.customerGroupCode) ? `${s(i.customerGroupCode)} ${group.get(s(i.customerGroupCode)) || ''}`.trim() : '', pmc: pmc.get(s(i.no)) || '',
     }));
   }, force, { refreshAfterMs: 24 * HOUR });
+}
+
+// Uds por palet (unidad PAL) de cada artículo de la empresa
+export async function palletSizes(ctx: BcContext): Promise<Record<string, number>> {
+  const rows = await bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Item_Units_of_Measure_Excel`, { $filter: `Code eq 'PAL'`, $select: 'Item_No,Qty_per_Unit_of_Measure' }), ctx.token)
+    .catch(() => [] as any[]);
+  return Object.fromEntries(rows.filter((u: any) => u.Qty_per_Unit_of_Measure > 0).map((u: any) => [s(u.Item_No), u.Qty_per_Unit_of_Measure]));
 }
 
 // Fechas: fin de cada mes de enero al mes del informe (este con la fecha de corte) y de los 12 meses del año anterior
@@ -64,6 +80,7 @@ export async function indexer(force: boolean) {
       items.push({
         no, desc: a?.desc || desc, range: a?.range || '', cat: a?.cat || '', line: a?.line || '',
         license: a?.license || '', bu: a?.bu || '', raw: a?.raw || '', root: a?.root || '', royalty: card ? royalty[card] || '' : '',
+        cg: a?.cg || '', pmc: a?.pmc || '',
       });
     }
     let li = locIdx.get(loc);
@@ -83,10 +100,10 @@ export async function indexer(force: boolean) {
 }
 
 export async function inventoryAnalysis(ctx: BcContext, company: string, month: string, force = false) {
-  return cached(`invAnalysis:${company}:${month}`, 24 * HOUR, async () => {
+  return cached(`invAnalysis2:${company}:${month}`, 24 * HOUR, async () => {
     const { year, cur, prev } = analysisDates(month);
     const dates = [...prev, ...cur];
-    const [snaps, idx] = await Promise.all([fetchSnapshots(ctx, dates), indexer(force)]);
+    const [snaps, idx, pal] = await Promise.all([fetchSnapshots(ctx, dates), indexer(force), palletSizes(ctx)]);
     const totals: { date: string; value: number; qty: number; skus: number }[] = [];
     dates.forEach((date, di) => {
       const snap = snaps[date];
@@ -102,7 +119,7 @@ export async function inventoryAnalysis(ctx: BcContext, company: string, month: 
         for (const [loc, qty] of Object.entries(item.loc)) idx.add(di, item.no, item.desc, loc, qty * unit, qty);
       }
     });
-    return { year, month, dates, curDates: cur, prevDates: prev, totals, items: idx.items, locs: idx.locs, rows: idx.rows, rawDesc: idx.rawDescs() };
+    return { year, month, dates, curDates: cur, prevDates: prev, totals, items: idx.items, locs: idx.locs, rows: idx.rows, rawDesc: idx.rawDescs(), pal };
   }, force, { refreshAfterMs: 24 * HOUR });
 }
 
@@ -113,7 +130,7 @@ export async function inventoryAnalysis(ctx: BcContext, company: string, month: 
 export async function purchasesAnalysis(ctx: BcContext, company: string, month: string, force = false) {
   const { year, cur, prev } = analysisDates(month);
   const last = cur[cur.length - 1];
-  return cached(`purAnalysis2:${company}:${last}`, last < today() ? 12 * HOUR : HOUR, async () => {
+  return cached(`purAnalysis3:${company}:${last}`, last < today() ? 12 * HOUR : HOUR, async () => {
     const from = `${year - 1}-01-01`;
     const [entries, lines, idx] = await Promise.all([
       bcFetchAll(odataUrl(`${ctx.customApiBase}/vendorLedgerEntries`, {

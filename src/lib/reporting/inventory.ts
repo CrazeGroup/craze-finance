@@ -167,6 +167,8 @@ export function buildInventoryReport(cur: InvSnapshot, prev: InvSnapshot, gl: nu
     remap,
     locations,
     up, down,
+    // Todos los productos que cambian de valor (para la descarga a Excel)
+    changes: changes.filter(c => Math.abs(c.dv) > 0.5).sort((a, b) => b.dv - a.dv),
     glAccount: INVENTORY_ACCOUNT, glBalance: gl,
     cost: {
       nBoth: costItems.length, nChanged: changed.length,

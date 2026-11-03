@@ -109,7 +109,7 @@ export default function ReportPage({ mode }: { mode: ReportMode }) {
             )}
             <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 hidden sm:inline">{t('month')}</span>
             <select value={month} onChange={e => setMonth(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold bg-white">
-              {months.map(m => <option key={m} value={m}>{fmt.monthName(m)}</option>)}
+              {months.map(m => <option key={m} value={m}>{fmt.monthCode(m)}</option>)}
             </select>
             <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={anyLoading} title={t('refresh')}
               className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">

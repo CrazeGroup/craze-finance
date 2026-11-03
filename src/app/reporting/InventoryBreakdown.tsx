@@ -5,21 +5,23 @@ import type { Fmt } from './i18n';
 import { C, Card, Grid, LineChart, Signed } from './ui';
 
 // Datos de /api/reporting/inventory-analysis (src/lib/reporting/inventoryAnalysis.ts)
-export type InvAttrs = { no: string; desc: string; range: string; cat: string; line: string; license: string; bu: string; raw: string; root: string; royalty: string };
+export type InvAttrs = { no: string; desc: string; range: string; cat: string; line: string; license: string; bu: string; raw: string; root: string; royalty: string; cg: string; pmc: string };
 export type Analysis = {
   year: number; month: string; dates: string[]; curDates: string[]; prevDates: string[];
   totals: { date: string; value: number; qty: number; skus: number }[];
   items: InvAttrs[]; locs: string[]; rows: number[][]; rawDesc: Record<string, string>;
+  pal?: Record<string, number>;                                   // uds por palet de cada artículo (inventario)
 };
 
-// Características por las que se desglosa (como el selector de Commercial Analysis, más Product Range y
-// Categorization Code; sin Customer, Dimension, KAM ni Sell Country, que no existen en el inventario)
-const DIMS = ['location', 'bu', 'line', 'range', 'cat', 'license', 'royalty', 'raw', 'root', 'article'] as const;
+// Características por las que se desglosa (como el selector de Commercial Analysis, más Product Range,
+// Categorization Code, Customer Group Code y PM Classification del artículo; sin Customer, Dimension, KAM ni Sell
+// Country, que no existen en el inventario)
+const DIMS = ['location', 'bu', 'line', 'range', 'cat', 'cg', 'pmc', 'license', 'royalty', 'raw', 'root', 'article'] as const;
 type Dim = typeof DIMS[number];
 // En el valor de inventario no se desglosa por artículo (solo en las compras)
 const ARTICLE_DIMS: Dim[] = ['raw', 'root', 'article'];
 const DIM_LABEL: Record<Exclude<Dim, 'location'>, string> = {
-  bu: 'Business Unit', line: 'Product Line', range: 'Product Range', cat: 'Categorization Code', license: 'License',
+  bu: 'Business Unit', line: 'Product Line', range: 'Product Range', cat: 'Categorization Code', cg: 'Customer Group Code', pmc: 'PM Classification', license: 'License',
   royalty: 'License Royalty', raw: 'Raw Article', root: 'Article To Root', article: 'Article',
 };
 
@@ -41,8 +43,25 @@ const NOTE: Record<BreakdownKind, 'locNote' | 'purNote' | 'adsNote'> = { stock: 
 
 type Group = { v: number[]; q: number[] };
 
-export default function InventoryBreakdown({ fmt, an, kind = 'stock' }: { fmt: Fmt; an: Analysis; kind?: BreakdownKind }) {
-  const { t, eur, pct, date, num } = fmt;
+// Grupo de una fila [fecha, artículo, location, …] según la característica elegida
+function keyFn(an: Analysis, dim: Dim, none: string) {
+  const desc = (code: string) => `${code} ${an.rawDesc[code] || ''}`.trim();
+  return (r: number[]): string => {
+    const it = an.items[r[1]];
+    switch (dim) {
+      case 'location': return an.locs[r[2]];
+      case 'article': return `${it.no} ${it.desc}`.trim();
+      case 'raw': return it.raw ? desc(it.raw) : none;
+      case 'root': return it.root ? desc(it.root) : none;
+      default: return it[dim] || none;
+    }
+  };
+}
+
+// Valor de inventario: la tabla lleva además el nº de palets (uds del grupo por artículo ÷ uds por palet, hacia arriba)
+// y el Average Days in Stock del mes de cada grupo (adsData = filas del ADS)
+export default function InventoryBreakdown({ fmt, an, kind = 'stock', adsData }: { fmt: Fmt; an: Analysis; kind?: BreakdownKind; adsData?: Analysis | null }) {
+  const { t, eur, pct, num } = fmt;
   const stock = kind === 'stock';
   const ads = kind === 'ads';
   const [dim, setDim] = useState<Dim>('location');
@@ -57,18 +76,7 @@ export default function InventoryBreakdown({ fmt, an, kind = 'stock' }: { fmt: F
 
   // Importe (o uds × días) y uds por grupo y fecha
   const groups = useMemo(() => {
-    const none = t('none');
-    const desc = (code: string) => `${code} ${an.rawDesc[code] || ''}`.trim();
-    const key = (r: number[]): string => {
-      const it = an.items[r[1]];
-      switch (dim) {
-        case 'location': return an.locs[r[2]];
-        case 'article': return `${it.no} ${it.desc}`.trim();
-        case 'raw': return it.raw ? desc(it.raw) : none;
-        case 'root': return it.root ? desc(it.root) : none;
-        default: return it[dim] || none;
-      }
-    };
+    const key = keyFn(an, dim, t('none'));
     const map = new Map<string, Group>();
     for (const r of an.rows) {
       const k = key(r);
@@ -79,6 +87,38 @@ export default function InventoryBreakdown({ fmt, an, kind = 'stock' }: { fmt: F
     }
     return map;
   }, [an, dim, t]);
+
+  // Palets y ADS por grupo (solo valor de inventario)
+  const extras = useMemo(() => {
+    if (!stock) return null;
+    const key = keyFn(an, dim, t('none'));
+    const qty = new Map<string, number>();                      // grupo|artículo → uds a la fecha
+    for (const r of an.rows) if (r[0] === curIdx) { const k = `${key(r)}\u0000${an.items[r[1]].no}`; qty.set(k, (qty.get(k) || 0) + r[4]); }
+    const pallets = new Map<string, number>();
+    for (const [k, q] of qty) {
+      const [g, no] = k.split('\u0000');
+      const per = an.pal?.[no];
+      if (per && q > 0) pallets.set(g, (pallets.get(g) || 0) + Math.ceil(q / per - 1e-9));
+    }
+    const ads = new Map<string, { v: number; q: number }>();
+    if (adsData) {
+      const aKey = keyFn(adsData, dim, t('none'));
+      const aIdx = adsData.prevDates.length + adsData.curDates.length - 1;
+      for (const r of adsData.rows) {
+        if (r[0] !== aIdx) continue;
+        const g = ads.get(aKey(r)) || { v: 0, q: 0 };
+        g.v += r[3]; g.q += r[4];
+        ads.set(aKey(r), g);
+      }
+    }
+    return { pallets, ads };
+  }, [an, adsData, dim, stock, curIdx, t]);
+  const palletsOf = (k: string | null) => (k == null ? Array.from(extras?.pallets.values() || []).reduce((s, x) => s + x, 0) : extras?.pallets.get(k) || 0);
+  const adsOf = (k: string | null) => {
+    const list = k == null ? Array.from(extras?.ads.values() || []) : [extras?.ads.get(k)].filter(Boolean) as { v: number; q: number }[];
+    const q = list.reduce((s, x) => s + x.q, 0);
+    return q ? list.reduce((s, x) => s + x.v, 0) / q : null;
+  };
 
   const changeDim = (d: Dim) => { setDim(d); setSelected(new Set()); };
   const toggle = (k: string) => setSelected(prev => {
@@ -116,7 +156,6 @@ export default function InventoryBreakdown({ fmt, an, kind = 'stock' }: { fmt: F
     ? Array.from(selected).slice(0, 3).join(', ') + (selected.size > 3 ? ` +${selected.size - 3}` : '')
     : t('trendAll');
   const dimName = (d: Dim) => (d === 'location' ? t('location') : DIM_LABEL[d]);
-  const refDate = refIdx >= 0 ? an.prevDates[refIdx] : null;
   const fmtV = (v: number | null) => (v == null ? '–' : ads ? t('daysN', { n: num(v) }) : eur(v));
   const share = (r: { value: number | null; qty: number }) => ads
     ? pct(totalQty ? (r.qty / totalQty) * 100 : 0)
@@ -152,8 +191,17 @@ export default function InventoryBreakdown({ fmt, an, kind = 'stock' }: { fmt: F
                 {!stock && <th className="py-2 px-2 text-right hidden md:table-cell">{fmt.monthName(months[monthNo - 1], 'short')}</th>}
                 <th className="py-2 px-2 text-right">{stock ? t('valueAt', { date: fmt.shortDate(an.curDates[monthNo - 1]) }) : t('ytd', { year: an.year })}</th>
                 <th className="py-2 px-2 text-right hidden md:table-cell">{ads ? t('unitsOutPct') : t('pctTotal')}</th>
-                <th className="py-2 px-2 text-right">{stock ? t('refAt', { date: refDate ? date(refDate) : '–' }) : t('ytd', { year: an.year - 1 })}</th>
-                <th className="py-2 px-2 text-right">{t('deltaYoy')}</th>
+                {stock ? (
+                  <>
+                    <th className="py-2 px-2 text-right">{t('palletsCol')}</th>
+                    <th className="py-2 px-2 text-right">{t('adsCol', { month: fmt.monthName(months[monthNo - 1], 'short') })}</th>
+                  </>
+                ) : (
+                  <>
+                    <th className="py-2 px-2 text-right">{t('ytd', { year: an.year - 1 })}</th>
+                    <th className="py-2 px-2 text-right">{t('deltaYoy')}</th>
+                  </>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -164,20 +212,38 @@ export default function InventoryBreakdown({ fmt, an, kind = 'stock' }: { fmt: F
                     className={`border-b border-gray-100 cursor-pointer ${on ? 'bg-[#24305E]/10 font-semibold' : selected.size ? 'text-gray-400 hover:bg-gray-50' : 'hover:bg-gray-50'}`}>
                     <td className="py-2 px-2">{r.key}</td>
                     {!stock && <td className={`${td} hidden md:table-cell`}>{fmtV(r.month)}</td>}
-                    <td className={td}>{fmtV(r.value)}</td>
+                    <td className={td}>{fmtV(r.value)}{stock && <span className="block text-[10px] font-semibold"><Delta fmt={fmt} cur={r.value} prev={r.ref} /></span>}</td>
                     <td className={`${td} hidden md:table-cell`}>{share(r)}</td>
-                    <td className={td}>{fmtV(r.ref)}</td>
-                    <td className={td}><Delta fmt={fmt} cur={r.value} prev={r.ref} invert={ads} /></td>
+                    {stock ? (
+                      <>
+                        <td className={td}>{num(palletsOf(r.key))}</td>
+                        <td className={td}>{adsOf(r.key) == null ? '–' : t('daysN', { n: num(adsOf(r.key)!) })}</td>
+                      </>
+                    ) : (
+                      <>
+                        <td className={td}>{fmtV(r.ref)}</td>
+                        <td className={td}><Delta fmt={fmt} cur={r.value} prev={r.ref} invert={ads} /></td>
+                      </>
+                    )}
                   </tr>
                 );
               })}
               <tr className="border-t border-gray-300 font-semibold">
                 <td className="py-2 px-2">{t('total')}</td>
                 {!stock && <td className={`${td} hidden md:table-cell`}>{fmtV(totalRow.month)}</td>}
-                <td className={td}>{fmtV(totalRow.value)}</td>
+                <td className={td}>{fmtV(totalRow.value)}{stock && <span className="block text-[10px] font-semibold"><Delta fmt={fmt} cur={totalRow.value} prev={totalRow.ref} /></span>}</td>
                 <td className={`${td} hidden md:table-cell`}>{pct(100)}</td>
-                <td className={td}>{fmtV(totalRow.ref)}</td>
-                <td className={td}><Delta fmt={fmt} cur={totalRow.value} prev={totalRow.ref} invert={ads} /></td>
+                {stock ? (
+                  <>
+                    <td className={td}>{num(palletsOf(null))}</td>
+                    <td className={td}>{adsOf(null) == null ? '–' : t('daysN', { n: num(adsOf(null)!) })}</td>
+                  </>
+                ) : (
+                  <>
+                    <td className={td}>{fmtV(totalRow.ref)}</td>
+                    <td className={td}><Delta fmt={fmt} cur={totalRow.value} prev={totalRow.ref} invert={ads} /></td>
+                  </>
+                )}
               </tr>
             </tbody>
           </table>
