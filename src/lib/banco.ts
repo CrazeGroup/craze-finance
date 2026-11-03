@@ -197,8 +197,29 @@ export function matchMovements(movements: Movement[], entries: LedgerEntry[]) {
       }
     }
   }
+
+  // 5. Cobro neto de una factura de compra (o al revés): movimientos del mismo día de documentos distintos con el
+  //    nombre de la contrapartida (p. ej. dm drogerie markt GmbH 17.689,69 y dm drogerie markt GmbH AT -308,16)
+  for (const m of pending()) {
+    const key = firstWord(m.name);
+    if (!key) continue;
+    const dates = Array.from(new Set(entries.filter(e => !used.has(e.entryNo)).map(e => e.date)))
+      .filter(d => dist(m, d) <= WINDOW_DAYS).sort((a, b) => dist(m, a) - dist(m, b));
+    for (const d of dates) {
+      const group = entries.filter(e => !used.has(e.entryNo) && e.date === d && firstWord(e.description) === key);
+      const found = group.length >= 2 ? subsetWithSum(group, cents(m.amount)) : null;
+      if (found) {
+        result.set(m.idx, found);
+        found.forEach(e => used.add(e.entryNo));
+        break;
+      }
+    }
+  }
   return result;
 }
+
+// Primera palabra del nombre normalizado ("dm drogerie markt GmbH AT" → "dm")
+const firstWord = (s: string) => normName(s).split(' ')[0] || '';
 
 // k movimientos del grupo que suman target (busca por el lado más corto: los k o los que sobran)
 function combinationWithSum(group: LedgerEntry[], k: number, target: number): LedgerEntry[] | null {
@@ -348,8 +369,13 @@ export function suggest(
       const total = cents(cited.reduce((t, c) => t + c.remaining, 0));
       const name = o.name || partyName.get(`${o.side}|${o.no}`) || m.name;
       const applied = (c: OpenEntry): SuggestedLine => ({ ...line(o.side, o.no, `${name} ${c.docNo}`, c.remaining), accountName: name, appliesToDocType: docType(c.docType), appliesToDocNo: c.docNo });
+      // La diferencia puede ser una factura abierta del otro lado con nombre parecido (cobro neto de una factura de compra)
+      const other = open.find(c => c.side !== o.side && cents(c.remaining) === cents(m.amount) - total && firstWord(c.name) === firstWord(name));
       if (total === cents(m.amount)) {
         out.set(m.idx, { documentNo, source: 'Factura', note: `Cuadra con ${cited.map(c => c.docNo).join(', ')}`, lines: cited.map(applied) });
+      } else if (other) {
+        const otherLine: SuggestedLine = { ...line(other.side, other.no, `${other.name} ${other.docNo}`, other.remaining), accountName: other.name, appliesToDocType: docType(other.docType), appliesToDocNo: other.docNo };
+        out.set(m.idx, { documentNo, source: 'Factura', note: `Cuadra con ${cited.map(c => c.docNo).join(', ')} menos ${other.docNo} de ${other.name}`, lines: [...cited.map(applied), otherLine] });
       } else if (cited.length === 1) {
         out.set(m.idx, { documentNo, source: 'Factura', note: `${o.docNo} tiene pendiente ${r2(o.remaining).toFixed(2)}: revisa la diferencia (Skonto, comisión…)`, lines: [{ ...applied(o), amount: r2(m.amount) }] });
       } else {
