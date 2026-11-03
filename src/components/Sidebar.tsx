@@ -19,7 +19,7 @@ const TEXT: Record<Lang, Record<string, string>> = {
     noSection: 'No section', dragHere: 'Drag items here', newSection: 'New section', organize: 'Organize menu', done: 'Done', rename: 'Rename',
     deleteSection: 'Delete section (its items go back to "No section")', logout: 'Log out',
     '/': 'Main Dashboard', '/riesgos': 'Risks', '/recobros': 'Collections', '/movimientos': 'Open Entries', '/pagos': 'Vendor Payments',
-    '/inventario': 'Inventory (Closing)', '/notas-compra': 'Purchase Notes', '/aduanas': 'Customs', '/insurances': 'Insurance', '/contracts': 'Contracts',
+    '/inventario': 'Inventory (Closing)', '/inventory-analysis': 'Inventory Analysis', '/notas-compra': 'Purchase Notes', '/aduanas': 'Customs', '/insurances': 'Insurance', '/contracts': 'Contracts',
     '/settings/users': 'Users', '/settings/logs': 'Audit Log', '/settings': 'Settings',
   },
   es: {
@@ -32,7 +32,7 @@ const TEXT: Record<Lang, Record<string, string>> = {
     noSection: 'Ohne Bereich', dragHere: 'Einträge hierher ziehen', newSection: 'Neuer Bereich', organize: 'Menü organisieren', done: 'Fertig', rename: 'Umbenennen',
     deleteSection: 'Bereich löschen (seine Einträge gehen zurück zu „Ohne Bereich“)', logout: 'Abmelden',
     '/': 'Haupt-Dashboard', '/riesgos': 'Risiken', '/recobros': 'Inkasso', '/movimientos': 'Offene Posten', '/pagos': 'Lieferantenzahlungen',
-    '/inventario': 'Inventar (Abschluss)', '/notas-compra': 'Einkaufsnotizen', '/aduanas': 'Zoll', '/insurances': 'Versicherungen', '/contracts': 'Verträge',
+    '/inventario': 'Inventar (Abschluss)', '/inventory-analysis': 'Bestandsanalyse', '/notas-compra': 'Einkaufsnotizen', '/aduanas': 'Zoll', '/insurances': 'Versicherungen', '/contracts': 'Verträge',
     '/settings/users': 'Benutzer', '/settings/logs': 'Protokoll', '/settings': 'Einstellungen',
   },
 };
@@ -88,6 +88,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
     { href: '/inventario', label: 'Inventario (Cierre)', module: 'inventario' },
     { href: '/bwa', label: 'BWA Analytics', module: 'bwa' },
     { href: '/reporting', label: 'Reporting', module: 'reporting' },
+    { href: '/inventory-analysis', label: 'Análisis Inventario', module: 'reporting' },
     { href: '/controlling', label: 'Controlling', module: 'controlling' },
     { href: '/royalties', label: 'Royalties', module: 'royalties' },
     { href: '/commercial', label: 'Commercial Analysis', module: 'commercial' },
@@ -112,12 +113,15 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
     router.refresh();
   };
 
-  // Menú oculto: solo un botón para volver a mostrarlo
+  // Menú oculto: arriba a la izquierda, el logo y debajo el botón para volver a mostrarlo
   if (hidden) return (
-    <button type="button" onClick={() => toggleHidden(false)} title={tx('show')}
-      className="app-menu-toggle fixed bottom-4 left-4 z-50 flex items-center gap-2 bg-black text-white text-sm font-semibold px-3.5 py-2 rounded-full shadow-lg hover:bg-gray-800">
-      <MenuIcon size={16} /> {tx('menu')}
-    </button>
+    <aside className="app-menu-toggle flex-shrink-0 border-r border-gray-200 bg-white flex flex-col items-center gap-3 px-3 py-4">
+      <Image src="/logo.png" alt="Craze Group Logo" width={72} height={21} className="object-contain" />
+      <button type="button" onClick={() => toggleHidden(false)} title={tx('show')}
+        className="flex items-center gap-1.5 bg-black text-white text-xs font-semibold px-3 py-1.5 rounded-full hover:bg-gray-800">
+        <MenuIcon size={14} /> {tx('menu')}
+      </button>
+    </aside>
   );
 
   // Selector de idioma: dentro de la sección Config del usuario (o al final si no la tiene)
