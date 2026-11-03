@@ -108,11 +108,12 @@ export async function inventoryAnalysis(ctx: BcContext, company: string, month: 
 
 // Compras de inventario (facturas CHINA TRF) por mes del año del informe y del anterior: líneas de las facturas
 // registradas (custom purchInvLines), en divisa local (factor amountLCY / amount del movimiento de proveedor).
-// Las líneas que no son de artículo (cuenta, cargo) van con su nº y descripción y sin atributos.
+// Las líneas que no son de artículo (cuenta, cargo) van con su nº y descripción y sin atributos. Lo que el movimiento
+// no cubre con líneas (facturas migradas antes de oct-2025, sin líneas registradas) va como "(sin líneas)".
 export async function purchasesAnalysis(ctx: BcContext, company: string, month: string, force = false) {
   const { year, cur, prev } = analysisDates(month);
   const last = cur[cur.length - 1];
-  return cached(`purAnalysis:${company}:${last}`, last < today() ? 12 * HOUR : HOUR, async () => {
+  return cached(`purAnalysis2:${company}:${last}`, last < today() ? 12 * HOUR : HOUR, async () => {
     const from = `${year - 1}-01-01`;
     const [entries, lines, idx] = await Promise.all([
       bcFetchAll(odataUrl(`${ctx.customApiBase}/vendorLedgerEntries`, {
@@ -132,6 +133,7 @@ export async function purchasesAnalysis(ctx: BcContext, company: string, month: 
       return y === year - 1 ? (m < prev.length ? m : -1) : y === year ? (m < cur.length ? prev.length + m : -1) : -1;
     };
     const none = '(sin location)';
+    const covered = new Map<string, number>();
     for (const l of lines) {
       const f = factor.get(l.documentNo);
       if (f === undefined || !l.amount) continue;
@@ -139,7 +141,13 @@ export async function purchasesAnalysis(ctx: BcContext, company: string, month: 
       if (di < 0) continue;
       const isItem = String(l.type) === 'Item';
       const no = s(l.no) || s(l.description);
+      covered.set(l.documentNo, (covered.get(l.documentNo) || 0) + l.amount * f);
       idx.add(di, isItem ? no : `${no}${l.description && s(l.no) ? ` ${s(l.description)}` : ''}`, s(l.description), s(l.locationCode) || none, l.amount * f, Number(l.quantity) || 0);
+    }
+    for (const e of entries) {
+      const rest = -e.amountLCY - (covered.get(e.documentNo) || 0);
+      const di = monthIdx(String(e.postingDate));
+      if (di >= 0 && Math.abs(rest) >= 0.5) idx.add(di, '(sin líneas)', '', none, rest, 0);
     }
     const totals = [...prev, ...cur].map((date, di) => ({
       date, value: idx.rows.filter(r => r[0] === di).reduce((t, r) => t + r[3], 0), qty: 0, skus: 0,
