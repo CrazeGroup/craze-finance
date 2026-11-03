@@ -2,7 +2,7 @@
 
 import React from 'react';
 import type { Fmt } from './i18n';
-import { BarChart, BridgeChart, C, Card, ErrorBox, Grid, Hl, Kpi, Loading, Note, Section, Signed, Table } from './ui';
+import { BridgeChart, Card, ErrorBox, Grid, Hl, Kpi, Loading, Note, Section, Signed, Table } from './ui';
 import InventoryBreakdown, { Analysis, Delta } from './InventoryBreakdown';
 
 export type Loaded<T = any> = { data: T | null; loading: boolean; error: string | null };
@@ -15,48 +15,61 @@ function Block<T>({ state, fmt, children }: { state: Loaded<T>; fmt: Fmt; childr
 
 const share = (part: number, whole: number) => (whole ? (part / whole) * 100 : 0);
 
-export function InventorySection({ fmt, inv, an }: { fmt: Fmt; inv: Loaded; an: Loaded<Analysis> }) {
-  const { t, eur, short, num, pct, date } = fmt;
+// KPIs de /api/reporting/inventory-analysis?kind=kpis (src/lib/reporting/inventoryKpis.ts) y desglose del ADS
+export type InvKpis = Analysis & {
+  destroyed: { value: number; qty: number }[]; pallets: number; noPallet: number; ads: { days: number | null; qty: number }[];
+};
+
+export function InventorySection({ fmt, inv, an, kp }: { fmt: Fmt; inv: Loaded; an: Loaded<Analysis>; kp: Loaded<InvKpis> }) {
+  const { t, short, num, date } = fmt;
+  const k = kp.data;
+  const cur = k ? k.prevDates.length + k.curDates.length - 1 : -1;     // mes del informe
+  const ly = k && k.curDates.length <= k.prevDates.length ? k.curDates.length - 1 : -1;
+  const ytd = (from: number, to: number, f: (i: number) => number) => { let x = 0; for (let i = from; i <= to; i++) x += f(i); return x; };
+  const adsOf = (from: number, to: number) => {
+    if (!k || to < from) return null;
+    const q = ytd(from, to, i => k.ads[i].qty);
+    return q ? ytd(from, to, i => (k.ads[i].days || 0) * k.ads[i].qty) / q : null;
+  };
+  const pending = kp.error ? '!' : '…';
+  const kpiSub = (text: string) => (kp.error ? kp.error : text);
   return (
     <Section title={t('invTitle')} source={inv.data ? t('invSource', { date: date(inv.data.date) }) : undefined}>
       <Block state={inv} fmt={fmt}>{(d: any) => {
-        const diff = d.total - d.prevTotal;
-        const main = d.locations[0];
         // Mismo fin de mes del año anterior (del análisis por meses)
-        const ly = an.data?.totals.find(x => x.date === an.data!.prevDates[an.data!.curDates.length - 1]);
+        const lyInv = an.data?.totals.find(x => x.date === an.data!.prevDates[an.data!.curDates.length - 1]);
+        const adsCur = k ? k.ads[cur].days : null;
+        const adsLy = k && ly >= 0 ? k.ads[ly].days : null;
         return (
           <>
             <Grid cols={4}>
               <Kpi highlight tone="main" label={t('kpiInvValue', { date: date(d.date) })} value={short(d.total)} sub={t('unitsRefs', { qty: num(d.qty), n: num(d.nItems) })}
-                extra={ly && (
+                extra={lyInv && (
                   <p className="text-[11px] text-gray-500 mt-1.5 pt-1.5 border-t border-gray-100">
-                    {t('vsLastYear', { date: date(ly.date) })}: {short(ly.value)} · {t('unitsRefs', { qty: num(ly.qty), n: num(ly.skus) })}
+                    {t('vsLastYear', { date: date(lyInv.date) })}: {short(lyInv.value)} · {t('unitsRefs', { qty: num(lyInv.qty), n: num(lyInv.skus) })}
                     <span className="block font-semibold">
-                      <Delta fmt={fmt} cur={d.total} prev={ly.value} /> {t('yoyValue')} · <Delta fmt={fmt} cur={d.qty} prev={ly.qty} /> {t('yoyUnits')}
+                      <Delta fmt={fmt} cur={d.total} prev={lyInv.value} /> {t('yoyValue')} · <Delta fmt={fmt} cur={d.qty} prev={lyInv.qty} /> {t('yoyUnits')}
                     </span>
                   </p>
                 )} />
-              <Kpi tone={diff < 0 ? 'red' : 'green'} label={t('kpiVariation', { date: date(d.prevDate) })} value={short(diff)} sub={pct(share(diff, d.prevTotal))} />
-              <Kpi label={t('kpiAfterDep')} value={short(d.totalDep)} sub={t('afterDepSub')} />
-              {main && <Kpi label={t('kpiShare', { loc: main.loc })} value={pct(share(main.value, d.total))} sub={t('mainWarehouse')} />}
+              <Kpi tone="red" label={t('kpiDestroyed')} value={k ? short(k.destroyed[cur].value) : pending}
+                sub={kpiSub(k ? t('destroyedSub', { qty: num(k.destroyed[cur].qty), ytd: short(ytd(k.prevDates.length, cur, i => k.destroyed[i].value)) }) : t('loading'))} />
+              <Kpi label={t('kpiPallets', { date: date(d.date) })} value={k ? num(k.pallets) : pending}
+                sub={kpiSub(k ? t('palletsSub', { n: num(k.noPallet) }) : t('loading'))} />
+              <Kpi label={t('kpiAds')} value={k ? (adsCur == null ? '–' : t('daysN', { n: num(adsCur) })) : pending}
+                sub={kpiSub(k ? t('adsSub', { ytd: adsOf(k.prevDates.length, cur) == null ? '–' : num(adsOf(k.prevDates.length, cur)!) }) : t('loading'))}
+                extra={k && adsLy != null && (
+                  <p className="text-[11px] text-gray-500 mt-1.5 pt-1.5 border-t border-gray-100">
+                    {t('vsLastYear', { date: fmt.monthName(k.prevDates[ly].substring(0, 7)) })}: {t('daysN', { n: num(adsLy) })} · <span className="font-semibold"><Delta fmt={fmt} cur={adsCur} prev={adsLy} invert /></span>
+                  </p>
+                )} />
             </Grid>
             {an.error ? <ErrorBox message={an.error} />
               : an.loading || !an.data ? <Loading text={t('anLoading')} />
               : <InventoryBreakdown fmt={fmt} an={an.data} />}
-            <div className="space-y-4">
-              {(['up', 'down'] as const).map(k => (
-                <Card key={k} title={t(k === 'up' ? 'topUp' : 'topDown')} sub={`(${date(d.prevDate)} → ${date(d.date)})`}>
-                  <Table
-                    cols={[{ label: t('code'), nowrap: true }, { label: t('product'), wide: true }, { label: t('unitsAt', { date: fmt.shortDate(d.prevDate) }), align: 'right', mono: true, hideMobile: true }, { label: t('unitsAt', { date: fmt.shortDate(d.date) }), align: 'right', mono: true, hideMobile: true }, { label: t('valueAt', { date: fmt.shortDate(d.date) }), align: 'right', mono: true }, { label: t('deltaValue'), align: 'right', mono: true }]}
-                    rows={d[k].map((i: any) => [i.code, i.desc, num(i.qa), num(i.qs), eur(i.vs), <Signed key="d" v={i.dv} text={(i.dv > 0 ? '+' : '') + eur(i.dv)} />])}
-                  />
-                </Card>
-              ))}
-            </div>
-            <Note>
-              {Object.entries(d.remap).map(([a, b]) => <span key={a}>{t('remapNote', { a, b: b as string })} </span>)}
-              {t('glNote', { acc: d.glAccount, gl: short(d.glBalance), date: date(d.date), inv: short(d.total), diff: short(d.glBalance - d.total) })}
-            </Note>
+            {kp.error ? <ErrorBox message={kp.error} />
+              : kp.loading || !k ? <Loading text={t('anLoading')} />
+              : <InventoryBreakdown fmt={fmt} an={k} kind="ads" />}
           </>
         );
       }}</Block>
@@ -172,10 +185,10 @@ export default function OperationalView({ fmt, inv, ar }: { fmt: Fmt; inv: Loade
 }
 
 // Análisis de inventario: valor por Location Code y compras de inventario (CHINA TRF)
-export function InventoryAnalysisView({ fmt, month, inv, pur, an, pa }: { fmt: Fmt; month: string; inv: Loaded; pur: Loaded; an: Loaded<Analysis>; pa: Loaded<Analysis> }) {
+export function InventoryAnalysisView({ fmt, month, inv, pur, an, pa, kp }: { fmt: Fmt; month: string; inv: Loaded; pur: Loaded; an: Loaded<Analysis>; pa: Loaded<Analysis>; kp: Loaded<InvKpis> }) {
   return (
     <div className="space-y-10">
-      <InventorySection fmt={fmt} inv={inv} an={an} />
+      <InventorySection fmt={fmt} inv={inv} an={an} kp={kp} />
       <PurchasesSection fmt={fmt} pur={pur} pa={pa} month={month} />
     </div>
   );

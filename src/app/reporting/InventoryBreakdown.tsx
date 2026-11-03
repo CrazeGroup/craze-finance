@@ -25,18 +25,26 @@ const DIM_LABEL: Record<Exclude<Dim, 'location'>, string> = {
 
 const pctChange = (a: number, b: number) => (b ? ((a - b) / Math.abs(b)) * 100 : null);
 
-// % de variación en pequeño, verde si sube y rojo si baja
-export function Delta({ fmt, cur, prev }: { fmt: Fmt; cur: number; prev: number }) {
-  const p = pctChange(cur, prev);
+// % de variación en pequeño, verde si sube y rojo si baja (invert: al revés, p. ej. más días en stock es peor)
+export function Delta({ fmt, cur, prev, invert = false }: { fmt: Fmt; cur: number | null; prev: number | null; invert?: boolean }) {
+  const p = cur == null || prev == null ? null : pctChange(cur, prev);
   if (p === null) return <span className="text-gray-400">–</span>;
-  return <Signed v={p} text={`${p > 0 ? '+' : ''}${fmt.pct(p)}`} />;
+  return <Signed v={p} invert={invert} text={`${p > 0 ? '+' : ''}${fmt.pct(p)}`} />;
 }
 
-// stock: inventario a cada fin de mes (tabla a la fecha del informe); flow: compras de cada mes (tabla con el mes
-// del informe y el acumulado del año frente al mismo periodo del año anterior)
-export default function InventoryBreakdown({ fmt, an, kind = 'stock' }: { fmt: Fmt; an: Analysis; kind?: 'stock' | 'flow' }) {
-  const { t, eur, pct, date } = fmt;
-  const flow = kind === 'flow';
+// stock: inventario a cada fin de mes (tabla a la fecha del informe y a la misma fecha del año anterior)
+// flow: compras de cada mes (tabla con el mes del informe y el acumulado del año frente al mismo periodo del anterior)
+// ads: Average Days in Stock (filas = uds × días y uds; cada grupo = suma de uds × días / suma de uds), como flow
+export type BreakdownKind = 'stock' | 'flow' | 'ads';
+const TITLE: Record<BreakdownKind, 'trendTitle' | 'purTrendTitle' | 'adsTrendTitle'> = { stock: 'trendTitle', flow: 'purTrendTitle', ads: 'adsTrendTitle' };
+const NOTE: Record<BreakdownKind, 'locNote' | 'purNote' | 'adsNote'> = { stock: 'locNote', flow: 'purNote', ads: 'adsNote' };
+
+type Group = { v: number[]; q: number[] };
+
+export default function InventoryBreakdown({ fmt, an, kind = 'stock' }: { fmt: Fmt; an: Analysis; kind?: BreakdownKind }) {
+  const { t, eur, pct, date, num } = fmt;
+  const stock = kind === 'stock';
+  const ads = kind === 'ads';
   const [dim, setDim] = useState<Dim>('location');
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -47,7 +55,7 @@ export default function InventoryBreakdown({ fmt, an, kind = 'stock' }: { fmt: F
   const months = Array.from({ length: 12 }, (_, i) => `${an.year}-${String(i + 1).padStart(2, '0')}`);
   const monthLabel = (i: number) => fmt.monthName(months[i], 'short').replace(/\s*\d+$/, '');
 
-  // Valor por grupo y fecha
+  // Importe (o uds × días) y uds por grupo y fecha
   const groups = useMemo(() => {
     const none = t('none');
     const desc = (code: string) => `${code} ${an.rawDesc[code] || ''}`.trim();
@@ -61,12 +69,13 @@ export default function InventoryBreakdown({ fmt, an, kind = 'stock' }: { fmt: F
         default: return it[dim] || none;
       }
     };
-    const map = new Map<string, number[]>();
+    const map = new Map<string, Group>();
     for (const r of an.rows) {
       const k = key(r);
-      let v = map.get(k);
-      if (!v) { v = new Array(an.dates.length).fill(0); map.set(k, v); }
-      v[r[0]] += r[3];
+      let g = map.get(k);
+      if (!g) { g = { v: new Array(an.dates.length).fill(0), q: new Array(an.dates.length).fill(0) }; map.set(k, g); }
+      g.v[r[0]] += r[3];
+      g.q[r[0]] += r[4];
     }
     return map;
   }, [an, dim, t]);
@@ -78,36 +87,46 @@ export default function InventoryBreakdown({ fmt, an, kind = 'stock' }: { fmt: F
     return next;
   });
 
-  // Filas de la tabla: cada grupo a la fecha del informe y a la misma fecha del año anterior
-  // (compras: acumulado del año hasta el mes del informe y mismo periodo del año anterior)
-  const sumRange = (v: number[], from: number, to: number) => { let x = 0; for (let i = from; i <= to; i++) x += v[i] || 0; return x; };
-  const rows = Array.from(groups.entries())
-    .map(([k, v]) => flow
-      ? { key: k, month: v[curIdx], value: sumRange(v, nPrev, curIdx), ref: sumRange(v, 0, Math.min(monthNo, nPrev) - 1) }
-      : { key: k, month: 0, value: v[curIdx], ref: refIdx >= 0 ? v[refIdx] : 0 })
-    .filter(r => Math.abs(r.value) >= 0.5 || Math.abs(r.ref) >= 0.5)
-    .sort((a, b) => b.value - a.value || b.ref - a.ref);
-  const total = rows.reduce((s, r) => s + r.value, 0);
-  const totalRef = rows.reduce((s, r) => s + r.ref, 0);
-  const totalMonth = rows.reduce((s, r) => s + r.month, 0);
+  // Medida de un grupo (o de la suma de varios) entre dos índices de fecha: importe sumado o días medios
+  const sumRange = (a: number[], from: number, to: number) => { let x = 0; for (let i = from; i <= to; i++) x += a[i] || 0; return x; };
+  const measure = (gs: Group[], from: number, to: number): number | null => {
+    if (to < from) return ads ? null : 0;
+    const v = gs.reduce((s, g) => s + sumRange(g.v, from, to), 0);
+    if (!ads) return v;
+    const q = gs.reduce((s, g) => s + sumRange(g.q, from, to), 0);
+    return q ? v / q : null;
+  };
+  const lyTo = Math.min(monthNo, nPrev) - 1;
+  const rowOf = (key: string, gs: Group[]) => stock
+    ? { key, month: null as number | null, value: measure(gs, curIdx, curIdx), ref: refIdx >= 0 ? measure(gs, refIdx, refIdx) : null, qty: 0 }
+    : { key, month: measure(gs, curIdx, curIdx), value: measure(gs, nPrev, curIdx), ref: measure(gs, 0, lyTo), qty: gs.reduce((s, g) => s + sumRange(g.q, nPrev, curIdx), 0) };
 
-  // Gráfico: suma de las filas seleccionadas (o de todas)
-  const series = (offset: number, count: number) => months.map((_, m) => {
-    if (m >= count) return null;
-    let v = 0;
-    for (const [k, vals] of groups) if (!selected.size || selected.has(k)) v += vals[offset + m];
-    return v;
-  });
+  // Filas de la tabla (días en stock: por uds que han salido en el año)
+  const rows = Array.from(groups.entries())
+    .map(([k, g]) => rowOf(k, [g]))
+    .filter(r => ads ? r.qty > 0 || r.ref != null : Math.abs(r.value || 0) >= 0.5 || Math.abs(r.ref || 0) >= 0.5)
+    .sort((a, b) => ads ? b.qty - a.qty : (b.value || 0) - (a.value || 0) || (b.ref || 0) - (a.ref || 0));
+  const totalRow = rowOf(t('total'), Array.from(groups.values()));
+  const totalQty = totalRow.qty;
+
+  // Gráfico: medida de las filas seleccionadas (o de todas) por mes
+  const chartGroups = Array.from(groups.entries()).filter(([k]) => !selected.size || selected.has(k)).map(([, g]) => g);
+  const series = (offset: number, count: number) => months.map((_, m) => (m >= count ? null : measure(chartGroups, offset + m, offset + m)));
   const chartLabel = selected.size
     ? Array.from(selected).slice(0, 3).join(', ') + (selected.size > 3 ? ` +${selected.size - 3}` : '')
     : t('trendAll');
   const dimName = (d: Dim) => (d === 'location' ? t('location') : DIM_LABEL[d]);
   const refDate = refIdx >= 0 ? an.prevDates[refIdx] : null;
+  const fmtV = (v: number | null) => (v == null ? '–' : ads ? t('daysN', { n: num(v) }) : eur(v));
+  const share = (r: { value: number | null; qty: number }) => ads
+    ? pct(totalQty ? (r.qty / totalQty) * 100 : 0)
+    : pct(totalRow.value ? ((r.value || 0) / totalRow.value) * 100 : 0);
+  const td = 'py-2 px-2 text-right font-mono tabular-nums whitespace-nowrap';
 
   return (
     <Grid>
-      <Card title={t(flow ? 'purTrendTitle' : 'trendTitle')} sub={`${t('trendSub', { year: an.year, prev: an.year - 1 })} · ${dimName(dim)}: ${chartLabel}`}>
-        <LineChart fmt={fmt} height={360} labels={months.map((_, i) => monthLabel(i))} datasets={[
+      <Card title={t(TITLE[kind])} sub={`${t('trendSub', { year: an.year, prev: an.year - 1 })} · ${dimName(dim)}: ${chartLabel}`}>
+        <LineChart fmt={fmt} height={360} days={ads} labels={months.map((_, i) => monthLabel(i))} datasets={[
           { label: String(an.year), data: series(nPrev, monthNo), color: C.navy },
           { label: String(an.year - 1), data: series(0, nPrev), color: C.magenta, dashed: true },
         ]} />
@@ -118,7 +137,7 @@ export default function InventoryBreakdown({ fmt, an, kind = 'stock' }: { fmt: F
             {t('detailBy')}
             <select value={dim} onChange={e => changeDim(e.target.value as Dim)}
               className="rpt-noprint border border-gray-300 rounded-lg px-2 py-1 text-sm font-semibold bg-white">
-              {DIMS.filter(d => flow || !ARTICLE_DIMS.includes(d)).map(d => <option key={d} value={d}>{dimName(d)}</option>)}
+              {DIMS.filter(d => kind === 'flow' || !ARTICLE_DIMS.includes(d)).map(d => <option key={d} value={d}>{dimName(d)}</option>)}
             </select>
           </label>
           {selected.size > 0
@@ -130,10 +149,10 @@ export default function InventoryBreakdown({ fmt, an, kind = 'stock' }: { fmt: F
             <thead className="sticky top-0 bg-white">
               <tr className="border-b border-gray-200 text-[10px] font-semibold uppercase tracking-wider text-gray-500 font-mono">
                 <th className="py-2 px-2 text-left">{dimName(dim)}</th>
-                {flow && <th className="py-2 px-2 text-right hidden md:table-cell">{fmt.monthName(months[monthNo - 1], 'short')}</th>}
-                <th className="py-2 px-2 text-right">{flow ? t('ytd', { year: an.year }) : t('valueAt', { date: fmt.shortDate(an.curDates[monthNo - 1]) })}</th>
-                <th className="py-2 px-2 text-right hidden md:table-cell">{t('pctTotal')}</th>
-                <th className="py-2 px-2 text-right">{flow ? t('ytd', { year: an.year - 1 }) : t('refAt', { date: refDate ? date(refDate) : '–' })}</th>
+                {!stock && <th className="py-2 px-2 text-right hidden md:table-cell">{fmt.monthName(months[monthNo - 1], 'short')}</th>}
+                <th className="py-2 px-2 text-right">{stock ? t('valueAt', { date: fmt.shortDate(an.curDates[monthNo - 1]) }) : t('ytd', { year: an.year })}</th>
+                <th className="py-2 px-2 text-right hidden md:table-cell">{ads ? t('unitsOutPct') : t('pctTotal')}</th>
+                <th className="py-2 px-2 text-right">{stock ? t('refAt', { date: refDate ? date(refDate) : '–' }) : t('ytd', { year: an.year - 1 })}</th>
                 <th className="py-2 px-2 text-right">{t('deltaYoy')}</th>
               </tr>
             </thead>
@@ -144,26 +163,26 @@ export default function InventoryBreakdown({ fmt, an, kind = 'stock' }: { fmt: F
                   <tr key={r.key} onClick={() => toggle(r.key)}
                     className={`border-b border-gray-100 cursor-pointer ${on ? 'bg-[#24305E]/10 font-semibold' : selected.size ? 'text-gray-400 hover:bg-gray-50' : 'hover:bg-gray-50'}`}>
                     <td className="py-2 px-2">{r.key}</td>
-                    {flow && <td className="py-2 px-2 text-right font-mono tabular-nums whitespace-nowrap hidden md:table-cell">{eur(r.month)}</td>}
-                    <td className="py-2 px-2 text-right font-mono tabular-nums whitespace-nowrap">{eur(r.value)}</td>
-                    <td className="py-2 px-2 text-right font-mono tabular-nums whitespace-nowrap hidden md:table-cell">{pct(total ? (r.value / total) * 100 : 0)}</td>
-                    <td className="py-2 px-2 text-right font-mono tabular-nums whitespace-nowrap">{eur(r.ref)}</td>
-                    <td className="py-2 px-2 text-right font-mono tabular-nums whitespace-nowrap"><Delta fmt={fmt} cur={r.value} prev={r.ref} /></td>
+                    {!stock && <td className={`${td} hidden md:table-cell`}>{fmtV(r.month)}</td>}
+                    <td className={td}>{fmtV(r.value)}</td>
+                    <td className={`${td} hidden md:table-cell`}>{share(r)}</td>
+                    <td className={td}>{fmtV(r.ref)}</td>
+                    <td className={td}><Delta fmt={fmt} cur={r.value} prev={r.ref} invert={ads} /></td>
                   </tr>
                 );
               })}
               <tr className="border-t border-gray-300 font-semibold">
                 <td className="py-2 px-2">{t('total')}</td>
-                {flow && <td className="py-2 px-2 text-right font-mono tabular-nums whitespace-nowrap hidden md:table-cell">{eur(totalMonth)}</td>}
-                <td className="py-2 px-2 text-right font-mono tabular-nums whitespace-nowrap">{eur(total)}</td>
-                <td className="py-2 px-2 text-right font-mono tabular-nums whitespace-nowrap hidden md:table-cell">{pct(100)}</td>
-                <td className="py-2 px-2 text-right font-mono tabular-nums whitespace-nowrap">{eur(totalRef)}</td>
-                <td className="py-2 px-2 text-right font-mono tabular-nums whitespace-nowrap"><Delta fmt={fmt} cur={total} prev={totalRef} /></td>
+                {!stock && <td className={`${td} hidden md:table-cell`}>{fmtV(totalRow.month)}</td>}
+                <td className={td}>{fmtV(totalRow.value)}</td>
+                <td className={`${td} hidden md:table-cell`}>{pct(100)}</td>
+                <td className={td}>{fmtV(totalRow.ref)}</td>
+                <td className={td}><Delta fmt={fmt} cur={totalRow.value} prev={totalRow.ref} invert={ads} /></td>
               </tr>
             </tbody>
           </table>
         </div>
-        <p className="mt-3 text-[11px] text-gray-500">{t(flow ? 'purNote' : 'locNote')}</p>
+        <p className="mt-3 text-[11px] text-gray-500">{t(NOTE[kind])}</p>
       </Card>
     </Grid>
   );

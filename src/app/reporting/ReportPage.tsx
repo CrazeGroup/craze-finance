@@ -9,7 +9,7 @@ import { makeT } from './i18n';
 import OperationalView, { InventoryAnalysisView, Loaded } from './OperationalView';
 import ManagementView from './ManagementView';
 
-const SECTIONS = ['inventory', 'purchases', 'receivables', 'payables', 'provisions', 'bwa', 'cashflow', 'analysis', 'purAnalysis'] as const;
+const SECTIONS = ['inventory', 'purchases', 'receivables', 'payables', 'provisions', 'bwa', 'cashflow', 'analysis', 'purAnalysis', 'invKpis'] as const;
 type SectionKey = typeof SECTIONS[number];
 type View = 'operational' | 'management';
 const VIEWS: View[] = ['operational', 'management'];
@@ -17,10 +17,10 @@ const VIEWS: View[] = ['operational', 'management'];
 export type ReportMode = 'reporting' | 'inventory';
 const MODE_SECTIONS: Record<ReportMode, readonly SectionKey[]> = {
   reporting: ['inventory', 'purchases', 'receivables', 'payables', 'provisions', 'bwa', 'cashflow'],
-  inventory: ['inventory', 'purchases', 'analysis', 'purAnalysis'],
+  inventory: ['inventory', 'purchases', 'invKpis', 'analysis', 'purAnalysis'],
 };
 // analysis / purAnalysis = inventario de cada fin de mes y compras CHINA TRF por línea (Análisis Inventario)
-const sectionUrl = (s: SectionKey) => (s === 'analysis' ? '/api/reporting/inventory-analysis?' : s === 'purAnalysis' ? '/api/reporting/inventory-analysis?kind=purchases&' : `/api/reporting/${s}?`);
+const sectionUrl = (s: SectionKey) => (s === 'analysis' ? '/api/reporting/inventory-analysis?' : s === 'purAnalysis' ? '/api/reporting/inventory-analysis?kind=purchases&' : s === 'invKpis' ? '/api/reporting/inventory-analysis?kind=kpis&' : `/api/reporting/${s}?`);
 
 const monthKey = (d: Date) => d.toISOString().substring(0, 7);
 const shift = (ym: string, n: number) => { const [y, m] = ym.split('-').map(Number); return monthKey(new Date(Date.UTC(y, m - 1 + n, 1))); };
@@ -83,7 +83,7 @@ export default function ReportPage({ mode }: { mode: ReportMode }) {
   const company = selectedCompany === 'ALL' ? 'CRAZE' : selectedCompany;
 
   const operational = <OperationalView fmt={fmt} inv={sections.inventory} ar={sections.receivables} />;
-  const inventory = <InventoryAnalysisView fmt={fmt} month={month} inv={sections.inventory} pur={sections.purchases} an={sections.analysis} pa={sections.purAnalysis} />;
+  const inventory = <InventoryAnalysisView fmt={fmt} month={month} inv={sections.inventory} pur={sections.purchases} an={sections.analysis} pa={sections.purAnalysis} kp={sections.invKpis} />;
   const management = <ManagementView fmt={fmt} month={month} company={company} ar={sections.receivables} ap={sections.payables} prov={sections.provisions} bwa={sections.bwa} cf={sections.cashflow} />;
 
   return (

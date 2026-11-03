@@ -199,11 +199,16 @@ export function StepLineChart({ fmt, labels, values, limit, limitLabel, valueLab
 }
 
 // Líneas por mes (p. ej. este año frente al anterior); null = sin dato (meses futuros)
-export function LineChart({ fmt, labels, datasets, height = 300 }: {
-  fmt: Fmt; labels: string[]; datasets: { label: string; data: (number | null)[]; color: string; dashed?: boolean }[]; height?: number;
+export function LineChart({ fmt, labels, datasets, height = 300, days = false }: {
+  fmt: Fmt; labels: string[]; datasets: { label: string; data: (number | null)[]; color: string; dashed?: boolean }[]; height?: number; days?: boolean;
 }) {
   const options = baseOptions(fmt);
   options.plugins.legend.display = true;
+  // Días (Average Days in Stock) en vez de euros
+  if (days) {
+    options.scales.y.ticks.callback = (v: number) => fmt.num(v);
+    options.plugins.tooltip.callbacks.label = (c: any) => `${c.dataset.label}: ${fmt.t('daysN', { n: fmt.num(c.parsed.y) })}`;
+  }
   return (
     <div style={{ height }}>
       <Line options={options} data={{
