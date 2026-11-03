@@ -24,6 +24,7 @@ export type HistoryInvoice = {
 export type OcrSuggestion = {
   documentType: 'invoice' | 'credit_note'; invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string; postingDescription: string;
   currency: string; net: number | null; vat: number | null; total: number | null; lines: OcrLine[]; comment: string;
+  itemFromPdf?: { number: string; model: string; modelDescription: string };
 };
 export type OcrResult = {
   file: string; scanned: boolean; currency: string; ids: string[];
@@ -314,6 +315,9 @@ function columnDate(t: string, start: number, end: number) {
   return dates(t.slice(end + next.length, end + next.length + 200))[j]?.iso || '';
 }
 
+// El valor como palabra entera del texto
+const token = (v: string) => new RegExp(`(?<![A-Za-z\\d])${v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z\\d])`);
+
 // Etiquetas genéricas, si no hay PDF modelo o no se encuentra su etiqueta
 function guessHeader(t: string) {
   const invoiceNo = t.match(/(?:Invoice|Rechnungs?|Debit Note|Credit Note|Gutschrift|Factura|Facture|Beleg)[ -]?(?:Number|No\.?|Nr\.?|nummer|n[º°o]\.?)\s*:?\s*([A-Z0-9][A-Z0-9\-\/.]{3,})/i)?.[1]?.replace(/\.$/, '') || '';
@@ -428,14 +432,26 @@ function adapt(value: string, oldText: string, newText: string) {
   return { value: out, ok };
 }
 
-export function propose(text: string, history: HistoryInvoice[], examples: Example[]): OcrSuggestion | null {
+// Factura de acuerdo: su único artículo está escrito en su PDF (Amazon: "MDF# 99009045")
+const ownItem = (h: HistoryInvoice | undefined, text: string) => {
+  const ls = (h?.lines || []).filter(l => l.lineType !== 'Comment');
+  return ls.length === 1 && ls[0].lineType === 'Item' && /\d{5}/.test(ls[0].number) && token(ls[0].number).test(text) ? ls[0].number : '';
+};
+
+// noAgreements: sin facturas de acuerdo como modelo (el nº del sitio de su artículo no es un artículo de BC)
+export function propose(text: string, history: HistoryInvoice[], examples: Example[], noAgreements = false): OcrSuggestion | null {
   if (!history.length) return null;
   const t = flat(text);
   const warnings: string[] = [];
   // Modelo: el PDF anterior más parecido; a igualdad, el más reciente (examples va de más reciente a más antiguo)
-  const scored = examples.map(e => ({ e, s: similarity(t, e.text) }));
-  const best = scored.reduce<{ e: Example; s: number } | null>((a, b) => (!a || b.s > a.s + 0.02 ? b : a), null);
-  const model = (best && history.find(h => h.number === best.e.number)) || history[0];
+  // Antes que eso, la factura cuyo único artículo aparece en el PDF nuevo (Amazon: un artículo por acuerdo, "MDF# 99009045")
+  const byItem = history.find(h => ownItem(h, t));
+  const scored = examples
+    .filter(e => !noAgreements || !ownItem(history.find(h => h.number === e.number), flat(e.text)))
+    .map(e => ({ e, s: similarity(t, e.text) }));
+  const best = byItem ? scored.find(x => x.e.number === byItem.number) ?? null
+    : scored.reduce<{ e: Example; s: number } | null>((a, b) => (!a || b.s > a.s + 0.02 ? b : a), null);
+  const model = byItem || (best && history.find(h => h.number === best.e.number)) || history[0];
   const oldText = best && model.number === best.e.number ? flat(best.e.text) : '';
 
   // Nº de factura y fechas: en el mismo sitio que en el PDF del modelo, si no por las etiquetas habituales
@@ -490,6 +506,20 @@ export function propose(text: string, history: HistoryInvoice[], examples: Examp
     }
   }
 
+  // Artículo que estaba en el PDF del modelo (Amazon: el artículo es el nº de acuerdo, "MDF# 99009045: … Accrual
+  // (Damage Allowance)"): el del mismo sitio en el PDF nuevo; processPdf comprueba que exista en BC. Solo con una
+  // línea, para no cruzar artículos
+  let itemFromPdf: OcrSuggestion['itemFromPdf'];
+  if (oldText && idx.length === 1 && lines[idx[0]].lineType === 'Item') {
+    const l = lines[idx[0]];
+    const m = token(l.number).exec(oldText);
+    const found = m && sameSpot(t, before(oldText, m.index), rest => rest.match(shapeOf(l.number))?.[0] ?? null);
+    if (found && found !== l.number) {
+      itemFromPdf = { number: found, model: l.number, modelDescription: l.description };
+      l.number = found;
+    }
+  }
+
   // Referencias de las descripciones; la Posting Description por defecto de BC ("Invoice 10044") no se copia
   let refsOk = true;
   const fix = (v: string) => { if (!oldText) return v; const r = adapt(v, oldText, t); refsOk &&= r.ok; return r.value; };
@@ -502,7 +532,7 @@ export function propose(text: string, history: HistoryInvoice[], examples: Examp
   return {
     documentType: creditNote ? 'credit_note' : 'invoice',
     invoiceNo: invoiceNo || generic.invoiceNo, invoiceDate, postingDate, dueDate, postingDescription,
-    currency: model.currency, net, vat, total, lines,
+    currency: model.currency, net, vat, total, lines, itemFromPdf,
     comment: `Modelo: factura ${model.number} (${model.postingDate})${best && oldText ? `, la más parecida al PDF (${Math.round(best.s * 100)} %)` : ', la más reciente'}.${warnings.length ? ' ' + warnings.join(' ') : ''}`,
   };
 }
@@ -527,7 +557,22 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
   const { history, examples } = vendor ? await vendorHistory(ctx, vendor.number) : { history: [], examples: [] };
   if (vendor && !history.length) warnings.push('Este proveedor no tiene facturas registradas: completa artículo/cuenta y grupo de IVA a mano.');
 
-  const suggestion = propose(text, history, examples);
+  let suggestion = propose(text, history, examples);
+  // Artículo leído en el PDF, con su descripción de BC. Si no es un artículo (Amazon: el MDF# de una promoción o de un
+  // Born To Run), el documento no es de acuerdo: se propone otra vez sin facturas de acuerdo como modelo
+  const pdfItem = suggestion?.itemFromPdf;
+  if (suggestion && pdfItem) {
+    const item = ((await bcGet(ctx, odataUrl(`${ctx.apiBase}/items`, {
+      $filter: `number eq '${q(pdfItem.number)}'`, $select: 'number,displayName',
+    })).catch(() => ({ value: [] }))).value || [])[0];
+    if (item) {
+      const line = suggestion.lines.find(l => l.number === pdfItem.number)!;
+      line.description = item.displayName || line.description;
+    } else {
+      suggestion = propose(text, history, examples, true);
+      if (suggestion) suggestion.comment += ` El PDF trae ${pdfItem.number} donde las facturas de acuerdo traen su artículo (${pdfItem.model}) y no es un artículo de BC: si es un acuerdo nuevo, crea el artículo ${pdfItem.number}.`;
+    }
+  }
   if (suggestion?.documentType === 'credit_note') warnings.push('Parece un abono (credit note): aquí solo se crean facturas; regístralo como Credit Memo en BC.');
   if (vendor && currency && currency !== vendor.currency) {
     warnings.push(`La factura está en ${currency} y el proveedor ${vendor.number} en ${vendor.currency}: ¿es otro proveedor (p. ej. la ficha en ${currency})?`);
