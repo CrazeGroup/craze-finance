@@ -11,7 +11,7 @@ type Candidate = { number: string; name: string; currency: string; score: number
 type HistoryInvoice = { number: string; vendorInvoiceNumber: string; invoiceDate: string; postingDate: string; currency: string; net: number; total: number; postingDescription: string; lines: Line[] };
 type Suggestion = {
   documentType: string; invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string; postingDescription: string;
-  currency: string; net: number | null; vat: number | null; total: number | null; lines: Line[]; comment: string;
+  currency: string; net: number | null; vat: number | null; total: number | null; lines: Line[]; comment: string; vatBusPostingGroup?: string;
 };
 type Doc = {
   file: string; error?: string; loading?: boolean; scanned: boolean; currency: string; ids: string[];
@@ -20,7 +20,7 @@ type Doc = {
 };
 // Valores editables de cada factura antes de crearla (importes como texto, formato es-ES)
 type FormLine = Omit<Line, 'quantity' | 'unitCost'> & { quantity: string; unitCost: string };
-type Form = { invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string; postingDescription: string; lines: FormLine[] };
+type Form = { invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string; postingDescription: string; vatBusPostingGroup: string; lines: FormLine[] };
 type Status = { saving?: boolean; created?: { id: string; no: string; net: number | null; total: number | null; currency: string }; warnings?: string[]; error?: string | null };
 
 const nf = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -39,7 +39,7 @@ const emptyRow = (): Row => ({ id: Date.now() + Math.random(), invoice: null, at
 
 const toForm = (s: Suggestion | null): Form => ({
   invoiceNo: s?.invoiceNo || '', invoiceDate: s?.invoiceDate || '', postingDate: s?.postingDate || '', dueDate: s?.dueDate || '',
-  postingDescription: s?.postingDescription || '',
+  postingDescription: s?.postingDescription || '', vatBusPostingGroup: s?.vatBusPostingGroup || '',
   lines: (s?.lines || []).map(l => ({ ...l, quantity: toText(l.quantity), unitCost: toText(l.unitCost) })),
 });
 
@@ -178,7 +178,7 @@ export default function OcrPage() {
       const form = new FormData();
       form.append('data', JSON.stringify({
         vendor: d.vendor.number, invoiceNo: f.invoiceNo.trim(), invoiceDate: f.invoiceDate, postingDate: f.postingDate, dueDate: f.dueDate,
-        postingDescription: f.postingDescription, ids: d.ids, force,
+        postingDescription: f.postingDescription, vatBusPostingGroup: f.vatBusPostingGroup, ids: d.ids, force,
         lines: f.lines.map(l => ({ ...l, quantity: toNum(l.quantity), unitCost: toNum(l.unitCost) })),
       }));
       const pdf = files.find(x => x.name === d.file);
@@ -361,6 +361,9 @@ function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRem
           </label>
           <label className="text-xs font-semibold text-gray-500 flex-1 min-w-[260px]">Posting Description
             <input value={f.postingDescription} maxLength={100} onChange={e => setField('postingDescription', e.target.value)} className={`${input} block mt-1 w-full`} />
+          </label>
+          <label className="text-xs font-semibold text-gray-500">VAT Bus. Posting Group <span className="font-normal">(vacío: el del proveedor)</span>
+            <input value={f.vatBusPostingGroup} onChange={e => setField('vatBusPostingGroup', e.target.value)} className={`${input} block mt-1 w-40 font-mono`} />
           </label>
         </div>
 

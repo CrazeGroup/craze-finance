@@ -24,7 +24,7 @@ export type HistoryInvoice = {
 export type OcrSuggestion = {
   documentType: 'invoice' | 'credit_note'; invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string; postingDescription: string;
   currency: string; net: number | null; vat: number | null; total: number | null; lines: OcrLine[]; comment: string;
-  itemFromPdf?: { number: string; model: string; modelDescription: string };
+  itemFromPdf?: { number: string; model: string; modelDescription: string }; vatBusPostingGroup?: string;
 };
 export type OcrResult = {
   file: string; scanned: boolean; currency: string; ids: string[];
@@ -537,6 +537,23 @@ export function propose(text: string, history: HistoryInvoice[], examples: Examp
   };
 }
 
+// Reglas de Amazon que no salen de la factura modelo (los PDFs se parecen demasiado entre sí):
+// - promociones con "Rebate" o "Flexible" → AA-00069 FLEXIBLE ASIN BASED (las demás siguen al modelo: AA-00108…)
+// - Amazon Ads (AA-00015): inversión del sujeto pasivo, 19% SERVICES con VAT Bus. Posting Group UE
+const AMZ_FLEXIBLE = { number: 'AA-00069', description: 'AMZ AGREEMENT - FLEXIBLE ASIN BASED (Rebate Per Unit)', taxCode: '19% DEBIT NOTE' };
+function amazonRules(s: OcrSuggestion, text: string, vendorName: string) {
+  if (!/amazon/i.test(vendorName)) return;
+  const items = s.lines.filter(l => l.lineType !== 'Comment');
+  if (items.length === 1 && /rebate|flexible/i.test(text) && items[0].number !== AMZ_FLEXIBLE.number) {
+    Object.assign(items[0], { lineType: 'Item', ...AMZ_FLEXIBLE });
+    s.comment += ' Amazon: el PDF habla de Rebate/Flexible → AA-00069.';
+  }
+  if (items.some(l => l.number === 'AA-00015')) {
+    for (const l of items) if (l.number === 'AA-00015') l.taxCode = '19% SERVICES';
+    s.vatBusPostingGroup = 'UE';
+  }
+}
+
 // Todo el proceso para un PDF. vendorNo: proveedor elegido a mano (si no, el mejor candidato)
 export async function processPdf(ctx: BcContext, file: string, data: Uint8Array, vendorNo?: string): Promise<OcrResult> {
   const warnings: string[] = [];
@@ -573,6 +590,7 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
       if (suggestion) suggestion.comment += ` El PDF trae ${pdfItem.number} donde las facturas de acuerdo traen su artículo (${pdfItem.model}) y no es un artículo de BC: si es un acuerdo nuevo, crea el artículo ${pdfItem.number}.`;
     }
   }
+  if (suggestion && vendor) amazonRules(suggestion, text, vendor.name);
   if (suggestion?.documentType === 'credit_note') warnings.push('Parece un abono (credit note): aquí solo se crean facturas; regístralo como Credit Memo en BC.');
   if (vendor && currency && currency !== vendor.currency) {
     warnings.push(`La factura está en ${currency} y el proveedor ${vendor.number} en ${vendor.currency}: ¿es otro proveedor (p. ej. la ficha en ${currency})?`);
@@ -584,7 +602,7 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
 // ---------- Crear en BC ----------
 export type OcrCreateInput = {
   vendor: string; invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string; postingDescription?: string;
-  lines: OcrLine[]; ids?: string[]; force?: boolean;
+  vatBusPostingGroup?: string; lines: OcrLine[]; ids?: string[]; force?: boolean;
 };
 
 // Crea la Purchase Invoice sin registrar (API v2) con las líneas de la página y el PDF adjunto
@@ -602,6 +620,10 @@ export async function createOcrInvoice(ctx: BcContext, input: OcrCreateInput, pd
     // Las líneas estándar que BC añade al poner el proveedor no están en las facturas registradas: fuera
     const auto = await bcRequest('GET', `${headUrl}/purchaseInvoiceLines?$select=id`, ctx.token);
     for (const l of auto?.value || []) await bcRequest('DELETE', `${headUrl}/purchaseInvoiceLines(${l.id})`, ctx.token);
+    // VAT Bus. Posting Group (Amazon Ads: UE) antes de las líneas, que lo toman de la cabecera; no está en v2
+    if (input.vatBusPostingGroup?.trim()) {
+      await bcRequest('PATCH', `${ctx.odataCompanyBase}/purchaseDocuments(${id})`, ctx.token, { vatBusPostingGroup: input.vatBusPostingGroup.trim() });
+    }
     for (const l of input.lines) {
       const comment = l.lineType === 'Comment';
       await bcRequest('POST', `${headUrl}/purchaseInvoiceLines`, ctx.token, comment
