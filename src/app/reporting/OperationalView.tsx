@@ -3,6 +3,7 @@
 import React from 'react';
 import type { Fmt } from './i18n';
 import { BarChart, BridgeChart, C, Card, ErrorBox, Grid, Hl, Kpi, Loading, Note, Section, Signed, Table } from './ui';
+import InventoryBreakdown, { Analysis, Delta } from './InventoryBreakdown';
 
 export type Loaded<T = any> = { data: T | null; loading: boolean; error: string | null };
 
@@ -14,36 +15,34 @@ function Block<T>({ state, fmt, children }: { state: Loaded<T>; fmt: Fmt; childr
 
 const share = (part: number, whole: number) => (whole ? (part / whole) * 100 : 0);
 
-export function InventorySection({ fmt, inv }: { fmt: Fmt; inv: Loaded }) {
+export function InventorySection({ fmt, inv, an }: { fmt: Fmt; inv: Loaded; an: Loaded<Analysis> }) {
   const { t, eur, short, num, pct, date } = fmt;
   return (
     <Section title={t('invTitle')} source={inv.data ? t('invSource', { date: date(inv.data.date) }) : undefined}>
       <Block state={inv} fmt={fmt}>{(d: any) => {
         const diff = d.total - d.prevTotal;
         const main = d.locations[0];
-        const top = d.locations.slice(0, 12);
+        // Mismo fin de mes del año anterior (del análisis por meses)
+        const ly = an.data?.totals.find(x => x.date === an.data!.prevDates[an.data!.curDates.length - 1]);
         return (
           <>
             <Grid cols={4}>
-              <Kpi highlight tone="main" label={t('kpiInvValue', { date: date(d.date) })} value={short(d.total)} sub={t('unitsRefs', { qty: num(d.qty), n: num(d.nItems) })} />
+              <Kpi highlight tone="main" label={t('kpiInvValue', { date: date(d.date) })} value={short(d.total)} sub={t('unitsRefs', { qty: num(d.qty), n: num(d.nItems) })}
+                extra={ly && (
+                  <p className="text-[11px] text-gray-500 mt-1.5 pt-1.5 border-t border-gray-100">
+                    {t('vsLastYear', { date: date(ly.date) })}: {short(ly.value)} · {t('unitsRefs', { qty: num(ly.qty), n: num(ly.skus) })}
+                    <span className="block font-semibold">
+                      <Delta fmt={fmt} cur={d.total} prev={ly.value} /> {t('yoyValue')} · <Delta fmt={fmt} cur={d.qty} prev={ly.qty} /> {t('yoyUnits')}
+                    </span>
+                  </p>
+                )} />
               <Kpi tone={diff < 0 ? 'red' : 'green'} label={t('kpiVariation', { date: date(d.prevDate) })} value={short(diff)} sub={pct(share(diff, d.prevTotal))} />
               <Kpi label={t('kpiAfterDep')} value={short(d.totalDep)} sub={t('afterDepSub')} />
               {main && <Kpi label={t('kpiShare', { loc: main.loc })} value={pct(share(main.value, d.total))} sub={t('mainWarehouse')} />}
             </Grid>
-            <Grid>
-              <Card title={t('valueByLoc')} sub={`(${date(d.date)})`}>
-                <BarChart fmt={fmt} horizontal height={Math.max(220, top.length * 30)} labels={top.map((l: any) => l.loc)}
-                  datasets={[{ data: top.map((l: any) => l.value), color: top.map((_: any, i: number) => (i === 1 ? C.magenta : C.navy)) }]} />
-              </Card>
-              <Card title={t('locDetail')}>
-                <Table
-                  cols={[{ label: t('location') }, { label: t('value'), align: 'right', mono: true }, { label: t('pctTotal'), align: 'right', mono: true }, { label: t('refAt', { date: date(d.prevDate) }), align: 'right', mono: true, hideMobile: true }]}
-                  rows={d.locations.map((l: any) => [l.loc, eur(l.value), pct(share(l.value, d.total)), eur(l.prevValue)])}
-                  total={[t('total'), eur(d.locations.reduce((s: number, l: any) => s + l.value, 0)), pct(100), eur(d.locations.reduce((s: number, l: any) => s + l.prevValue, 0))]}
-                />
-                <div className="mt-3"><Note>{t('locNote')}</Note></div>
-              </Card>
-            </Grid>
+            {an.error ? <ErrorBox message={an.error} />
+              : an.loading || !an.data ? <Loading text={t('anLoading')} />
+              : <InventoryBreakdown fmt={fmt} an={an.data} />}
             <div className="space-y-4">
               {(['up', 'down'] as const).map(k => (
                 <Card key={k} title={t(k === 'up' ? 'topUp' : 'topDown')} sub={`(${date(d.prevDate)} → ${date(d.date)})`}>
@@ -183,10 +182,10 @@ export default function OperationalView({ fmt, inv, ar }: { fmt: Fmt; inv: Loade
 }
 
 // Análisis de inventario: valor por Location Code y compras de inventario (CHINA TRF)
-export function InventoryAnalysisView({ fmt, month, inv, pur }: { fmt: Fmt; month: string; inv: Loaded; pur: Loaded }) {
+export function InventoryAnalysisView({ fmt, month, inv, pur, an }: { fmt: Fmt; month: string; inv: Loaded; pur: Loaded; an: Loaded<Analysis> }) {
   return (
     <div className="space-y-10">
-      <InventorySection fmt={fmt} inv={inv} />
+      <InventorySection fmt={fmt} inv={inv} an={an} />
       <PurchasesSection fmt={fmt} pur={pur} month={month} />
     </div>
   );

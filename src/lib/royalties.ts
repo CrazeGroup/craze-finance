@@ -49,7 +49,7 @@ async function intergroupCustomers(company: string) {
 // rates: null = se queda la provisión de la LM. Un código sin % en la tabla de royalties no provisiona.
 // Artículo con ficha en CRAZE GmbH: el propio o, si no existe, su artículo base quitando el sufijo de letras
 // (48412MEILI → 48412, 52327DEX → 52327DE → 52327)
-function cardItem(item: string, itemCodes: Record<string, string>): string | null {
+export function cardItem(item: string, itemCodes: Record<string, string>): string | null {
   for (let i = item; i; i = i.replace(/[A-Z]$/i, '')) {
     if (i in itemCodes) return i;
     if (!/[A-Z]$/i.test(i)) break;
@@ -292,6 +292,12 @@ async function royaltyRates(ctx: BcContext): Promise<RoyaltyRates> {
     domestic: num(r[domKey]) / 100,
     fob: (fobKey ? num(r[fobKey]) : num(r[domKey])) / 100,
   }]));
+}
+
+// Royalty Code de la ficha de cada artículo en CRAZE GmbH (misma caché que el informe de royalties)
+export async function royaltyCodesByItem(force = false) {
+  const gmbh = await getBcContext(MASTER_COMPANY);
+  return cached(`royalties:items:${MASTER_COMPANY}`, 6 * HOUR, () => itemRoyaltyCodes(gmbh), force);
 }
 
 // Datos maestros de CRAZE GmbH: Royalty Code por artículo y % por Royalty Code.

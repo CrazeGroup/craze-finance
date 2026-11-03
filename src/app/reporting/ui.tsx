@@ -41,12 +41,13 @@ export const Grid = ({ cols = 2, children }: { cols?: 2 | 3 | 4; children: React
 type Tone = 'main' | 'red' | 'green' | 'amber' | 'neutral';
 const TONE: Record<Tone, string> = { main: 'text-[#C8186C]', red: 'text-[#C0392B]', green: 'text-[#2E7D4F]', amber: 'text-[#B7791F]', neutral: 'text-gray-900' };
 
-export function Kpi({ label, value, sub, tone = 'neutral', highlight = false }: { label: string; value: string; sub?: string; tone?: Tone; highlight?: boolean }) {
+export function Kpi({ label, value, sub, tone = 'neutral', highlight = false, extra }: { label: string; value: string; sub?: string; tone?: Tone; highlight?: boolean; extra?: React.ReactNode }) {
   return (
     <div className={`rpt-card bg-white rounded-xl p-4 border ${highlight ? 'border-[#C8186C]' : 'border-gray-200'}`}>
       <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 mb-2">{label}</p>
       <p className={`text-2xl font-mono font-semibold ${TONE[tone]}`}>{value}</p>
       {sub && <p className="text-xs text-gray-500 mt-1">{sub}</p>}
+      {extra}
     </div>
   );
 }
@@ -197,4 +198,21 @@ export function StepLineChart({ fmt, labels, values, limit, limitLabel, valueLab
   );
 }
 
-// ---------- Puntos clave (IA) ----------
+// Líneas por mes (p. ej. este año frente al anterior); null = sin dato (meses futuros)
+export function LineChart({ fmt, labels, datasets, height = 300 }: {
+  fmt: Fmt; labels: string[]; datasets: { label: string; data: (number | null)[]; color: string; dashed?: boolean }[]; height?: number;
+}) {
+  const options = baseOptions(fmt);
+  options.plugins.legend.display = true;
+  return (
+    <div style={{ height }}>
+      <Line options={options} data={{
+        labels,
+        datasets: datasets.map(d => ({
+          label: d.label, data: d.data, borderColor: d.color, backgroundColor: d.color,
+          borderDash: d.dashed ? [6, 4] : undefined, pointRadius: 3, borderWidth: 2, tension: 0.2,
+        })),
+      }} />
+    </div>
+  );
+}
