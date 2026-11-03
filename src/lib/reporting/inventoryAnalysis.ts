@@ -3,7 +3,7 @@ import { cardItem, royaltyCodesByItem } from '@/lib/royalties';
 import { cached, HOUR } from './cache';
 import { fetchSnapshots } from './inventory';
 import { CHINA_PM } from './ledgers';
-import { cutoffDate, monthEnd, today } from './period';
+import { currentMonth, cutoffDate, monthEnd, shiftMonth, today } from './period';
 
 // Análisis Inventario: inventario a cada fin de mes del año del informe (hasta el mes elegido) y de todo el año
 // anterior, por artículo × location (valor = uds de la location × coste unitario del artículo, como la página 80016),
@@ -21,11 +21,11 @@ const ITEM_FIELDS = 'no,description,range,categorizationCode,line,license,busine
 // Atributos de artículo de CRAZE GmbH (una vez al día). PM Classification solo está en la página Item_Card_Excel;
 // el Customer Group Code se muestra con la descripción del grupo.
 async function itemAttributes(force: boolean) {
-  return cached('invAnalysis:items2', 24 * HOUR, async () => {
+  return cached('invAnalysis:items3', 24 * HOUR, async () => {
     const ctx = await getBcContext('CRAZE');
     const [rows, cards, groups] = await Promise.all([
       bcFetchAll(odataUrl(`${ctx.customApiBase}/items`, { $select: ITEM_FIELDS }), ctx.token, 55_000),
-      bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Item_Card_Excel`, { $select: 'No,PM_Classification_BCT' }), ctx.token, 55_000).catch(() => [] as any[]),
+      itemCardPmClassification(ctx),
       bcFetchAll(odataUrl(`${ctx.customApiBase}/customerGroups`, { $select: 'code,description' }), ctx.token).catch(() => [] as any[]),
     ]);
     const pmc = new Map(cards.map((c: any) => [s(c.No), s(c.PM_Classification_BCT)]));
@@ -36,6 +36,21 @@ async function itemAttributes(force: boolean) {
       cg: s(i.customerGroupCode) ? `${s(i.customerGroupCode)} ${group.get(s(i.customerGroupCode)) || ''}`.trim() : '', pmc: pmc.get(s(i.no)) || '',
     }));
   }, force, { refreshAfterMs: 24 * HOUR });
+}
+
+// PM Classification de Item_Card_Excel: la página entera tarda más de un minuto, así que se lee por tramos del nº de
+// artículo (primer carácter) en paralelo. Un tramo que falle se queda sin clasificación.
+async function itemCardPmClassification(ctx: BcContext) {
+  const marks = '123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+  const ranges = [`No lt '1'`, ...marks.map((c, i) => (i === marks.length - 1 ? `No ge '${c}'` : `No ge '${c}' and No lt '${marks[i + 1]}'`))];
+  const parts = await Promise.all(ranges.map(f => bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Item_Card_Excel`, { $filter: f, $select: 'No,PM_Classification_BCT' }), ctx.token, 150_000)
+    .catch(e => { console.error('Item_Card_Excel', f, e); return [] as any[]; })));
+  return parts.flat();
+}
+
+// Meses cerrados: se renuevan una vez por semana; el mes en curso (o el último cerrado) cada día
+export function refreshAfter(month: string) {
+  return month < shiftMonth(currentMonth(), -1) ? 7 * 24 * HOUR : 24 * HOUR;
 }
 
 // Uds por palet (unidad PAL) de cada artículo de la empresa
@@ -100,7 +115,7 @@ export async function indexer(force: boolean) {
 }
 
 export async function inventoryAnalysis(ctx: BcContext, company: string, month: string, force = false) {
-  return cached(`invAnalysis2:${company}:${month}`, 24 * HOUR, async () => {
+  return cached(`invAnalysis3:${company}:${month}`, 7 * 24 * HOUR, async () => {
     const { year, cur, prev } = analysisDates(month);
     const dates = [...prev, ...cur];
     const [snaps, idx, pal] = await Promise.all([fetchSnapshots(ctx, dates), indexer(force), palletSizes(ctx)]);
@@ -120,7 +135,7 @@ export async function inventoryAnalysis(ctx: BcContext, company: string, month: 
       }
     });
     return { year, month, dates, curDates: cur, prevDates: prev, totals, items: idx.items, locs: idx.locs, rows: idx.rows, rawDesc: idx.rawDescs(), pal };
-  }, force, { refreshAfterMs: 24 * HOUR });
+  }, force, { refreshAfterMs: refreshAfter(month) });
 }
 
 // Compras de inventario (facturas CHINA TRF) por mes del año del informe y del anterior: líneas de las facturas
@@ -130,7 +145,7 @@ export async function inventoryAnalysis(ctx: BcContext, company: string, month: 
 export async function purchasesAnalysis(ctx: BcContext, company: string, month: string, force = false) {
   const { year, cur, prev } = analysisDates(month);
   const last = cur[cur.length - 1];
-  return cached(`purAnalysis3:${company}:${last}`, last < today() ? 12 * HOUR : HOUR, async () => {
+  return cached(`purAnalysis4:${company}:${last}`, 7 * 24 * HOUR, async () => {
     const from = `${year - 1}-01-01`;
     const [entries, lines, idx] = await Promise.all([
       bcFetchAll(odataUrl(`${ctx.customApiBase}/vendorLedgerEntries`, {
@@ -170,5 +185,5 @@ export async function purchasesAnalysis(ctx: BcContext, company: string, month: 
       date, value: idx.rows.filter(r => r[0] === di).reduce((t, r) => t + r[3], 0), qty: 0, skus: 0,
     }));
     return { year, month, dates: [...prev, ...cur], curDates: cur, prevDates: prev, totals, items: idx.items, locs: idx.locs, rows: idx.rows, rawDesc: idx.rawDescs() };
-  }, force);
+  }, force, { refreshAfterMs: refreshAfter(month) });
 }

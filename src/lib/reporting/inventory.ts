@@ -24,7 +24,7 @@ export async function fetchSnapshots(ctx: BcContext, dates: string[]): Promise<R
     bcFetchByEntryRanges(
       `${ctx.odataCompanyBase}/ValueEntries`, ctx.token, 'Entry_No',
       'Entry_No,Item_No,Item_Description,Location_Code,Posting_Date,Cost_Amount_Actual,Item_Ledger_Entry_Quantity',
-      `Posting_Date le ${maxDate}`
+      `Posting_Date le ${maxDate}`, 10, 120_000
     ),
     bcFetchAll(odataUrl(`${ctx.apiBase}/items`, { $select: 'number,displayName,type' }), ctx.token),
   ]);

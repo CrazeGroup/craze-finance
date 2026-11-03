@@ -1,6 +1,6 @@
 import { bcFetchAll, bcFetchByEntryRanges, BcContext, odataUrl } from '@/lib/bcClient';
 import { cached, HOUR } from './cache';
-import { analysisDates, indexer, palletSizes } from './inventoryAnalysis';
+import { analysisDates, indexer, palletSizes, refreshAfter } from './inventoryAnalysis';
 
 // KPIs de Análisis Inventario (además del valor): valor destruido en M+F, nº de palets y Average Days in Stock (FIFO).
 // Se guardan en caché y se renuevan una vez al día (o con el botón de actualizar), para que carguen al momento.
@@ -16,7 +16,7 @@ const DESTR_LOCATION = 'DESTR-M+F';
 const DAY = 86400000;
 
 export async function inventoryKpis(ctx: BcContext, company: string, month: string, force = false) {
-  return cached(`invKpis2:${company}:${month}`, 24 * HOUR, async () => {
+  return cached(`invKpis3:${company}:${month}`, 7 * 24 * HOUR, async () => {
     const { year, cur, prev } = analysisDates(month);
     const date = cur[cur.length - 1];
     const from = `${year - 1}-01-01`;
@@ -26,7 +26,7 @@ export async function inventoryKpis(ctx: BcContext, company: string, month: stri
         $select: 'Posting_Date,Item_Ledger_Entry_Quantity,Cost_Amount_Actual',
       }), ctx.token),
       bcFetchByEntryRanges(`${ctx.odataCompanyBase}/Item_Ledger_Entries_Excel`, ctx.token, 'Entry_No',
-        'Entry_No,Posting_Date,Entry_Type,Item_No,Item_Description,Location_Code,Quantity', `Posting_Date le ${date}`),
+        'Entry_No,Posting_Date,Entry_Type,Item_No,Item_Description,Location_Code,Quantity', `Posting_Date le ${date}`, 12, 120_000),
       palletSizes(ctx),
       bcFetchAll(odataUrl(`${ctx.apiBase}/items`, { $select: 'number,type' }), ctx.token),
       indexer(force),
@@ -106,5 +106,5 @@ export async function inventoryKpis(ctx: BcContext, company: string, month: stri
       totals: ads.map((a, i) => ({ date: [...prev, ...cur][i], value: a.qtyDays, qty: a.qty, skus: 0 })),
       items: idx.items, locs: idx.locs, rows: idx.rows, rawDesc: idx.rawDescs(),
     };
-  }, force, { refreshAfterMs: 24 * HOUR });
+  }, force, { refreshAfterMs: refreshAfter(month) });
 }

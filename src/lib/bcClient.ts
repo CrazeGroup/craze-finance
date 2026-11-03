@@ -81,8 +81,9 @@ export function odataUrl(base: string, params: Record<string, string | undefined
 // Descarga una tabla grande en paralelo, partiendo por rangos del campo de nº de movimiento.
 // El nº de filas ($count) sirve de referencia para los rangos (algunos servicios, como las Query de BC,
 // no admiten $orderby); el último rango queda abierto. `extraFilter` se combina con el rango.
+// timeoutMs: espera máxima de cada página (tablas como Item Ledger Entries tardan más de 45 s por rango).
 export async function bcFetchByEntryRanges(
-  base: string, token: string, entryField: string, select: string, extraFilter: string, parts = 6
+  base: string, token: string, entryField: string, select: string, extraFilter: string, parts = 6, timeoutMs = 45000
 ): Promise<any[]> {
   const res = await fetch(`${base}/$count`, { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) throw new Error(`Consulta a BC fallida (${res.status}): ${await res.text()}`);
@@ -92,7 +93,7 @@ export async function bcFetchByEntryRanges(
     const range = i === parts - 1
       ? `${entryField} gt ${i * size}`
       : `${entryField} gt ${i * size} and ${entryField} le ${(i + 1) * size}`;
-    return bcFetchAll(odataUrl(base, { $select: select, $filter: extraFilter ? `${range} and ${extraFilter}` : range }), token);
+    return bcFetchAll(odataUrl(base, { $select: select, $filter: extraFilter ? `${range} and ${extraFilter}` : range }), token, timeoutMs);
   }));
   return chunks.flat();
 }
