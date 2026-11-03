@@ -70,8 +70,9 @@ export function InventorySection({ fmt, inv, an, kp }: { fmt: Fmt; inv: Loaded; 
                     </span>
                   </p>
                 )} />
-              <Kpi tone="red" label={t('kpiDestroyed')} value={k ? short(k.destroyed[cur].value) : pending}
-                sub={kpiSub(k ? t('destroyedSub', { qty: num(k.destroyed[cur].qty), ytd: short(ytd(k.prevDates.length, cur, i => k.destroyed[i].value)) }) : t('loading'))} />
+              {/* Lo destruido en el año hasta el mes del informe; en pequeño, lo del propio mes */}
+              <Kpi tone="red" label={t('kpiDestroyed', { year: k?.year ?? '' })} value={k ? short(ytd(k.prevDates.length, cur, i => k.destroyed[i].value)) : pending}
+                sub={kpiSub(k ? t('destroyedSub', { qty: num(ytd(k.prevDates.length, cur, i => k.destroyed[i].qty)), month: fmt.monthCode(k.month), mv: short(k.destroyed[cur].value), mq: num(k.destroyed[cur].qty) }) : t('loading'))} />
               <Kpi label={t('kpiPallets', { date: date(d.date) })} value={k ? num(k.pallets) : pending}
                 sub={kpiSub(k ? t('palletsSub', { n: num(k.noPallet) }) : t('loading'))} />
               <Kpi label={t('kpiAds')} value={k ? (adsCur == null ? '–' : t('daysN', { n: num(adsCur) })) : pending}
