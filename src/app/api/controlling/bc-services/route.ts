@@ -37,7 +37,9 @@ export async function GET(req: Request) {
       // &full=1: metadatos completos (@odata.editLink…)
       const accept = searchParams.get('full') ? 'application/json;odata.metadata=full' : 'application/json';
       const res = await fetch(`${base}/${encodeURIComponent(sample)}?${params}`, { headers: { Authorization: `Bearer ${ctx.token}`, Accept: accept } });
-      const body = await res.json().catch(async () => ({ error: await res.text() }));
+      const text = await res.text();
+      let body: any;
+      try { body = JSON.parse(text); } catch { body = { error: text.substring(0, 2000) }; }
       return NextResponse.json({ company: ctx.companyName, status: res.status, rows: body.value ?? body });
     }
     // ?metadata=<entidad>[&api=custom|v2]: definición $metadata de la entidad (clave, campos y si se puede insertar/modificar)
