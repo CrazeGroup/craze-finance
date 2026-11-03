@@ -35,8 +35,8 @@ export function Section({ title, source, children, className = '' }: { title: st
   );
 }
 
-export const Grid = ({ cols = 2, children }: { cols?: 2 | 3 | 4; children: React.ReactNode }) => (
-  <div className={`grid grid-cols-1 gap-4 ${cols === 2 ? 'lg:grid-cols-2' : cols === 3 ? 'md:grid-cols-3' : 'sm:grid-cols-2 lg:grid-cols-4'}`}>{children}</div>
+export const Grid = ({ cols = 2, children }: { cols?: 2 | 3 | 4 | 5; children: React.ReactNode }) => (
+  <div className={`grid grid-cols-1 gap-4 ${cols === 2 ? 'lg:grid-cols-2' : cols === 3 ? 'md:grid-cols-3' : cols === 4 ? 'sm:grid-cols-2 lg:grid-cols-4' : 'sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5'}`}>{children}</div>
 );
 
 type Tone = 'main' | 'red' | 'green' | 'amber' | 'neutral';

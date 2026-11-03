@@ -36,6 +36,7 @@ function exportChanges(fmt: Fmt, d: any, dir: 'up' | 'down') {
 // KPIs de /api/reporting/inventory-analysis?kind=kpis (src/lib/reporting/inventoryKpis.ts) y desglose del ADS
 export type InvKpis = Analysis & {
   destroyed: { value: number; qty: number }[]; pallets: number; noPallet: number; ads: { days: number | null; qty: number }[];
+  stockAge?: { days: number | null; qty: number }[];   // antigüedad FIFO del stock aún no vendido a cada cierre
 };
 
 // Los 4 KPIs de inventario (Análisis Inventario y Reporting > KPIs). link: enlace de cada KPI al informe de origen.
@@ -56,9 +57,12 @@ export function InventoryKpis({ fmt, d, an, kp, link }: { fmt: Fmt; d: any; an: 
   const lyInv = an.data?.totals.find(x => x.date === an.data!.prevDates[an.data!.curDates.length - 1]);
   const adsCur = k ? k.ads[cur].days : null;
   const adsLy = k && ly >= 0 ? k.ads[ly].days : null;
+  // Antigüedad del stock aún no vendido al cierre (y al mismo cierre del año anterior)
+  const ageCur = k?.stockAge?.[cur]?.days ?? null;
+  const ageLy = k && ly >= 0 ? k.stockAge?.[ly]?.days ?? null : null;
   const go = link ? { href: link, title: t('openReport', { report: t('inventory') }) } : undefined;
   return (
-      <Grid cols={4}>
+      <Grid cols={5}>
         <Kpi link={go} highlight tone="main" label={t('kpiInvValue', { date: date(d.date) })} value={short(d.total)} sub={t('unitsRefs', { qty: num(d.qty), n: num(d.nItems) })}
           extra={lyInv && (
             <p className="text-[11px] text-gray-500 mt-1.5 pt-1.5 border-t border-gray-100">
@@ -80,7 +84,14 @@ export function InventoryKpis({ fmt, d, an, kp, link }: { fmt: Fmt; d: any; an: 
               {t('vsLastYear', { date: fmt.monthName(k.prevDates[ly].substring(0, 7)) })}: {t('daysN', { n: num(adsLy) })} · <span className="font-semibold"><Delta fmt={fmt} cur={adsCur} prev={adsLy} invert /></span>
             </p>
           )} />
-      </Grid>
+        <Kpi link={go} label={t('kpiAge', { date: date(d.date) })} value={k ? (ageCur == null ? '–' : t('daysN', { n: num(ageCur) })) : pending}
+        sub={kpiSub(k ? t('stockAgeSub', { qty: num(k.stockAge?.[cur]?.qty || 0) }) : t('loading'))}
+        extra={k && ageLy != null && (
+          <p className="text-[11px] text-gray-500 mt-1.5 pt-1.5 border-t border-gray-100">
+            {t('vsLastYear', { date: date(k.prevDates[ly]) })}: {t('daysN', { n: num(ageLy) })} · <span className="font-semibold"><Delta fmt={fmt} cur={ageCur} prev={ageLy} invert /></span>
+          </p>
+        )} />
+    </Grid>
   );
 }
 

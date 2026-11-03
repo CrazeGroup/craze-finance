@@ -11,12 +11,14 @@ import { analysisDates, indexer, palletSizes, refreshAfter } from './inventoryAn
 // - ADS: Item Ledger Entries de artículos tipo Inventory, sin traspasos (entran y salen de la empresa, no de una
 //   location). Cada salida consume las entradas más antiguas (FIFO); días = fecha de salida − fecha de entrada,
 //   ponderado por uds. ADS de un mes = media de las salidas de ese mes.
+// - Antigüedad del stock (lo aún no vendido): al cierre de cada mes, las entradas pendientes de salir (FIFO) y sus días
+//   desde la entrada hasta esa fecha (o hasta hoy en el mes en curso), ponderado por uds.
 
 const DESTR_LOCATION = 'DESTR-M+F';
 const DAY = 86400000;
 
 export async function inventoryKpis(ctx: BcContext, company: string, month: string, force = false) {
-  return cached(`invKpis3:${company}:${month}`, 7 * 24 * HOUR, async () => {
+  return cached(`invKpis4:${company}:${month}`, 7 * 24 * HOUR, async () => {
     const { year, cur, prev } = analysisDates(month);
     const date = cur[cur.length - 1];
     const from = `${year - 1}-01-01`;
@@ -71,12 +73,29 @@ export async function inventoryKpis(ctx: BcContext, company: string, month: stri
       byItem.set(e.Item_No, list);
     }
     const ads = Array.from({ length: nMonths }, () => ({ qtyDays: 0, qty: 0 }));
+    const age = Array.from({ length: nMonths }, () => ({ qtyDays: 0, qty: 0 }));
+    const allDates = [...prev, ...cur];
+    const checkT = allDates.map(d => Date.parse(d));
     for (const [no, list] of byItem) {
       list.sort((a, b) => a.Posting_Date.localeCompare(b.Posting_Date) || a.Entry_No - b.Entry_No);
       const lots: { t: number; qty: number }[] = [];
       let head = 0;
+      let ci = 0;
+      // Stock pendiente (lotes sin consumir) a cada fecha de cierre ya pasada
+      const snapshot = (upTo: number) => {
+        while (ci < checkT.length && checkT[ci] < upTo) {
+          for (let l = head; l < lots.length; l++) {
+            const lot = lots[l];
+            if (lot.qty <= 0.0001 || lot.t > checkT[ci]) continue;
+            age[ci].qtyDays += lot.qty * ((checkT[ci] - lot.t) / DAY);
+            age[ci].qty += lot.qty;
+          }
+          ci++;
+        }
+      };
       for (const e of list) {
         const t = Date.parse(e.Posting_Date);
+        snapshot(t);
         if (e.Quantity > 0) { lots.push({ t, qty: e.Quantity }); continue; }
         let out = -e.Quantity;
         const mi = monthIdx(String(e.Posting_Date));
@@ -96,12 +115,14 @@ export async function inventoryKpis(ctx: BcContext, company: string, month: stri
         ads[mi].qty += qty;
         idx.add(mi, no, e.Item_Description || '', e.Location_Code || '(sin location)', qtyDays, qty);
       }
+      snapshot(Infinity);
     }
 
     return {
       year, month, dates: [...prev, ...cur], curDates: cur, prevDates: prev,
       destroyed, pallets, noPallet: noPallet.length,
       ads: ads.map(a => ({ days: a.qty ? a.qtyDays / a.qty : null, qty: a.qty })),
+      stockAge: age.map(a => ({ days: a.qty ? a.qtyDays / a.qty : null, qty: a.qty })),
       // Desglose del ADS: filas [mes, artículo, location de salida, uds × días, uds]
       totals: ads.map((a, i) => ({ date: [...prev, ...cur][i], value: a.qtyDays, qty: a.qty, skus: 0 })),
       items: idx.items, locs: idx.locs, rows: idx.rows, rawDesc: idx.rawDescs(),
