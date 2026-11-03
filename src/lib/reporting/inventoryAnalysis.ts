@@ -43,7 +43,7 @@ export function analysisDates(month: string) {
 }
 
 // Filas compactas [fecha, artículo, location, valor, uds] con los artículos y locations indexados
-async function indexer(force: boolean) {
+export async function indexer(force: boolean) {
   const [attrs, royalty] = await Promise.all([
     itemAttributes(force),
     royaltyCodesByItem(force).catch(() => ({} as Record<string, string>)),
@@ -83,7 +83,7 @@ async function indexer(force: boolean) {
 }
 
 export async function inventoryAnalysis(ctx: BcContext, company: string, month: string, force = false) {
-  return cached(`invAnalysis:${company}:${month}`, 6 * HOUR, async () => {
+  return cached(`invAnalysis:${company}:${month}`, 24 * HOUR, async () => {
     const { year, cur, prev } = analysisDates(month);
     const dates = [...prev, ...cur];
     const [snaps, idx] = await Promise.all([fetchSnapshots(ctx, dates), indexer(force)]);
@@ -103,7 +103,7 @@ export async function inventoryAnalysis(ctx: BcContext, company: string, month: 
       }
     });
     return { year, month, dates, curDates: cur, prevDates: prev, totals, items: idx.items, locs: idx.locs, rows: idx.rows, rawDesc: idx.rawDescs() };
-  }, force);
+  }, force, { refreshAfterMs: 24 * HOUR });
 }
 
 // Compras de inventario (facturas CHINA TRF) por mes del año del informe y del anterior: líneas de las facturas
