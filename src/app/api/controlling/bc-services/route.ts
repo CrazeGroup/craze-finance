@@ -34,7 +34,9 @@ export async function GET(req: Request) {
       if (searchParams.get('filter')) params.set('$filter', searchParams.get('filter')!);
       if (searchParams.get('select')) params.set('$select', searchParams.get('select')!);
       const base = searchParams.get('api') === 'custom' ? ctx.customApiBase : searchParams.get('api') === 'v2' ? ctx.apiBase : ctx.odataCompanyBase;
-      const res = await fetch(`${base}/${encodeURIComponent(sample)}?${params}`, { headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json' } });
+      // &full=1: metadatos completos (@odata.editLink…)
+      const accept = searchParams.get('full') ? 'application/json;odata.metadata=full' : 'application/json';
+      const res = await fetch(`${base}/${encodeURIComponent(sample)}?${params}`, { headers: { Authorization: `Bearer ${ctx.token}`, Accept: accept } });
       const body = await res.json().catch(async () => ({ error: await res.text() }));
       return NextResponse.json({ company: ctx.companyName, status: res.status, rows: body.value ?? body });
     }

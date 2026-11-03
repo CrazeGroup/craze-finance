@@ -46,6 +46,12 @@ const FIELD_PATTERNS: Record<keyof Extras, RegExp> = {
 };
 const FIELD_LABEL: Record<keyof Extras, string> = { project: 'Project No.', task: 'Project Task No.', task2: 'Project Task No.2', returnReason: 'Return Reason Code' };
 
+// URL de @odata.editLink: BC la da relativa a la raíz del servicio, ya con Company('…'), o absoluta
+function editUrl(ctx: BcContext, link: string) {
+  if (/^https?:/.test(link)) return link;
+  return /^Company\(/i.test(link) ? `${ctx.odataCompanyBase.replace(/\/Company\(.*$/, '')}/${link}` : `${ctx.odataCompanyBase}/${link}`;
+}
+
 async function odataGet(ctx: BcContext, url: string) {
   const res = await fetch(url, { headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json;odata.metadata=full' } });
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).substring(0, 200)}`);
@@ -98,7 +104,7 @@ async function setLineExtras(ctx: BcContext, side: 'sales' | 'purchase', docNo: 
       const e = byLine.get(Number(r.Line_No ?? r.lineNumber ?? r.lineNo));
       const link = r['@odata.editLink'];
       if (!e || !link) continue;
-      const url = /^https?:/.test(link) ? link : `${ctx.odataCompanyBase}/${link}`;
+      const url = editUrl(ctx, link);
       // El proyecto primero: la tarea se valida contra él
       const rest: Record<string, string> = {};
       for (const k of ['task', 'task2', 'returnReason'] as const) if (e[k] && field(k)) rest[field(k)!] = e[k]!;
@@ -153,7 +159,7 @@ async function ignoreCustomQty(ctx: BcContext, kind: 'invoice' | 'credit', no: s
       if (!field) { tried.push(`${name}: sin el campo Ignore Custom Qty. Fields`); continue; }
       if (row[field] === true) return;
       const link = row['@odata.editLink'];
-      await bcRequest('PATCH', /^https?:/.test(link) ? link : `${ctx.odataCompanyBase}/${link}`, ctx.token, { [field]: true });
+      await bcRequest('PATCH', editUrl(ctx, link), ctx.token, { [field]: true });
       return;
     } catch (e) { tried.push(`${name}: ${short(e)}`); }
   }
