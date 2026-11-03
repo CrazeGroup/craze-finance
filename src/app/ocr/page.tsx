@@ -1,10 +1,11 @@
 'use client';
 
-import { Fragment, useState } from 'react';
+import { Fragment, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, FileText, Paperclip, Plus, RefreshCw, ScanText, Search, Trash2, Upload, X } from 'lucide-react';
 import DocPdfLink from '@/components/DocPdfLink';
 import { useCompany } from '@/contexts/CompanyContext';
 import { ACCEPT, droppedFiles, expandFiles, isPdf, pickInvoice } from './emailFiles';
+import { ocrPdf } from './tesseract';
 
 type Line = { lineType: string; number: string; description: string; description2: string; quantity: number; unitCost: number; taxCode: string };
 type Candidate = { number: string; name: string; currency: string; score: number; reasons: string[]; invoices: number };
@@ -14,13 +15,13 @@ type Suggestion = {
   currency: string; net: number | null; vat: number | null; total: number | null; lines: Line[]; comment: string; vatBusPostingGroup?: string;
 };
 type Doc = {
-  file: string; error?: string; loading?: boolean; scanned: boolean; currency: string; ids: string[];
+  file: string; error?: string; loading?: boolean; reading?: boolean; scanned: boolean; ocr?: boolean; currency: string; ids: string[];
   candidates: Candidate[]; vendor: Candidate | null; history: HistoryInvoice[]; suggestion: Suggestion | null;
   existing: { no: string; status: string }[]; warnings: string[];
 };
 // Valores editables de cada factura antes de crearla (importes como texto, formato es-ES)
 type FormLine = Omit<Line, 'quantity' | 'unitCost'> & { quantity: string; unitCost: string };
-type Form = { invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string; postingDescription: string; vatBusPostingGroup: string; lines: FormLine[] };
+type Form = { invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string; postingDescription: string; vatBusPostingGroup: string; currency: string; lines: FormLine[] };
 type Status = { saving?: boolean; created?: { id: string; no: string; net: number | null; total: number | null; currency: string }; warnings?: string[]; error?: string | null };
 
 const nf = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -39,7 +40,7 @@ const emptyRow = (): Row => ({ id: Date.now() + Math.random(), invoice: null, at
 
 const toForm = (s: Suggestion | null): Form => ({
   invoiceNo: s?.invoiceNo || '', invoiceDate: s?.invoiceDate || '', postingDate: s?.postingDate || '', dueDate: s?.dueDate || '',
-  postingDescription: s?.postingDescription || '', vatBusPostingGroup: s?.vatBusPostingGroup || '',
+  postingDescription: s?.postingDescription || '', vatBusPostingGroup: s?.vatBusPostingGroup || '', currency: s?.currency || '',
   lines: (s?.lines || []).map(l => ({ ...l, quantity: toText(l.quantity), unitCost: toText(l.unitCost) })),
 });
 
@@ -60,16 +61,29 @@ export default function OcrPage() {
   // Cuadro sobre el que se está arrastrando ("<fila>:invoice" / "<fila>:att")
   const [dragOver, setDragOver] = useState<string | null>(null);
 
-  // Un PDF por llamada (límite de 4,5 MB por petición en Vercel), dos a la vez
+  // Texto leído con Tesseract de cada PDF sin texto (para no volver a leerlo al cambiar de proveedor)
+  const ocrTexts = useRef<Record<string, string>>({});
+  // Un PDF por llamada (límite de 4,5 MB por petición en Vercel), dos a la vez. Si el PDF no trae texto (captura,
+  // escaneo), se lee la imagen con Tesseract aquí y se manda otra vez con el texto
   const parse = async (file: File, vendor?: string) => {
     setDocs(l => l.map(d => (d.file === file.name ? { ...d, loading: true, error: undefined } : d)));
     try {
-      const form = new FormData();
-      form.append('file', file);
-      if (vendor) form.append('vendor', vendor);
-      const res = await fetch('/api/ocr/parse', { method: 'POST', body: form });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Error al leer el PDF');
+      const post = async (text?: string) => {
+        const form = new FormData();
+        form.append('file', file);
+        if (vendor) form.append('vendor', vendor);
+        if (text != null) form.append('text', text);
+        const res = await fetch('/api/ocr/parse', { method: 'POST', body: form });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Error al leer el PDF');
+        return json;
+      };
+      let json = await post(ocrTexts.current[file.name]);
+      if (json.scanned && ocrTexts.current[file.name] == null) {
+        setDocs(l => l.map(d => (d.file === file.name ? { ...d, reading: true } : d)));
+        ocrTexts.current[file.name] = await ocrPdf(file).catch(() => '');
+        json = await post(ocrTexts.current[file.name]);
+      }
       setDocs(l => l.map(d => (d.file === file.name ? { ...json, file: file.name, loading: false } : d)));
       setForms(f => ({ ...f, [file.name]: toForm(json.suggestion) }));
       setStatus(s => ({ ...s, [file.name]: {} }));
@@ -98,6 +112,7 @@ export default function OcrPage() {
   const remove = (file: string) => {
     setDocs(l => l.filter(d => d.file !== file));
     setFiles(l => l.filter(f => f.name !== file));
+    delete ocrTexts.current[file];
     setForms(({ [file]: _f, ...rest }) => rest);
     setStatus(({ [file]: _s, ...rest }) => rest);
     setSelected(prev => { const n = new Set(prev); n.delete(file); return n; });
@@ -178,7 +193,7 @@ export default function OcrPage() {
       const form = new FormData();
       form.append('data', JSON.stringify({
         vendor: d.vendor.number, invoiceNo: f.invoiceNo.trim(), invoiceDate: f.invoiceDate, postingDate: f.postingDate, dueDate: f.dueDate,
-        postingDescription: f.postingDescription, vatBusPostingGroup: f.vatBusPostingGroup, ids: d.ids, force,
+        postingDescription: f.postingDescription, vatBusPostingGroup: f.vatBusPostingGroup, currency: f.currency, ids: d.ids, force,
         lines: f.lines.map(l => ({ ...l, quantity: toNum(l.quantity), unitCost: toNum(l.unitCost) })),
       }));
       const pdf = files.find(x => x.name === d.file);
@@ -330,12 +345,12 @@ function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRem
       {!d.loading && !d.error && d.vendor && !st.created && <input type="checkbox" checked={selected} onChange={onToggle} title="Marcar para enviar junto con las demás" />}
       <FileText size={16} className="text-gray-400" />
       <span className="font-bold text-gray-900">{d.vendor ? `${d.vendor.number} · ${d.vendor.name}` : 'Proveedor sin reconocer'}</span>
-      <span className="text-xs text-gray-500">{d.file}{d.scanned ? ' · escaneado (sin texto)' : ''}</span>
+      <span className="text-xs text-gray-500">{d.file}{d.ocr ? ' · sin texto, leído con OCR' : d.scanned ? ' · escaneado (sin texto)' : ''}</span>
       {s && <span className="ml-auto text-sm text-gray-600">PDF: neto <b>{fmt(s.net)}</b> · IVA {fmt(s.vat)} · total <b>{fmt(s.total)} {s.currency || d.currency}</b></span>}
       <button onClick={onRemove} title="Quitar de la lista (no se envía a BC)" className={`${s ? '' : 'ml-auto '}p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50`}><X size={16} /></button>
     </div>
   );
-  if (d.loading) return <section className="bg-white border border-gray-200 rounded-xl shadow-sm">{head}<p className="p-4 text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Leyendo el PDF…</p></section>;
+  if (d.loading) return <section className="bg-white border border-gray-200 rounded-xl shadow-sm">{head}<p className="p-4 text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> {d.reading ? 'PDF sin texto: leyendo la imagen con OCR…' : 'Leyendo el PDF…'}</p></section>;
   if (d.error) return <div className="rounded-lg border px-4 py-3 text-sm bg-red-50 border-red-200 text-red-800"><b>{d.file}</b>: {d.error}</div>;
   if (!f) return null;
 
@@ -365,13 +380,16 @@ function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRem
           <label className="text-xs font-semibold text-gray-500">VAT Bus. Posting Group <span className="font-normal">(vacío: el del proveedor)</span>
             <input value={f.vatBusPostingGroup} onChange={e => setField('vatBusPostingGroup', e.target.value)} className={`${input} block mt-1 w-40 font-mono`} />
           </label>
+          <label className="text-xs font-semibold text-gray-500">Divisa <span className="font-normal">(vacío: la del proveedor)</span>
+            <input value={f.currency} maxLength={10} onChange={e => setField('currency', e.target.value.toUpperCase())} className={`${input} block mt-1 w-24 font-mono`} />
+          </label>
         </div>
 
         <table className="w-full text-sm">
           <thead className="text-xs uppercase tracking-wider text-gray-500 bg-gray-50">
             <tr>
               <th className="p-2 text-left">Tipo</th><th className="p-2 text-left">Nº</th><th className="p-2 text-left">Descripción</th><th className="p-2 text-left">Description 2</th>
-              <th className="p-2 text-right">Cantidad</th><th className="p-2 text-right">Coste unit. ({d.vendor?.currency || s?.currency || ''})</th><th className="p-2 text-left">Grupo IVA</th>
+              <th className="p-2 text-right">Cantidad</th><th className="p-2 text-right">Coste unit. ({f.currency || d.vendor?.currency || ''})</th><th className="p-2 text-left">Grupo IVA</th>
               <th className="p-2 text-right">Importe</th><th />
             </tr>
           </thead>

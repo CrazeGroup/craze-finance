@@ -6,7 +6,8 @@ import { companyCurrency } from '@/lib/royalties';
 
 // OCR de facturas de compra: del PDF de un proveedor a una Purchase Invoice sin registrar en BC.
 // Sin IA: reglas sobre el texto y las facturas ya registradas del proveedor.
-// 1. Texto del PDF con unpdf (un escaneo sin texto no se puede leer).
+// 1. Texto del PDF con unpdf. Un escaneo o una captura sin texto lo lee la página con Tesseract en el navegador y lo
+//    manda como "text" (ocrText).
 // 2. Proveedor: identificadores del PDF (NIF/VAT, IBAN, dominio de correo/web) aprendidos de las facturas ya creadas
 //    desde aquí (setting ocr:hints:<empresa>), el VAT y el correo de la ficha del proveedor, las palabras de su nombre,
 //    la divisa y cuántas facturas suyas hay en el último año (los habituales primero).
@@ -27,7 +28,7 @@ export type OcrSuggestion = {
   itemFromPdf?: { number: string; model: string; modelDescription: string }; vatBusPostingGroup?: string;
 };
 export type OcrResult = {
-  file: string; scanned: boolean; currency: string; ids: string[];
+  file: string; scanned: boolean; ocr: boolean; currency: string; ids: string[];
   candidates: VendorCandidate[]; vendor: VendorCandidate | null; history: HistoryInvoice[];
   suggestion: OcrSuggestion | null; existing: { no: string; status: string }[]; warnings: string[];
 };
@@ -72,6 +73,7 @@ export function detectCurrency(text: string) {
   const scores: [string, number][] = [
     ['EUR', count(/\bEUR\b|€/g)], ['USD', count(/\bUSD\b|US\$/g)], ['GBP', count(/\bGBP\b|£/g)],
     ['CHF', count(/\bCHF\b/g)], ['CNY', count(/\bCNY\b|\bRMB\b/g)],
+    ...['AED', 'SEK', 'DKK', 'NOK', 'PLN', 'CZK', 'HUF', 'JPY', 'CAD', 'AUD', 'HKD', 'SGD', 'TRY'].map(c => [c, count(new RegExp(`\\b${c}\\b`, 'g'))] as [string, number]),
   ];
   scores.sort((a, b) => b[1] - a[1]);
   return scores[0][1] ? scores[0][0] : '';
@@ -104,7 +106,7 @@ const STOP = new Set(['gmbh', 'co', 'kg', 'ltd', 'limited', 'llc', 'inc', 'sl', 
   'the', 'and', 'und', 'de', 'del', 'la', 'el', 'les', 'der', 'die', 'das', 'en', 'et', 'of', 'for', 'mbh', 'ohg', 'ug', 'plc', 'spa',
   'eur', 'usd', 'gbp', 'chf', 'cny', 'rmb', 'sepa', 'lastschrift', 'credit', 'card', 'paypal', 'kreditkarte', 'craze']);
 const nameWords = (name: string) => norm(name.replace(/\([^)]*\)/g, ' ')).split(/[^a-z0-9]+/).filter(w => w.length >= 2 && !STOP.has(w));
-const vendorCurrency = (v: VendorRow) => v.currency || v.name.match(/\((USD|EUR|GBP|CHF|CNY)\)/i)?.[1]?.toUpperCase() || '';
+const vendorCurrency = (v: VendorRow) => v.currency || v.name.match(/\((USD|EUR|GBP|CHF|CNY|AED)\)/i)?.[1]?.toUpperCase() || '';
 
 type Hints = Record<string, string | null>;
 const hintsKey = (company: string) => `ocr:hints:${company}`;
@@ -283,7 +285,17 @@ function parseDate(s: string) {
   if (m && MONTHS[m[1].toLowerCase()]) return `${m[3]}-${MONTHS[m[1].toLowerCase()]}-${m[2].padStart(2, '0')}`;
   return '';
 }
-const dates = (t: string) => [...t.matchAll(DATE_RE)].map(m => ({ index: m.index!, raw: m[0], iso: parseDate(m[0]) })).filter(d => d.iso);
+// Lo que parece una fecha y no lo es ("105,97 AED 25.09.26": "97 AED 25") no se come la fecha de detrás
+function dates(t: string) {
+  const out: { index: number; raw: string; iso: string }[] = [];
+  const re = new RegExp(DATE_RE.source, 'g');
+  for (let m = re.exec(t); m; m = re.exec(t)) {
+    const iso = parseDate(m[0]);
+    if (iso) out.push({ index: m.index, raw: m[0], iso });
+    else re.lastIndex = m.index + 1;
+  }
+  return out;
+}
 
 // Texto que precede a la posición i (la etiqueta: "Invoice Number:", "Your reference:"…)
 const before = (t: string, i: number) => t.slice(Math.max(0, i - 30), i).replace(/^\S*\s/, '');
@@ -438,8 +450,33 @@ const ownItem = (h: HistoryInvoice | undefined, text: string) => {
   return ls.length === 1 && ls[0].lineType === 'Item' && /\d{5}/.test(ls[0].number) && token(ls[0].number).test(text) ? ls[0].number : '';
 };
 
+// Nº de factura hecho con la fecha (Uber: "UBER_30/10/26", "28092026/6"): la fecha del modelo en su mismo formato,
+// cambiada por la nueva; lo que va detrás (el contador del día) no se copia
+function numberFromDate(model: HistoryInvoice, iso: string) {
+  const [y, m, d] = model.invoiceDate.split('-'), [ny, nm, nd] = iso.split('-');
+  if (!y || !ny) return '';
+  const formats = [(Y: string, M: string, D: string) => `${D}${M}${Y}`, (Y: string, M: string, D: string) => `${D}/${M}/${Y.slice(2)}`,
+    (Y: string, M: string, D: string) => `${D}/${M}/${Y}`, (Y: string, M: string, D: string) => `${D}.${M}.${Y}`,
+    (Y: string, M: string, D: string) => `${D}.${M}.${Y.slice(2)}`, (Y: string, M: string, D: string) => `${Y}-${M}-${D}`,
+    (Y: string, M: string, D: string) => `${Y}${M}${D}`];
+  for (const f of formats) {
+    const i = model.vendorInvoiceNumber.indexOf(f(y, m, d));
+    if (i >= 0) return model.vendorInvoiceNumber.slice(0, i) + f(ny, nm, nd);
+  }
+  return '';
+}
+
 // noAgreements: sin facturas de acuerdo como modelo (el nº del sitio de su artículo no es un artículo de BC)
-export function propose(text: string, history: HistoryInvoice[], examples: Example[], noAgreements = false): OcrSuggestion | null {
+// currency: divisa del PDF, si el proveedor tiene facturas en ella (Uber: AED, CHF, EUR): el modelo, de esas
+// ocr: texto leído de una imagen con Tesseract; sin fecha con etiqueta, la última del texto (Uber: la del pago)
+type ProposeOptions = { noAgreements?: boolean; currency?: string; ocr?: boolean };
+export function propose(text: string, history: HistoryInvoice[], examples: Example[], opts: ProposeOptions = {}): OcrSuggestion | null {
+  const { noAgreements = false, currency = '', ocr = false } = opts;
+  const sameCurrency = history.filter(h => h.currency === currency);
+  if (currency && sameCurrency.length) {
+    history = sameCurrency;
+    examples = examples.filter(e => history.some(h => h.number === e.number));
+  }
   if (!history.length) return null;
   const t = flat(text);
   const warnings: string[] = [];
@@ -472,7 +509,7 @@ export function propose(text: string, history: HistoryInvoice[], examples: Examp
     const d = dates(oldDates).find(x => x.iso === iso);
     return d ? sameSpot(tDates, before(oldDates, d.index), rest => { const m = dates(rest.slice(0, 30))[0]; return m && m.index === 0 ? m.iso : null; }) || '' : '';
   };
-  const invoiceDate = dateAt(model.invoiceDate) || generic.invoiceDate;
+  const invoiceDate = dateAt(model.invoiceDate) || generic.invoiceDate || (ocr ? dates(t).pop()?.iso || '' : '');
   // Vencimiento solo si el PDF del modelo lo traía; si no, BC lo calcula con los términos de pago
   const dueDate = dateAt(model.dueDate);
   // Fecha de registro: la del sitio del PDF donde estaba la del modelo (p. ej. Meyer's Sohn GmbH: ETS/ATS), si no la
@@ -522,7 +559,7 @@ export function propose(text: string, history: HistoryInvoice[], examples: Examp
       l.number = found;
     } else if (m && !found && !byItem && !noAgreements) {
       // Factura de acuerdo como modelo, pero el PDF nuevo no trae ni su acuerdo ni otro en su sitio: no es de acuerdo
-      return propose(text, history, examples, true);
+      return propose(text, history, examples, { ...opts, noAgreements: true });
     }
   }
 
@@ -537,7 +574,7 @@ export function propose(text: string, history: HistoryInvoice[], examples: Examp
   const creditNote = /\b(credit note|gutschrift|nota de cr[eé]dito|avoir|abono)\b/i.test(t.slice(0, 1500)) && !/\b(invoice|rechnung|factura|facture)\b/i.test(t.slice(0, 300));
   return {
     documentType: creditNote ? 'credit_note' : 'invoice',
-    invoiceNo: invoiceNo || generic.invoiceNo, invoiceDate, postingDate, dueDate, postingDescription,
+    invoiceNo: invoiceNo || generic.invoiceNo || (invoiceDate ? numberFromDate(model, invoiceDate) : ''), invoiceDate, postingDate, dueDate, postingDescription,
     currency: model.currency, net, vat, total, lines, itemFromPdf,
     comment: `Modelo: factura ${model.number} (${model.postingDate})${best && oldText ? `, la más parecida al PDF (${Math.round(best.s * 100)} %)` : ', la más reciente'}.${warnings.length ? ' ' + warnings.join(' ') : ''}`,
   };
@@ -565,18 +602,21 @@ function amazonRules(s: OcrSuggestion, text: string, vendorName: string, warning
 }
 
 // Todo el proceso para un PDF. vendorNo: proveedor elegido a mano (si no, el mejor candidato)
-export async function processPdf(ctx: BcContext, file: string, data: Uint8Array, vendorNo?: string): Promise<OcrResult> {
+// ocrText: el texto de la imagen leído con Tesseract en la página, si el PDF no trae texto
+export async function processPdf(ctx: BcContext, file: string, data: Uint8Array, vendorNo?: string, ocrText?: string): Promise<OcrResult> {
   const warnings: string[] = [];
   let text = '';
   try { text = await pdfText(data); } catch (e: any) { warnings.push(`No se ha podido leer el texto del PDF (${e.message}).`); }
   const scanned = text.replace(/\s/g, '').length < 40;
-  if (scanned) { text = ''; warnings.push('PDF escaneado (sin texto): no se puede leer. Elige el proveedor y escribe los datos a mano.'); }
+  const ocr = scanned && !!ocrText && ocrText.replace(/\s/g, '').length >= 20;
+  if (ocr) { text = ocrText!.replace(/[ \t]+/g, ' ').trim(); warnings.push('PDF sin texto: leído de la imagen con OCR (Tesseract). Revisa fecha, nº de factura e importes.'); }
+  else if (scanned) { text = ''; warnings.push(ocrText == null ? 'PDF escaneado (sin texto): no se puede leer. Elige el proveedor y escribe los datos a mano.' : 'PDF escaneado: el OCR (Tesseract) no ha sacado texto legible. Elige el proveedor y escribe los datos a mano.'); }
   const ids = identifiers(text);
   const currency = detectCurrency(text);
   const candidates = text ? await matchVendors(ctx, text, ids, currency) : [];
   const vendor = vendorNo ? await vendorByNumber(ctx, vendorNo) : candidates[0] || null;
   if (vendorNo && !vendor) warnings.push(`El proveedor ${vendorNo} no existe en ${ctx.companyName}.`);
-  if (!vendor && !scanned) warnings.push('No se ha reconocido el proveedor: elígelo a mano.');
+  if (!vendor && text) warnings.push('No se ha reconocido el proveedor: elígelo a mano.');
   else if (vendor && !vendorNo && candidates[1] && candidates[1].score >= candidates[0].score - 0.5) {
     warnings.push(`Proveedor dudoso: ${candidates[1].number} ${candidates[1].name} también encaja. Revísalo.`);
   }
@@ -584,7 +624,10 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
   const { history, examples } = vendor ? await vendorHistory(ctx, vendor.number) : { history: [], examples: [] };
   if (vendor && !history.length) warnings.push('Este proveedor no tiene facturas registradas: completa artículo/cuenta y grupo de IVA a mano.');
 
-  let suggestion = propose(text, history, examples);
+  // Proveedor con facturas en varias divisas (Uber: AED, CHF, EUR): la del PDF
+  const known = !!currency && history.some(h => h.currency === currency);
+  const opts: ProposeOptions = { currency: known ? currency : '', ocr };
+  let suggestion = propose(text, history, examples, opts);
   // Artículo leído en el PDF, con su descripción de BC. Si no es un artículo (Amazon: el MDF# de una promoción o de un
   // Born To Run), el documento no es de acuerdo: se propone otra vez sin facturas de acuerdo como modelo
   const pdfItem = suggestion?.itemFromPdf;
@@ -596,23 +639,23 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
       const line = suggestion.lines.find(l => l.number === pdfItem.number)!;
       line.description = item.displayName || line.description;
     } else {
-      suggestion = propose(text, history, examples, true);
+      suggestion = propose(text, history, examples, { ...opts, noAgreements: true });
       if (suggestion) suggestion.comment += ` El PDF trae ${pdfItem.number} donde las facturas de acuerdo traen su artículo (${pdfItem.model}) y no es un artículo de BC: si es un acuerdo nuevo, crea el artículo ${pdfItem.number}.`;
     }
   }
   if (suggestion && vendor) amazonRules(suggestion, text, vendor.name, warnings);
   if (suggestion?.documentType === 'credit_note') warnings.push('Parece un abono (credit note): aquí solo se crean facturas; regístralo como Credit Memo en BC.');
-  if (vendor && currency && currency !== vendor.currency) {
+  if (vendor && currency && currency !== vendor.currency && !known) {
     warnings.push(`La factura está en ${currency} y el proveedor ${vendor.number} en ${vendor.currency}: ¿es otro proveedor (p. ej. la ficha en ${currency})?`);
   }
   const existing = vendor && suggestion?.invoiceNo ? await existingFor(ctx, vendor.number, suggestion.invoiceNo) : [];
-  return { file, scanned, currency, ids, candidates, vendor, history, suggestion, existing, warnings };
+  return { file, scanned, ocr, currency, ids, candidates, vendor, history, suggestion, existing, warnings };
 }
 
 // ---------- Crear en BC ----------
 export type OcrCreateInput = {
   vendor: string; invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string; postingDescription?: string;
-  vatBusPostingGroup?: string; lines: OcrLine[]; ids?: string[]; force?: boolean;
+  vatBusPostingGroup?: string; currency?: string; lines: OcrLine[]; ids?: string[]; force?: boolean;
 };
 
 // Crea la Purchase Invoice sin registrar (API v2) con las líneas de la página y el PDF adjunto
@@ -625,6 +668,10 @@ export async function createOcrInvoice(ctx: BcContext, input: OcrCreateInput, pd
   const id: string = head.id, no: string = head.number;
   const headUrl = `${ctx.apiBase}/purchaseInvoices(${id})`;
   try {
+    // Divisa de la factura si no es la del proveedor (Uber: AED); la divisa local va vacía. Antes de las líneas
+    const lcy = companyCurrency(ctx.companyName);
+    const want = input.currency?.trim().toUpperCase();
+    if (want && want !== (head.currencyCode || lcy)) await bcRequest('PATCH', headUrl, ctx.token, { currencyCode: want === lcy ? '' : want });
     // Vencimiento después de la fecha (la fecha de factura lo recalcula con los términos de pago del proveedor)
     if (input.dueDate) await bcRequest('PATCH', headUrl, ctx.token, { dueDate: input.dueDate });
     // Las líneas estándar que BC añade al poner el proveedor no están en las facturas registradas: fuera
