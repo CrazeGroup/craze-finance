@@ -11,6 +11,7 @@ const MODULES = [
   { id: 'movimientos', label: 'Mov. Abiertos' },
   { id: 'pagos', label: 'Pagos a Prov.' },
   { id: 'cashflow', label: 'Cashflow' },
+  { id: 'banco', label: 'BANCO (extracto → General Journal)' },
   { id: 'auditoria', label: 'Auditoría (Registro de Actividad)' },
   { id: 'inventario', label: 'Inventario (Cierre)' },
   { id: 'bwa', label: 'BWA Analytics' },
