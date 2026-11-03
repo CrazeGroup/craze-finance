@@ -2,6 +2,7 @@ import { bcFetchAll, BcContext, getBcContext, odataUrl } from '@/lib/bcClient';
 import { cardItem, royaltyCodesByItem } from '@/lib/royalties';
 import { cached, HOUR } from './cache';
 import { fetchSnapshots } from './inventory';
+import { CHINA_PM } from './ledgers';
 import { cutoffDate, monthEnd, today } from './period';
 
 // Análisis Inventario: inventario a cada fin de mes del año del informe (hasta el mes elegido) y de todo el año
@@ -9,6 +10,7 @@ import { cutoffDate, monthEnd, today } from './period';
 // con los atributos del artículo para que la página agrupe y filtre en el navegador. Los atributos (Product Range,
 // Categorization Code, Product Line, License, Business Unit, Raw Article, Article To Root) son los de la ficha en
 // CRAZE GmbH (como Commercial Analysis) y el Royalty Code el que usa Royalties.
+// Compras de inventario: lo mismo con las líneas de las facturas CHINA TRF de cada mes (importe en divisa local).
 
 export type InvAttrs = { no: string; desc: string; range: string; cat: string; line: string; license: string; bu: string; raw: string; root: string; royalty: string };
 
@@ -40,23 +42,51 @@ export function analysisDates(month: string) {
   return { year, cur, prev };
 }
 
+// Filas compactas [fecha, artículo, location, valor, uds] con los artículos y locations indexados
+async function indexer(force: boolean) {
+  const [attrs, royalty] = await Promise.all([
+    itemAttributes(force),
+    royaltyCodesByItem(force).catch(() => ({} as Record<string, string>)),
+  ]);
+  const attrBy = new Map(attrs.map(a => [a.no, a]));
+  const items: InvAttrs[] = [];
+  const itemIdx = new Map<string, number>();
+  const locs: string[] = [];
+  const locIdx = new Map<string, number>();
+  const rows: number[][] = [];
+  const add = (di: number, no: string, desc: string, loc: string, value: number, qty: number) => {
+    let ii = itemIdx.get(no);
+    if (ii === undefined) {
+      const a = attrBy.get(no);
+      const card = cardItem(no, royalty);
+      ii = items.length;
+      itemIdx.set(no, ii);
+      items.push({
+        no, desc: a?.desc || desc, range: a?.range || '', cat: a?.cat || '', line: a?.line || '',
+        license: a?.license || '', bu: a?.bu || '', raw: a?.raw || '', root: a?.root || '', royalty: card ? royalty[card] || '' : '',
+      });
+    }
+    let li = locIdx.get(loc);
+    if (li === undefined) { li = locs.length; locIdx.set(loc, li); locs.push(loc); }
+    rows.push([di, ii, li, Math.round(value * 100) / 100, qty]);
+  };
+  // Descripción de Raw Article / Article To Root: la del artículo con ese nº (o nº + DE / EN)
+  const rawDescs = () => {
+    const descOf = new Map(attrs.map(a => [a.no, a.desc]));
+    const rawDesc: Record<string, string> = {};
+    for (const code of new Set(items.flatMap(i => [i.raw, i.root]).filter(Boolean))) {
+      rawDesc[code] = descOf.get(code) || descOf.get(`${code}DE`) || descOf.get(`${code}EN`) || '';
+    }
+    return rawDesc;
+  };
+  return { items, locs, rows, add, rawDescs };
+}
+
 export async function inventoryAnalysis(ctx: BcContext, company: string, month: string, force = false) {
   return cached(`invAnalysis:${company}:${month}`, 6 * HOUR, async () => {
     const { year, cur, prev } = analysisDates(month);
     const dates = [...prev, ...cur];
-    const [snaps, attrs, royalty] = await Promise.all([
-      fetchSnapshots(ctx, dates),
-      itemAttributes(force),
-      royaltyCodesByItem(force).catch(() => ({} as Record<string, string>)),
-    ]);
-    const attrBy = new Map(attrs.map(a => [a.no, a]));
-
-    // Índices compactos: artículos y locations; filas [fecha, artículo, location, valor, uds]
-    const items: InvAttrs[] = [];
-    const itemIdx = new Map<string, number>();
-    const locs: string[] = [];
-    const locIdx = new Map<string, number>();
-    const rows: number[][] = [];
+    const [snaps, idx] = await Promise.all([fetchSnapshots(ctx, dates), indexer(force)]);
     const totals: { date: string; value: number; qty: number; skus: number }[] = [];
     dates.forEach((date, di) => {
       const snap = snaps[date];
@@ -69,31 +99,51 @@ export async function inventoryAnalysis(ctx: BcContext, company: string, month: 
       for (const item of snap.items) {
         if (!item.qty) continue;
         const unit = item.value / item.qty;
-        let ii = itemIdx.get(item.no);
-        if (ii === undefined) {
-          const a = attrBy.get(item.no);
-          const card = cardItem(item.no, royalty);
-          ii = items.length;
-          itemIdx.set(item.no, ii);
-          items.push({
-            no: item.no, desc: a?.desc || item.desc, range: a?.range || '', cat: a?.cat || '', line: a?.line || '',
-            license: a?.license || '', bu: a?.bu || '', raw: a?.raw || '', root: a?.root || '', royalty: card ? royalty[card] || '' : '',
-          });
-        }
-        for (const [loc, qty] of Object.entries(item.loc)) {
-          let li = locIdx.get(loc);
-          if (li === undefined) { li = locs.length; locIdx.set(loc, li); locs.push(loc); }
-          rows.push([di, ii, li, Math.round(qty * unit * 100) / 100, qty]);
-        }
+        for (const [loc, qty] of Object.entries(item.loc)) idx.add(di, item.no, item.desc, loc, qty * unit, qty);
       }
     });
+    return { year, month, dates, curDates: cur, prevDates: prev, totals, items: idx.items, locs: idx.locs, rows: idx.rows, rawDesc: idx.rawDescs() };
+  }, force);
+}
 
-    // Descripción de Raw Article / Article To Root: la del artículo con ese nº (o nº + DE / EN)
-    const descOf = new Map(attrs.map(a => [a.no, a.desc]));
-    const rawDesc: Record<string, string> = {};
-    for (const code of new Set(items.flatMap(i => [i.raw, i.root]).filter(Boolean))) {
-      rawDesc[code] = descOf.get(code) || descOf.get(`${code}DE`) || descOf.get(`${code}EN`) || '';
+// Compras de inventario (facturas CHINA TRF) por mes del año del informe y del anterior: líneas de las facturas
+// registradas (custom purchInvLines), en divisa local (factor amountLCY / amount del movimiento de proveedor).
+// Las líneas que no son de artículo (cuenta, cargo) van con su nº y descripción y sin atributos.
+export async function purchasesAnalysis(ctx: BcContext, company: string, month: string, force = false) {
+  const { year, cur, prev } = analysisDates(month);
+  const last = cur[cur.length - 1];
+  return cached(`purAnalysis:${company}:${last}`, last < today() ? 12 * HOUR : HOUR, async () => {
+    const from = `${year - 1}-01-01`;
+    const [entries, lines, idx] = await Promise.all([
+      bcFetchAll(odataUrl(`${ctx.customApiBase}/vendorLedgerEntries`, {
+        $filter: `documentType eq 'Invoice' and paymentMethodCode eq '${CHINA_PM}' and postingDate ge ${from} and postingDate le ${last}`,
+        $select: 'documentNo,postingDate,amount,amountLCY',
+      }), ctx.token),
+      bcFetchAll(odataUrl(`${ctx.customApiBase}/purchInvLines`, {
+        $filter: `postingDate ge ${from} and postingDate le ${last}`,
+        $select: 'documentNo,type,no,description,locationCode,quantity,amount,postingDate',
+      }), ctx.token),
+      indexer(force),
+    ]);
+    const factor = new Map<string, number>(entries.map((e: any) => [e.documentNo, e.amount ? e.amountLCY / e.amount : 1]));
+    // Índice de mes: año anterior (0-11) y año del informe (12-)
+    const monthIdx = (d: string) => {
+      const y = Number(d.substring(0, 4)), m = Number(d.substring(5, 7)) - 1;
+      return y === year - 1 ? (m < prev.length ? m : -1) : y === year ? (m < cur.length ? prev.length + m : -1) : -1;
+    };
+    const none = '(sin location)';
+    for (const l of lines) {
+      const f = factor.get(l.documentNo);
+      if (f === undefined || !l.amount) continue;
+      const di = monthIdx(String(l.postingDate));
+      if (di < 0) continue;
+      const isItem = String(l.type) === 'Item';
+      const no = s(l.no) || s(l.description);
+      idx.add(di, isItem ? no : `${no}${l.description && s(l.no) ? ` ${s(l.description)}` : ''}`, s(l.description), s(l.locationCode) || none, l.amount * f, Number(l.quantity) || 0);
     }
-    return { year, month, dates, curDates: cur, prevDates: prev, totals, items, locs, rows, rawDesc };
+    const totals = [...prev, ...cur].map((date, di) => ({
+      date, value: idx.rows.filter(r => r[0] === di).reduce((t, r) => t + r[3], 0), qty: 0, skus: 0,
+    }));
+    return { year, month, dates: [...prev, ...cur], curDates: cur, prevDates: prev, totals, items: idx.items, locs: idx.locs, rows: idx.rows, rawDesc: idx.rawDescs() };
   }, force);
 }

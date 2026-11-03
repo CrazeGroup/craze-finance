@@ -64,8 +64,8 @@ export function InventorySection({ fmt, inv, an }: { fmt: Fmt; inv: Loaded; an: 
   );
 }
 
-export function PurchasesSection({ fmt, pur, month }: { fmt: Fmt; pur: Loaded; month: string }) {
-  const { t, eur, short, pct, date, monthName } = fmt;
+export function PurchasesSection({ fmt, pur, pa, month }: { fmt: Fmt; pur: Loaded; pa: Loaded<Analysis>; month: string }) {
+  const { t, short, pct, monthName } = fmt;
   return (
     <Section title={t('purTitle')} source={t('purSource')}>
       <Block state={pur} fmt={fmt}>{(d: any) => {
@@ -78,19 +78,9 @@ export function PurchasesSection({ fmt, pur, month }: { fmt: Fmt; pur: Loaded; m
               <Kpi label={t('kpiAvg12')} value={short(d.avg12)} sub={`${monthName(d.monthly[0].month, 'short')} – ${monthName(d.monthly[11].month, 'short')}`} />
               <Kpi label={t('kpiVendors')} value={String(d.byVendor.length)} sub={d.byVendor.map((v: any) => `${v.vendor.split(' (')[0]} ${short(v.amt)}`).join(' · ')} />
             </Grid>
-            <Grid>
-              <Card title={t('purChart')} sub={t('last12')}>
-                <BarChart fmt={fmt} labels={d.monthly.map((m: any) => monthName(m.month, 'short'))}
-                  datasets={[{ data: d.monthly.map((m: any) => m.amt), color: d.monthly.map((_: any, i: number) => (i === 11 ? C.magenta : C.navy)) }]} />
-              </Card>
-              <Card title={t('purList', { month: monthName(month) })}>
-                <Table
-                  cols={[{ label: t('date'), mono: true }, { label: t('document'), nowrap: true }, { label: t('vendor') }, { label: t('amount'), align: 'right', mono: true }, { label: t('due'), mono: true, hideMobile: true }]}
-                  rows={d.invoices.map((i: any) => [date(i.date), <span key="d">{i.doc}{i.ext && <span className="ml-1 text-[11px] text-gray-500 bg-gray-100 rounded px-1.5 py-0.5 font-mono">{i.ext}</span>}</span>, i.vendor.split(' (')[0], eur(i.amt), date(i.due)])}
-                  total={[t('total'), '', '', eur(d.total), '']}
-                />
-              </Card>
-            </Grid>
+            {pa.error ? <ErrorBox message={pa.error} />
+              : pa.loading || !pa.data ? <Loading text={t('loading')} />
+              : <InventoryBreakdown fmt={fmt} an={pa.data} kind="flow" />}
           </>
         );
       }}</Block>
@@ -182,11 +172,11 @@ export default function OperationalView({ fmt, inv, ar }: { fmt: Fmt; inv: Loade
 }
 
 // Análisis de inventario: valor por Location Code y compras de inventario (CHINA TRF)
-export function InventoryAnalysisView({ fmt, month, inv, pur, an }: { fmt: Fmt; month: string; inv: Loaded; pur: Loaded; an: Loaded<Analysis> }) {
+export function InventoryAnalysisView({ fmt, month, inv, pur, an, pa }: { fmt: Fmt; month: string; inv: Loaded; pur: Loaded; an: Loaded<Analysis>; pa: Loaded<Analysis> }) {
   return (
     <div className="space-y-10">
       <InventorySection fmt={fmt} inv={inv} an={an} />
-      <PurchasesSection fmt={fmt} pur={pur} month={month} />
+      <PurchasesSection fmt={fmt} pur={pur} pa={pa} month={month} />
     </div>
   );
 }
