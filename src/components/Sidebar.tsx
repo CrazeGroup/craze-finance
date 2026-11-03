@@ -91,7 +91,6 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
             onChange={(e) => {
               const newCompany = e.target.value;
               setSelectedCompany(newCompany);
-              document.cookie = `craze_selected_company=${encodeURIComponent(newCompany)}; path=/; max-age=31536000`;
               
               // Trigger a refresh of the page to re-fetch data for the new company if needed,
               // or rely on SWR / React Query if they were used. 

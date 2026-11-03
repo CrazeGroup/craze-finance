@@ -7,23 +7,35 @@ const publicRoutes = ['/login', '/api/auth/login', '/api/auth/logout', '/api/aut
 const INTERNAL_API_TOKEN = process.env.INTERNAL_API_TOKEN;
 const staticAssetRegex = /\.(ico|png|jpg|jpeg|svg|css|js|webp|woff|woff2|ttf|eot)$/;
 
+// Empresa de la pestaña que hace la llamada (cabecera x-craze-company, ver CompanyContext): sustituye en esta petición a
+// la cookie craze_selected_company, que es común a todas las pestañas, para que las rutas la lean como siempre
+function withTabCompany(request: NextRequest) {
+  const raw = request.headers.get('x-craze-company');
+  let company = '';
+  try { company = raw ? decodeURIComponent(raw).trim() : ''; } catch { /* cabecera no válida */ }
+  if (company && company.length <= 100) request.cookies.set('craze_selected_company', company);
+  return new Headers(request.headers);
+}
+
 export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
+  const headers = withTabCompany(request);
+  const next = () => NextResponse.next({ request: { headers } });
 
   // Login disabled: everything is public, the login page just goes home
   if (!AUTH_ENABLED) {
     if (path === '/login') return NextResponse.redirect(new URL('/', request.url));
-    return NextResponse.next();
+    return next();
   }
   
   // Allow public routes
   if (publicRoutes.includes(path) || staticAssetRegex.test(path) || path.startsWith('/_next')) {
-    return NextResponse.next();
+    return next();
   }
 
   const isApi = path.startsWith('/api/');
   if (isApi && INTERNAL_API_TOKEN && request.headers.get('authorization') === `Bearer ${INTERNAL_API_TOKEN}`) {
-    return NextResponse.next();
+    return next();
   }
 
   // Get token
@@ -75,7 +87,7 @@ export async function middleware(request: NextRequest) {
     }
 
     // Pass custom header with user info for API routes if needed
-    const requestHeaders = new Headers(request.headers);
+    const requestHeaders = headers;
     requestHeaders.set('x-user-id', payload.id as string);
     requestHeaders.set('x-user-username', payload.username as string);
     requestHeaders.set('x-user-permissions', payload.permissions as string);

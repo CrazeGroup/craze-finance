@@ -1,12 +1,12 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
+import { tabCompany } from '@/contexts/CompanyContext';
 import { syncFromBc } from '@/lib/syncClient';
 import { RefreshCcw, CheckCircle, ChevronDown, ChevronRight, FileText, CheckCircle2, XCircle, Clock } from 'lucide-react';
 import DocPdfLink, { purchasePdfKind } from '@/components/DocPdfLink';
 
 // Empresa activa (cookie que escribe CompanyContext)
-const getSelectedCompany = () => decodeURIComponent(document.cookie.match(/(?:^|; )craze_selected_company=([^;]*)/)?.[1] || 'CRAZE');
 
 export default function PagosPage() {
   const [rawInvoices, setRawInvoices] = useState<any[]>([]);
@@ -48,7 +48,7 @@ export default function PagosPage() {
     setSyncing(true);
     try {
       // Paso a paso por empresa (una sola llamada con todo pasa del límite de 60 s de Vercel)
-      const errors = await syncFromBc(getSelectedCompany());
+      const errors = await syncFromBc(tabCompany());
       if (errors.length) console.error('Sync errors', errors);
       await fetchInvoices();
     } catch (error) {
