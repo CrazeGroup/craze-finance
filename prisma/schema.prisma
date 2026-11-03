@@ -52,6 +52,7 @@ model Invoice {
   confirmedPaymentDate DateTime?
   isArchived           Boolean   @default(false)
   lastReminderDate     DateTime?
+  claimCount           Int        @default(0)
   reminders            Reminder[]
 
   @@unique([bcId, companyId])
@@ -174,6 +175,18 @@ model ApprovalEntry {
   approverId     String
   status         String
   sequenceNo     Int      @default(1)
+}
+
+// Comentarios de Cashflow: targetKey = "invoice:<id>" (factura) o el id de la línea ("manual-3", "auto-transfer-…")
+model CashflowComment {
+  id        Int      @id @default(autoincrement())
+  companyId String   @default("CRAZE")
+  targetKey String
+  text      String
+  author    String?
+  createdAt DateTime @default(now())
+
+  @@index([companyId, targetKey])
 }
 
 model CashflowManualEntry {

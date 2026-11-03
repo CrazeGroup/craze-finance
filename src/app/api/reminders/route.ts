@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { registerClaim } from '@/lib/claims';
 import nodemailer from 'nodemailer';
 
 export async function POST(request: Request) {
@@ -64,12 +65,9 @@ export async function POST(request: Request) {
           sentAt: now
         }
       });
-      // Update the requested lastReminderDate field
-      await prisma.invoice.update({
-        where: { id: inv.id },
-        data: { lastReminderDate: now }
-      });
     }
+    // lastReminderDate + una reclamación más
+    await registerClaim(invoices.map((inv: any) => inv.id), now);
 
     return NextResponse.json({ 
       success: true, 

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 import prisma from '@/lib/prisma';
+import { registerClaim } from '@/lib/claims';
 
 export async function POST(request: Request) {
   try {
@@ -102,11 +103,8 @@ export async function POST(request: Request) {
         }
       });
 
-      await prisma.invoice.update({
-        where: { id: invoiceId },
-        data: { lastReminderDate: new Date() }
-      });
     }
+    await registerClaim(invoiceIds.map(Number));
 
     const customer = await prisma.customer.findUnique({ where: { id: customerId } });
     if (customer) {

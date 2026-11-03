@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Save, X, ChevronRight, ChevronDown, Download, Upload, Archive, Send, Briefcase, Calendar, Search, MailCheck, AlertTriangle } from 'lucide-react';
+import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Save, X, ChevronRight, ChevronDown, Download, Upload, Archive, Send, Briefcase, Calendar, Search, MailCheck, AlertTriangle, MessageSquare } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useCompany } from '@/contexts/CompanyContext';
 import { syncFromBc } from '@/lib/syncClient';
@@ -35,6 +35,12 @@ export default function CashflowPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState('');
   const [excludeClaimed, setExcludeClaimed] = useState(false);
+  // Menú del botón de reclamar en facturas ya reclamadas: otra reclamación o quitarla
+  const [claimMenu, setClaimMenu] = useState<{ x: number; y: number; invoiceIds: number[]; next: number } | null>(null);
+  // Comentarios por factura ("invoice:<id>") o por línea (entry.id)
+  const [comments, setComments] = useState<any[]>([]);
+  const [commentTarget, setCommentTarget] = useState<{ key: string; label: string } | null>(null);
+  const [commentDraft, setCommentDraft] = useState('');
   const [untilDate, setUntilDate] = useState('');
   const [selectedEntries, setSelectedEntries] = useState<any[]>([]);
   const [draggedItem, setDraggedItem] = useState<any>(null);
@@ -152,6 +158,39 @@ export default function CashflowPage() {
   useEffect(() => {
     fetchCashflow();
   }, [showArchived, currentCurrency, selectedCompany]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    fetch('/api/cashflow/comments', { cache: 'no-store' }).then(r => r.json()).then(d => setComments(Array.isArray(d) ? d : [])).catch(() => setComments([]));
+  }, [selectedCompany]);
+
+  const commentsFor = (key: string) => comments.filter(c => c.targetKey === key);
+  const addComment = async () => {
+    if (!commentTarget || !commentDraft.trim()) return;
+    try {
+      const res = await fetch('/api/cashflow/comments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetKey: commentTarget.key, text: commentDraft, label: commentTarget.label })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setComments(prev => [...prev, data]);
+      setCommentDraft('');
+    } catch (err: any) {
+      alert(`No se pudo guardar el comentario: ${err.message || err}`);
+    }
+  };
+  const deleteComment = async (id: number) => {
+    if (!confirm('¿Borrar este comentario?')) return;
+    const res = await fetch(`/api/cashflow/comments?id=${id}`, { method: 'DELETE' });
+    if (res.ok) setComments(prev => prev.filter(c => c.id !== id));
+    else alert('No se pudo borrar el comentario');
+  };
+  const openComments = (e: React.MouseEvent, key: string, label: string) => {
+    e.stopPropagation();
+    setCommentDraft('');
+    setCommentTarget({ key, label });
+  };
 
   const saveMinBalance = async () => {
     const amount = minDraft.trim() === '' ? null : parseFloat(minDraft.replace(/\./g, '').replace(',', '.'));
@@ -646,18 +685,33 @@ export default function CashflowPage() {
     return `${new Date(date).toLocaleDateString('es-ES')} · ${d === 0 ? 'hoy' : d === 1 ? 'hace 1 día' : `hace ${d} días`}`;
   };
 
+  // Nº de reclamaciones (las reclamadas antes de existir el contador cuentan como 1)
+  const claimCountOf = (inv: any) => inv.lastReminderDate ? Math.max(inv.claimCount || 0, 1) : 0;
+
+  // Sin reclamar: se marca directamente; ya reclamada: menú con la siguiente reclamación o quitarla
+  const onClaimClick = (e: React.MouseEvent, invoices: any[]) => {
+    e.stopPropagation();
+    const ids = invoices.map((i: any) => i.id);
+    const maxCount = Math.max(0, ...invoices.map(claimCountOf));
+    if (maxCount === 0) { toggleClaim(ids, true); return; }
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setClaimMenu({ x: Math.max(8, rect.right - 224), y: rect.bottom + 4, invoiceIds: ids, next: maxCount + 1 });
+  };
+
   const toggleClaim = async (invoiceIds: number[], claimed: boolean) => {
+    setClaimMenu(null);
     try {
       const res = await fetch('/api/invoices/claim', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ invoiceIds, claimed })
       });
-      if (!res.ok) throw new Error((await res.json()).error);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
       // Se actualiza en local para no recargar todo el cashflow
-      const date = claimed ? new Date().toISOString() : null;
-      setEntries(prev => prev.map(e => e.invoices?.some((i: any) => invoiceIds.includes(i.id))
-        ? { ...e, invoices: e.invoices.map((i: any) => invoiceIds.includes(i.id) ? { ...i, lastReminderDate: date } : i) }
+      const updated = new Map<number, any>((data.invoices || []).map((i: any) => [i.id, i]));
+      setEntries(prev => prev.map(e => e.invoices?.some((i: any) => updated.has(i.id))
+        ? { ...e, invoices: e.invoices.map((i: any) => updated.has(i.id) ? { ...i, ...updated.get(i.id) } : i) }
         : e));
     } catch (err: any) {
       alert(`No se pudo guardar la marca: ${err.message || err}`);
@@ -1026,12 +1080,19 @@ export default function CashflowPage() {
                               {claimedInvoices(entry).length > 0 && (() => {
                                 const claimed = claimedInvoices(entry);
                                 const last = claimed.map((i: any) => i.lastReminderDate).sort().pop();
+                                const maxCount = Math.max(...claimed.map(claimCountOf));
                                 return (
                                   <span className="flex items-center gap-1 bg-amber-500/15 text-amber-800 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-amber-500/30" title={`Último recordatorio: ${claimLabel(last)}`}>
-                                    <MailCheck size={11} /> Reclamada {claimed.length}/{entry.invoices.length} · {claimLabel(last)}
+                                    <MailCheck size={11} /> Reclamada {claimed.length}/{entry.invoices.length}{maxCount > 1 ? ` · ${maxCount}ª reclamación` : ''} · {claimLabel(last)}
                                   </span>
                                 );
                               })()}
+                              {commentsFor(entry.id).length > 0 && (
+                                <button onClick={(e) => openComments(e, entry.id, entry.description)} className="flex items-center gap-1 max-w-xs bg-sky-500/10 text-sky-800 font-semibold px-1.5 py-0.5 rounded text-[10px] border border-sky-500/30 hover:bg-sky-500/20" title={commentsFor(entry.id).map(c => c.text).join('\n')}>
+                                  <MessageSquare size={11} className="shrink-0" /> <span className="truncate">{commentsFor(entry.id).at(-1).text}</span>
+                                  {commentsFor(entry.id).length > 1 && <span className="shrink-0">(+{commentsFor(entry.id).length - 1})</span>}
+                                </button>
+                              )}
                             </div>
                           </td>
                           <td className="p-4 text-right font-medium">
@@ -1054,6 +1115,9 @@ export default function CashflowPage() {
                           </td>
                           <td className="p-4 text-center">
                             <div className="flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={(e) => openComments(e, entry.id, entry.description)} className={`p-1.5 rounded-md transition-colors hover:bg-sky-400/20 ${commentsFor(entry.id).length ? 'text-sky-700' : 'text-black'}`} title="Comentarios de la línea">
+                                <MessageSquare size={14} />
+                              </button>
                               {!entry.isRecurring && (
                                 <>
                                   <button onClick={(e) => { e.stopPropagation(); openEditModal(entry); }} className="p-1.5 text-black hover:bg-blue-400/20 rounded-md transition-colors" title="Editar Fecha/Registro">
@@ -1065,9 +1129,9 @@ export default function CashflowPage() {
                                 </>
                               )}
                               {entry.isGroup && entry.invoices?.length > 0 && (() => {
-                                const allClaimed = claimedInvoices(entry).length === entry.invoices.length;
+                                const anyClaimed = claimedInvoices(entry).length > 0;
                                 return (
-                                  <button onClick={(e) => { e.stopPropagation(); toggleClaim(entry.invoices.map((i: any) => i.id), !allClaimed); }} className={`p-1.5 rounded-md transition-colors ${allClaimed ? 'text-amber-700 hover:bg-amber-400/20' : 'text-black hover:bg-amber-400/20'}`} title={allClaimed ? 'Quitar la marca de reclamada a todas las facturas' : 'Marcar todas las facturas como reclamadas'}>
+                                  <button onClick={(e) => onClaimClick(e, entry.invoices)} className={`p-1.5 rounded-md transition-colors ${anyClaimed ? 'text-amber-700 hover:bg-amber-400/20' : 'text-black hover:bg-amber-400/20'}`} title={anyClaimed ? 'Otra reclamación o quitar la marca de reclamada' : 'Marcar todas las facturas como reclamadas'}>
                                     <MailCheck size={14} />
                                   </button>
                                 );
@@ -1109,8 +1173,14 @@ export default function CashflowPage() {
                               {inv.bcId} <span className="text-slate-500 text-xs ml-2">({inv.status})</span>
                               {inv.lastReminderDate && (
                                 <span className="inline-flex items-center gap-1 ml-2 bg-amber-500/15 text-amber-800 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-amber-500/30">
-                                  <MailCheck size={11} /> Reclamada {claimLabel(inv.lastReminderDate)}
+                                  <MailCheck size={11} /> {claimCountOf(inv) > 1 ? `${claimCountOf(inv)}ª reclamación` : 'Reclamada'} {claimLabel(inv.lastReminderDate)}
                                 </span>
+                              )}
+                              {commentsFor(`invoice:${inv.id}`).length > 0 && (
+                                <button onClick={(e) => openComments(e, `invoice:${inv.id}`, inv.bcId)} className="inline-flex items-center gap-1 ml-2 max-w-xs align-middle bg-sky-500/10 text-sky-800 font-semibold px-1.5 py-0.5 rounded text-[10px] border border-sky-500/30 hover:bg-sky-500/20" title={commentsFor(`invoice:${inv.id}`).map(c => c.text).join('\n')}>
+                                  <MessageSquare size={11} className="shrink-0" /> <span className="truncate">{commentsFor(`invoice:${inv.id}`).at(-1).text}</span>
+                                  {commentsFor(`invoice:${inv.id}`).length > 1 && <span className="shrink-0">(+{commentsFor(`invoice:${inv.id}`).length - 1})</span>}
+                                </button>
                               )}
                             </td>
                             <td className="p-3 text-sm text-right text-gray-600">
@@ -1119,8 +1189,11 @@ export default function CashflowPage() {
                             <td className="p-3 text-right text-slate-500">-</td>
                             <td className="p-3 text-center">
                               <div className="flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button onClick={(e) => { e.stopPropagation(); toggleClaim([inv.id], !inv.lastReminderDate); }} className={`p-1 rounded transition-colors hover:bg-amber-400/20 ${inv.lastReminderDate ? 'text-amber-700' : 'text-black/70 hover:text-black'}`} title={inv.lastReminderDate ? 'Quitar la marca de reclamada' : 'Marcar como reclamada'}>
+                                <button onClick={(e) => onClaimClick(e, [inv])} className={`p-1 rounded transition-colors hover:bg-amber-400/20 ${inv.lastReminderDate ? 'text-amber-700' : 'text-black/70 hover:text-black'}`} title={inv.lastReminderDate ? 'Otra reclamación o quitar la marca de reclamada' : 'Marcar como reclamada'}>
                                   <MailCheck size={12} />
+                                </button>
+                                <button onClick={(e) => openComments(e, `invoice:${inv.id}`, inv.bcId)} className={`p-1 rounded transition-colors hover:bg-sky-400/20 ${commentsFor(`invoice:${inv.id}`).length ? 'text-sky-700' : 'text-black/70 hover:text-black'}`} title="Comentarios de la factura">
+                                  <MessageSquare size={12} />
                                 </button>
                                 <button onClick={(e) => { e.stopPropagation(); openEditModal({ isManual: false, id: inv.id, date: inv.cashflowDate || inv.dueDate, description: inv.bcId, amount: inv.amount }); }} className="p-1 text-black/70 hover:text-black hover:bg-blue-400/20 rounded transition-colors" title="Editar fecha individual">
                                   <Edit2 size={12} />
@@ -1140,6 +1213,61 @@ export default function CashflowPage() {
             </div>
           )}
         </div>
+
+        {/* Menú de reclamación (factura o línea ya reclamada) */}
+        {claimMenu && (
+          <div className="fixed inset-0 z-50" onClick={() => setClaimMenu(null)}>
+            <div className="fixed w-56 bg-white border border-gray-200 rounded-lg shadow-xl py-1 text-sm" style={{ left: claimMenu.x, top: claimMenu.y }} onClick={e => e.stopPropagation()}>
+              <button onClick={() => toggleClaim(claimMenu.invoiceIds, true)} className="w-full flex items-center gap-2 px-3 py-2 text-left text-gray-900 hover:bg-amber-50">
+                <MailCheck size={14} className="text-amber-700" /> Marcar {claimMenu.next}ª reclamación
+              </button>
+              <button onClick={() => toggleClaim(claimMenu.invoiceIds, false)} className="w-full flex items-center gap-2 px-3 py-2 text-left text-red-700 hover:bg-red-50">
+                <X size={14} /> Quitar reclamación
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de comentarios */}
+        {commentTarget && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex justify-center items-center p-4" onClick={() => setCommentTarget(null)}>
+            <div className="bg-white border border-gray-200 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+              <div className="flex justify-between items-center p-5 border-b border-gray-200 bg-gray-50">
+                <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2 min-w-0">
+                  <MessageSquare size={18} className="shrink-0" /> <span className="truncate">Comentarios · {commentTarget.label}</span>
+                </h3>
+                <button onClick={() => setCommentTarget(null)} className="text-gray-900 hover:text-gray-600"><X size={20} /></button>
+              </div>
+              <div className="p-5 space-y-3 max-h-80 overflow-y-auto">
+                {commentsFor(commentTarget.key).length === 0 ? (
+                  <p className="text-sm text-gray-500">Sin comentarios todavía.</p>
+                ) : commentsFor(commentTarget.key).map(c => (
+                  <div key={c.id} className="group/comment bg-gray-50 border border-gray-200 rounded-lg p-3">
+                    <div className="flex justify-between items-start gap-2">
+                      <p className="text-sm text-gray-900 whitespace-pre-wrap break-words">{c.text}</p>
+                      <button onClick={() => deleteComment(c.id)} className="opacity-0 group-hover/comment:opacity-100 p-1 text-gray-500 hover:text-red-600 rounded transition-opacity" title="Borrar comentario"><Trash2 size={12} /></button>
+                    </div>
+                    <div className="text-[11px] text-gray-500 mt-1">{c.author ? `${c.author} · ` : ''}{new Date(c.createdAt).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="p-5 border-t border-gray-200 space-y-3">
+                <textarea
+                  autoFocus
+                  rows={3}
+                  value={commentDraft}
+                  onChange={e => setCommentDraft(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) addComment(); }}
+                  placeholder="Escribe un comentario…"
+                  className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
+                />
+                <div className="flex justify-end">
+                  <button onClick={addComment} disabled={!commentDraft.trim()} className="px-4 py-2 rounded-lg bg-teal-600 text-white text-sm font-bold hover:bg-teal-700 disabled:opacity-50">Añadir comentario</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Modal CRUD */}
         {isModalOpen && (
