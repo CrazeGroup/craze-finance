@@ -496,31 +496,68 @@ export default function CashflowPage() {
     }
   };
 
-  // Exporta lo que se ve en pantalla (divisa, filtro y archivadas): saldo inicial + una fila por línea,
-  // sin el detalle de facturas de los cobros agrupados
+  // Exporta lo que se ve en pantalla (divisa, filtro y archivadas): saldo inicial + una fila por línea; en la segunda
+  // pestaña, lo mismo con el detalle de facturas de los cobros agrupados (vencimiento, reclamaciones y comentarios)
   const handleExportCashflow = () => {
     const visible = visibleEntries;
     const [d, m, y] = initialBalanceDate.split('/').map(Number);
-    const rows: any[][] = [
-      ['Fecha', 'Descripción', 'Importe', 'Saldo'],
-      [y && m && d ? new Date(Date.UTC(y, m - 1, d)) : initialBalanceDate, 'Saldo Inicial', null, initialBalance],
-      ...visible.map(e => [new Date(e.date), e.description, e.amount, e.balance]),
-    ];
+    const initialDate = y && m && d ? new Date(Date.UTC(y, m - 1, d)) : initialBalanceDate;
+    // Formato de fechas e importes por columna
+    const sheet = (rows: any[][], dateCols: number[], numCols: number[], cols: number[]) => {
+      const ws = XLSX.utils.aoa_to_sheet(rows, { cellDates: true });
+      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+      for (let r = 1; r <= range.e.r; r++) {
+        for (const c of dateCols) {
+          const cell = ws[XLSX.utils.encode_cell({ r, c })];
+          if (cell && cell.t === 'd') cell.z = 'dd/mm/yyyy';
+        }
+        for (const c of numCols) {
+          const cell = ws[XLSX.utils.encode_cell({ r, c })];
+          if (cell && cell.t === 'n') cell.z = '#,##0.00';
+        }
+      }
+      ws['!cols'] = cols.map(wch => ({ wch }));
+      return ws;
+    };
 
-    const ws = XLSX.utils.aoa_to_sheet(rows, { cellDates: true });
-    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-    for (let r = 1; r <= range.e.r; r++) {
-      const dateCell = ws[XLSX.utils.encode_cell({ r, c: 0 })];
-      if (dateCell && dateCell.t === 'd') dateCell.z = 'dd/mm/yyyy';
-      for (const c of [2, 3]) {
-        const cell = ws[XLSX.utils.encode_cell({ r, c })];
-        if (cell && cell.t === 'n') cell.z = '#,##0.00';
+    const ws = sheet([
+      ['Fecha', 'Descripción', 'Importe', 'Saldo'],
+      [initialDate, 'Saldo Inicial', null, initialBalance],
+      ...visible.map(e => [new Date(e.date), e.description, e.amount, e.balance]),
+    ], [0], [2, 3], [12, 50, 16, 16]);
+
+    const commentText = (key: string) => commentsFor(key)
+      .map((c: any) => `${c.text} (${[c.author, new Date(c.createdAt).toLocaleDateString('es-ES')].filter(Boolean).join(', ')})`).join(' | ');
+    const claimText = (inv: any) => { const n = claimCountOf(inv); return n > 1 ? `${n}ª reclamación` : n ? 'Reclamada' : ''; };
+    const detail: any[][] = [
+      ['Fecha', 'Descripción', 'Factura', 'Estado', 'Vencimiento', 'Importe', 'Saldo', 'Reclamación', 'Última reclamación', 'Comentarios'],
+      [initialDate, 'Saldo Inicial', '', '', null, null, initialBalance, '', null, ''],
+    ];
+    const levels: number[] = [0, 0];
+    for (const e of visible) {
+      const invoices: any[] = e.invoices || [];
+      const claimed = invoices.filter((i: any) => i.lastReminderDate);
+      detail.push([
+        new Date(e.date), e.description, invoices.length ? `${invoices.length} facturas` : '', '', null, e.amount, e.balance,
+        claimed.length ? `${claimed.length}/${invoices.length} reclamadas` : '', null, commentText(e.id),
+      ]);
+      levels.push(0);
+      for (const inv of invoices) {
+        detail.push([
+          new Date(inv.cashflowDate || inv.confirmedPaymentDate || inv.dueDate), e.description, inv.bcId, inv.status,
+          inv.dueDate ? new Date(inv.dueDate) : null, inv.amount, null, claimText(inv),
+          inv.lastReminderDate ? new Date(inv.lastReminderDate) : null, commentText(`invoice:${inv.id}`),
+        ]);
+        levels.push(1);
       }
     }
-    ws['!cols'] = [{ wch: 12 }, { wch: 50 }, { wch: 16 }, { wch: 16 }];
+    const wsDetail = sheet(detail, [0, 4, 8], [5, 6], [12, 40, 22, 10, 12, 16, 16, 18, 16, 60]);
+    // Las facturas quedan agrupadas (esquema de Excel) bajo su cobro
+    wsDetail['!rows'] = levels.map(level => (level ? { level } : {}));
 
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, `Cashflow ${currentCurrency}`);
+    XLSX.utils.book_append_sheet(wb, wsDetail, 'Detalle facturas');
     const today = new Date().toISOString().substring(0, 10);
     XLSX.writeFile(wb, `Cashflow_${selectedCompany}_${currentCurrency}_${today}.xlsx`.replace(/\s+/g, '_'));
   };
