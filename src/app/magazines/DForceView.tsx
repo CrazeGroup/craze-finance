@@ -2,8 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from 'react';
 import * as XLSX from 'xlsx';
-import { AlertCircle, CheckCircle2, Download, FileSpreadsheet, FileText, RefreshCw } from 'lucide-react';
-import { useCompany } from '@/contexts/CompanyContext';
+import { AlertCircle, CheckCircle2, Download, FileSpreadsheet, FileText, RefreshCw, Send } from 'lucide-react';
 import { ACC_PROVISION, buildProvisions, journalLines, PROVISION_RATE } from '@/lib/dforceProvisions';
 
 type SalesLine = {
@@ -21,7 +20,10 @@ type Result = {
   customerNo: string; vendorNo: string; location: string; files: { pdf: string; excel: string };
 };
 
-const DFORCE_COMPANY = 'Craze Entertainment';
+type Kind = 'invoice' | 'credit' | 'purchase' | 'journal';
+type SendState = { saving?: boolean; no?: string; lines?: number; warnings?: string[]; error?: string | null };
+
+const KIND_LABEL: Record<Kind, string> = { invoice: 'Sales Invoice', credit: 'Sales Credit Memo', purchase: 'Purchase Invoice', journal: 'Provisiones (diario D-FORCE)' };
 const nf = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const pf = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 5 });
 const qf = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 });
@@ -30,16 +32,18 @@ const money = (v: number | null | undefined) => (v == null ? '' : nf.format(v));
 const SALES_HEAD = ['Document Type', 'Document No.', 'Line No.', 'Sell-to Customer No.', 'Type', 'No.', 'Location Code', 'Description', 'Description 2', 'Quantity', 'Unit Price', 'Unit Cost (LCY)', 'Amount', 'VAT Prod. Posting Group', 'Return Reason Code', 'Project No.', 'Project Task No.', 'Project Task No.2'];
 const PURCHASE_HEAD = ['Document Type', 'Document No.', 'Line No.', 'Buy-from Vendor No.', 'Type', 'No.', 'Location Code', 'Description', 'Description 2', 'Quantity', 'Direct Unit Cost', 'Project No.', 'VAT Prod. Posting Group', 'Line Amount', 'Project Task No.'];
 
-export default function DForcePage() {
-  const { selectedCompany } = useCompany();
+// MAGAZINES › D-FORCE: Gutschrift mensual de D-FORCE-ONE → documentos de BC y provisiones de devoluciones
+export default function DForceView() {
   const [pdf, setPdf] = useState<File | null>(null);
   const [excel, setExcel] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<Result | null>(null);
-  // Nº de los documentos ya creados en BC (cabeceras) a los que se importan las líneas
-  const [docNo, setDocNo] = useState({ invoice: '', credit: '', purchase: '' });
-  // Provisiones: coste unitario por artículo (de BC, editable) y fecha de registro (fin del periodo de la Gutschrift)
+  // Envío a BC de cada documento (nº que da BC, avisos o error)
+  const [sent, setSent] = useState<Partial<Record<Kind, SendState>>>({});
+  const docNo = { invoice: sent.invoice?.no || '', credit: sent.credit?.no || '', purchase: sent.purchase?.no || '' };
+  // Coste unitario por artículo para las provisiones (de BC, editable) y fecha de registro de documentos y diario
+  // (fin del periodo de la Gutschrift)
   const [costOverride, setCostOverride] = useState<Record<string, string>>({});
   const [postingDate, setPostingDate] = useState('');
 
@@ -64,6 +68,7 @@ export default function DForcePage() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || `Error al procesar (${res.status})`);
       setData(json);
+      setSent({});
       setCostOverride({});
       // "01.08.2026 – 31.08.2026" → 2026-08-31
       const end = String(json.period || '').match(/(\d{2})\.(\d{2})\.(\d{4})\s*$/);
@@ -75,6 +80,41 @@ export default function DForcePage() {
       setLoading(false);
     }
   };
+
+  // Crea en BC (sin registrar) un documento, o envía las provisiones al lote D-FORCE, con el PDF y el Excel adjuntos.
+  // Si ya existe con ese nº de Gutschrift, pregunta antes de crearlo de nuevo.
+  const send = async (kind: Kind) => {
+    if (!data || !pdf || !excel) return;
+    if (!postingDate) { setSent(s => ({ ...s, [kind]: { error: 'Indica la fecha de registro.' } })); return; }
+    const lines = kind === 'invoice' ? data.invoice : kind === 'credit' ? data.credit : kind === 'purchase' ? data.purchase : journal;
+    if (kind === 'journal' && missingCost.length && !confirm(`Sin coste unitario (provisión de existencias a 0): ${missingCost.join(', ')}. ¿Enviar el diario igualmente?`)) return;
+    setSent(s => ({ ...s, [kind]: { ...s[kind], saving: true, error: null } }));
+    const post = async (force: boolean) => {
+      const form = new FormData();
+      form.append('data', JSON.stringify({ kind, ref: data.creditNo, date: postingDate, lines, force }));
+      form.append('pdf', pdf);
+      form.append('excel', excel);
+      const res = await fetch('/api/dforce/create', { method: 'POST', body: form });
+      return { res, json: await res.json().catch(() => ({ error: `Error ${res.status}` })) };
+    };
+    try {
+      let { res, json } = await post(false);
+      if (res.status === 409) {
+        if (!confirm(`${json.error}. ¿Crear ${KIND_LABEL[kind]} de nuevo?`)) { setSent(s => ({ ...s, [kind]: { error: json.error } })); return; }
+        ({ res, json } = await post(true));
+      }
+      if (!res.ok) throw new Error(json.error || `Error ${res.status}`);
+      setSent(s => ({ ...s, [kind]: { no: json.no, lines: json.lines, warnings: json.warnings || [] } }));
+    } catch (e: any) {
+      setSent(s => ({ ...s, [kind]: { error: e.message } }));
+    }
+  };
+  const kinds = (['invoice', 'credit', 'purchase', 'journal'] as Kind[]).filter(k =>
+    k === 'journal' ? journal.length > 0 : (k === 'invoice' ? data?.invoice : k === 'credit' ? data?.credit : data?.purchase)?.length);
+  const sendAll = async () => { for (const k of kinds.filter(k => !sent[k]?.no)) await send(k); };
+  const sending = Object.values(sent).some(x => x?.saving);
+  const missingCost = provisions.filter(r => (r.delivered && r.soldQty) || r.returnedQty).filter(r => !r.unitCost).map(r => r.item);
+  const action = (kind: Kind) => <BcSend state={sent[kind]} onSend={() => send(kind)} disabled={sending || !postingDate} />;
 
   // Excel con el formato de los paquetes de configuración "D-FORCE" (Sales Line 37 y Purchase Line 39)
   const exportExcel = () => {
@@ -101,33 +141,27 @@ export default function DForcePage() {
     XLSX.writeFile(wb, `D-FORCE_${data.creditNo || 'Gutschrift'}.xlsx`);
   };
 
-  if (selectedCompany !== DFORCE_COMPANY) {
-    return (
-      <div className="min-h-screen bg-[#F3F4F7] p-8">
-        <p className="text-sm text-gray-600">D-FORCE solo está disponible para {DFORCE_COMPANY}. Selecciónala en el menú lateral.</p>
-      </div>
-    );
-  }
-
   const net = data?.totals;
   const balanced = net && net.pdfNet != null && Math.abs(net.net - net.pdfNet) < 0.05;
 
   return (
-    <div className="min-h-screen bg-[#F3F4F7] pb-24">
-      <header className="sticky top-0 z-20 bg-white border-b border-gray-200">
-        <div className="w-full px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
+    <div className="space-y-6">
+        <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="mr-auto">
-            <p className="font-bold text-gray-900 leading-tight text-lg">D-FORCE</p>
-            <p className="text-xs text-gray-500">{DFORCE_COMPANY} · Gutschrift de D-FORCE-ONE (PDF + Excel) → Sales Invoice, Sales Credit Memo y Purchase Invoice</p>
+            <p className="font-bold text-gray-900 leading-tight">D-FORCE</p>
+            <p className="text-xs text-gray-500">Gutschrift de D-FORCE-ONE (PDF + Excel) → Sales Invoice, Sales Credit Memo y Purchase Invoice sin registrar en BC (con el PDF y el Excel adjuntos) y provisiones al diario D-FORCE</p>
           </div>
+          <button onClick={sendAll} disabled={!data || sending || !postingDate || kinds.every(k => sent[k]?.no)}
+            title={postingDate ? 'Crea en BC, sin registrar, los documentos que aún no se han enviado y las provisiones' : 'Indica la fecha de registro'}
+            className="flex items-center gap-2 bg-indigo-600 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-40">
+            <Send size={16} className={sending ? 'animate-pulse' : ''} /> {sending ? 'Enviando a BC…' : 'Enviar todo a BC'}
+          </button>
           <button onClick={exportExcel} disabled={!data}
             className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
             <Download size={16} /> Exportar Excel (Output Format)
           </button>
         </div>
-      </header>
 
-      <main className="w-full px-4 md:px-8 pt-6 space-y-6">
         <section className="bg-white rounded-xl border border-gray-200 p-4 flex flex-wrap items-end gap-4">
           <FilePick label="PDF de la Gutschrift" accept=".pdf" icon={<FileText size={16} />} file={pdf} onChange={setPdf} />
           <FilePick label="Excel (Curasoft DatenExport)" accept=".xlsx,.xls" icon={<FileSpreadsheet size={16} />} file={excel} onChange={setExcel} />
@@ -135,15 +169,11 @@ export default function DForcePage() {
             className="flex items-center gap-2 bg-indigo-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-40">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> {loading ? 'Procesando…' : 'Procesar'}
           </button>
-          <div className="flex flex-wrap items-end gap-3 ml-auto">
-            {([['invoice', 'Nº Sales Invoice'], ['credit', 'Nº Sales Credit Memo'], ['purchase', 'Nº Purchase Invoice']] as const).map(([k, label]) => (
-              <label key={k} className="text-xs text-gray-500 flex flex-col gap-1">
-                {label}
-                <input value={docNo[k]} onChange={e => setDocNo(d => ({ ...d, [k]: e.target.value }))} placeholder="p. ej. SIN-00065"
-                  className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-semibold text-gray-900 w-40" />
-              </label>
-            ))}
-          </div>
+          <label className="text-xs text-gray-500 flex flex-col gap-1 ml-auto" title="Fecha de registro y de documento de las facturas, el abono y el diario">
+            Fecha de registro
+            <input type="date" value={postingDate} onChange={e => setPostingDate(e.target.value)}
+              className={`border rounded-lg px-2 py-1.5 text-sm font-semibold text-gray-900 ${data && !postingDate ? 'border-amber-400 bg-amber-50' : 'border-gray-300'}`} />
+          </label>
         </section>
 
         {error && <p className="bg-white border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-center gap-2"><AlertCircle size={16} /> {error}</p>}
@@ -169,22 +199,21 @@ export default function DForcePage() {
               </ul>
             )}
 
-            <SalesTable title="Sales Invoice" docNo={docNo.invoice} lines={data.invoice} customer={data.customerNo} />
-            <SalesTable title="Sales Credit Memo" docNo={docNo.credit} lines={data.credit} customer={data.customerNo} />
-            <PurchaseTable docNo={docNo.purchase} lines={data.purchase} vendor={data.vendorNo} />
+            <SalesTable title="Sales Invoice" docNo={docNo.invoice} lines={data.invoice} customer={data.customerNo} action={action('invoice')} />
+            <SalesTable title="Sales Credit Memo" docNo={docNo.credit} lines={data.credit} customer={data.customerNo} action={action('credit')} />
+            <PurchaseTable docNo={docNo.purchase} lines={data.purchase} vendor={data.vendorNo} action={action('purchase')} />
             <ProvisionsSection rows={provisions} journal={journal} costOverride={costOverride} setCostOverride={setCostOverride}
-              postingDate={postingDate} setPostingDate={setPostingDate} creditNo={data.creditNo} />
+              postingDate={postingDate} creditNo={data.creditNo} missingCost={missingCost} action={action('journal')} />
           </>
         )}
-      </main>
     </div>
   );
 }
 
-function ProvisionsSection({ rows, journal, costOverride, setCostOverride, postingDate, setPostingDate, creditNo }: {
+function ProvisionsSection({ rows, journal, costOverride, setCostOverride, postingDate, creditNo, missingCost, action }: {
   rows: ReturnType<typeof buildProvisions>; journal: ReturnType<typeof journalLines>;
   costOverride: Record<string, string>; setCostOverride: (f: (o: Record<string, string>) => Record<string, string>) => void;
-  postingDate: string; setPostingDate: (d: string) => void; creditNo: string;
+  postingDate: string; creditNo: string; missingCost: string[]; action: ReactNode;
 }) {
   const t = (f: (r: typeof rows[number]) => number) => rows.reduce((s, r) => s + f(r), 0);
 
@@ -214,7 +243,6 @@ function ProvisionsSection({ rows, journal, costOverride, setCostOverride, posti
   };
   // Movimiento de la 3071 00 = contrapartida de todas las líneas de diario
   const provisionNet = -journal.reduce((s, j) => s + j.amount, 0);
-  const missingCost = rows.filter(r => (r.delivered && r.soldQty) || r.returnedQty).filter(r => !r.unitCost);
   const pct = `${PROVISION_RATE * 100}%`;
   return (
     <section className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -226,17 +254,15 @@ function ProvisionsSection({ rows, journal, costOverride, setCostOverride, posti
             solo en los números entregados en el mes. Abono: las devoluciones cancelan ambas provisiones al 100 %.
           </p>
         </div>
-        <label className="text-xs text-gray-500 flex items-center gap-2">Fecha de registro
-          <input type="date" value={postingDate} onChange={e => setPostingDate(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1 text-sm font-semibold text-gray-900" />
-        </label>
         <button onClick={exportProvisions} disabled={!journal.length}
           className="flex items-center gap-2 border border-gray-300 bg-white text-gray-700 text-sm font-semibold px-3 py-1.5 rounded-lg hover:text-gray-900 disabled:opacity-40">
           <Download size={14} /> Exportar provisiones
         </button>
+        {action}
       </div>
       {missingCost.length > 0 && (
         <p className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-900">
-          Sin coste unitario (la provisión de existencias sale a 0 hasta que lo indiques): {missingCost.map(r => r.item).join(', ')}.
+          Sin coste unitario (la provisión de existencias sale a 0 hasta que lo indiques): {missingCost.join(', ')}.
         </p>
       )}
       <div className="overflow-x-auto">
@@ -325,6 +351,30 @@ function ProvisionsSection({ rows, journal, costOverride, setCostOverride, posti
 
 const r2x = (v: number) => Math.round(v * 100) / 100;
 
+// Botón "Crear en BC" de un bloque con el resultado: nº creado (sin registrar), avisos o error
+function BcSend({ state, onSend, disabled }: { state?: SendState; onSend: () => void; disabled: boolean }) {
+  return (
+    <>
+      {state?.no ? (
+        <span className="flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-50 border border-green-200 rounded-lg px-2 py-1">
+          <CheckCircle2 size={14} /> {state.no} creado en BC sin registrar ({state.lines} líneas): revísalo y regístralo
+        </span>
+      ) : (
+        <button onClick={onSend} disabled={disabled || state?.saving}
+          className="flex items-center gap-1.5 bg-indigo-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-indigo-700 disabled:opacity-40">
+          <Send size={13} className={state?.saving ? 'animate-pulse' : ''} /> {state?.saving ? 'Creando en BC…' : 'Crear en BC'}
+        </button>
+      )}
+      {state?.error && <p className="w-full text-xs text-red-700 flex items-center gap-1.5 mt-1"><AlertCircle size={13} /> {state.error}</p>}
+      {!!state?.warnings?.length && (
+        <ul className="w-full mt-1 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 text-xs text-amber-900 list-disc list-inside space-y-0.5">
+          {state.warnings.map((w, i) => <li key={i}>{w}</li>)}
+        </ul>
+      )}
+    </>
+  );
+}
+
 function FilePick({ label, accept, icon, file, onChange }: { label: string; accept: string; icon: ReactNode; file: File | null; onChange: (f: File | null) => void }) {
   return (
     <label className="text-xs text-gray-500 flex flex-col gap-1 cursor-pointer">
@@ -350,13 +400,14 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
 const th = 'px-3 py-2 whitespace-nowrap';
 const td = 'px-3 py-1.5 whitespace-nowrap';
 
-function SalesTable({ title, docNo, lines, customer }: { title: string; docNo: string; lines: SalesLine[]; customer: string }) {
+function SalesTable({ title, docNo, lines, customer, action }: { title: string; docNo: string; lines: SalesLine[]; customer: string; action: ReactNode }) {
   const showTask2 = lines.some(l => l.documentType === 'Credit Memo');
   return (
     <section className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-      <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap items-baseline gap-x-3">
+      <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap items-center gap-x-3 gap-y-1">
         <h2 className="text-sm font-bold text-gray-900">{title}</h2>
-        <span className="text-xs text-gray-500">{docNo || 'sin nº de documento'} · cliente {customer} · {lines.length} líneas</span>
+        <span className="text-xs text-gray-500 mr-auto">{docNo || 'sin crear en BC'} · cliente {customer} · {lines.length} líneas</span>
+        {action}
       </div>
       <div className="overflow-x-auto max-h-[60vh]">
         <table className="w-full text-sm">
@@ -402,12 +453,13 @@ function SalesTable({ title, docNo, lines, customer }: { title: string; docNo: s
   );
 }
 
-function PurchaseTable({ docNo, lines, vendor }: { docNo: string; lines: PurchaseLine[]; vendor: string }) {
+function PurchaseTable({ docNo, lines, vendor, action }: { docNo: string; lines: PurchaseLine[]; vendor: string; action: ReactNode }) {
   return (
     <section className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-      <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap items-baseline gap-x-3">
+      <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap items-center gap-x-3 gap-y-1">
         <h2 className="text-sm font-bold text-gray-900">Purchase Invoice</h2>
-        <span className="text-xs text-gray-500">{docNo || 'sin nº de documento'} · proveedor {vendor} · {lines.length} líneas</span>
+        <span className="text-xs text-gray-500 mr-auto">{docNo || 'sin crear en BC'} · proveedor {vendor} · {lines.length} líneas</span>
+        {action}
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">

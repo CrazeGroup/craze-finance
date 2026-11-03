@@ -14,8 +14,8 @@ export const DFORCE_COMPANY = 'Craze Entertainment';
 export const CUSTOMER_NO = '300353';
 export const VENDOR_NO = 'VE-00111';
 export const LOCATION = 'D-FORCE';
-const SALES_VAT = '7% GOODS';
-const PURCHASE_VAT = '7% SERVICE';
+export const SALES_VAT = '7% GOODS';
+export const PURCHASE_VAT = '7% SERVICE';
 const NON_REC = 'NON-REC';
 const RETURN_TASK2 = '004.001';
 

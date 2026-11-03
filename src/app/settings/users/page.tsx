@@ -23,7 +23,7 @@ const MODULES = [
   { id: 'notas_compra', label: 'Notas de compra' },
   { id: 'aduanas', label: 'Aduanas' },
   { id: 'ocr', label: 'OCR' },
-  { id: 'dforce', label: 'D-FORCE (Craze Entertainment)' },
+  { id: 'dforce', label: 'MAGAZINES: D-FORCE y MAILFINISH (Craze Entertainment)' },
   { id: 'seguros', label: 'Seguros' },
   { id: 'configuracion', label: 'Configuración y Usuarios' },
 ];
