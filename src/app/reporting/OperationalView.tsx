@@ -86,9 +86,6 @@ export function InventorySection({ fmt, inv, an, kp }: { fmt: Fmt; inv: Loaded; 
             {an.error ? <ErrorBox message={an.error} />
               : an.loading || !an.data ? <Loading text={t('anLoading')} />
               : <InventoryBreakdown fmt={fmt} an={an.data} adsData={k} />}
-            {kp.error ? <ErrorBox message={kp.error} />
-              : kp.loading || !k ? <Loading text={t('anLoading')} />
-              : <InventoryBreakdown fmt={fmt} an={k} kind="ads" />}
             <div className="space-y-4">
               {(['up', 'down'] as const).map(dir => (
                 <Card key={dir} title={t(dir === 'up' ? 'topUp' : 'topDown')} sub={`(${date(d.prevDate)} → ${date(d.date)})`}>
@@ -107,6 +104,18 @@ export function InventorySection({ fmt, inv, an, kp }: { fmt: Fmt; inv: Loaded; 
           </>
         );
       }}</Block>
+    </Section>
+  );
+}
+
+// Average Days in Stock: sección propia con su gráfico y Detail by
+export function AdsSection({ fmt, kp }: { fmt: Fmt; kp: Loaded<InvKpis> }) {
+  const { t } = fmt;
+  return (
+    <Section title={t('adsSectionTitle')} source={t('adsSource')}>
+      {kp.error ? <ErrorBox message={kp.error} />
+        : kp.loading || !kp.data ? <Loading text={t('anLoading')} />
+        : <InventoryBreakdown fmt={fmt} an={kp.data} kind="ads" />}
     </Section>
   );
 }
@@ -223,6 +232,7 @@ export function InventoryAnalysisView({ fmt, month, inv, pur, an, pa, kp }: { fm
   return (
     <div className="space-y-10">
       <InventorySection fmt={fmt} inv={inv} an={an} kp={kp} />
+      <AdsSection fmt={fmt} kp={kp} />
       <PurchasesSection fmt={fmt} pur={pur} pa={pa} month={month} />
     </div>
   );
