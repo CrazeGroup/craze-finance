@@ -302,13 +302,29 @@ function sameSpot(text: string, label: string, read: (rest: string) => string | 
 const shapeOf = (v: string, exact = false) => new RegExp('^' + v.replace(/[A-Za-z]+|\d+|[^A-Za-z\d]/g, p =>
   /^[A-Za-z]/.test(p) ? (exact ? `[A-Za-z]{${p.length}}` : '[A-Za-z]+') : /^\d/.test(p) ? (exact ? `\\d{${p.length}}` : '\\d+') : `\\${p}`) + '(?![A-Za-z\\d])');
 
+// Tablas que el PDF saca por columnas (WIRmachenDRUCK: "Bestelldatum: Rechnungsdatum: Referenz: 400209-1023 …
+// 28.10.2026 02.11.2026"): la fecha de la etiqueta es la que ocupa entre las fechas de los valores el mismo puesto que
+// ella entre las etiquetas de fecha
+const LABELS = '(?:[A-Za-zÄÖÜäöüß][\\wÄÖÜäöüß.\\-]*:\\s+)';
+function columnDate(t: string, start: number, end: number) {
+  const next = t.slice(end).match(new RegExp(`^${LABELS}+`))?.[0];
+  if (!next) return '';
+  const prev = t.slice(Math.max(0, start - 300), start).match(new RegExp(`${LABELS}*$`))![0];
+  const j = (prev.match(/(?:datum|date|fecha)[^:\s]*:/gi) || []).length;
+  return dates(t.slice(end + next.length, end + next.length + 200))[j]?.iso || '';
+}
+
 // Etiquetas genéricas, si no hay PDF modelo o no se encuentra su etiqueta
 function guessHeader(t: string) {
   const invoiceNo = t.match(/(?:Invoice|Rechnungs?|Debit Note|Credit Note|Gutschrift|Factura|Facture|Beleg)[ -]?(?:Number|No\.?|Nr\.?|nummer|n[º°o]\.?)\s*:?\s*([A-Z0-9][A-Z0-9\-\/.]{3,})/i)?.[1]?.replace(/\.$/, '') || '';
   let invoiceDate = '';
-  for (const re of [/(?:Invoice Date|Debit Note Date|Rechnungsdatum|Belegdatum|Fecha(?: de)? (?:la )?factura|Date de (?:la )?facture)\s*:?\s*/i, /(?:Datum|Date|Fecha)\s*:?\s*/i]) {
-    const m = t.match(re);
-    if (m) { invoiceDate = dates(t.slice(m.index! + m[0].length, m.index! + m[0].length + 25))[0]?.iso || ''; if (invoiceDate) break; }
+  // Las etiquetas concretas, en todas sus apariciones (la primera puede ser texto: "der Monat des Rechnungsdatums");
+  // la genérica, solo la primera
+  const specific = /(?:Invoice Date|Debit Note Date|Rechnungsdatum|Belegdatum|Fecha(?: de)? (?:la )?factura|Date de (?:la )?facture)(?![A-Za-zäöü])\s*:?\s*/gi;
+  for (const m of [...t.matchAll(specific), ...[t.match(/(?:Datum|Date|Fecha)\s*:?\s*/i)].filter(x => x)]) {
+    const end = m!.index! + m![0].length;
+    invoiceDate = columnDate(t, m!.index!, end) || dates(t.slice(end, end + 25))[0]?.iso || '';
+    if (invoiceDate) break;
   }
   return { invoiceNo, invoiceDate };
 }
