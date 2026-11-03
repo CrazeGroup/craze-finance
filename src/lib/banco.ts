@@ -15,10 +15,11 @@ export type Movement = {
 export type LedgerEntry = {
   entryNo: number; date: string; docNo: string; description: string; amount: number; balType: string; balNo: string;
 };
+export type AppliesType = 'Invoice' | 'Credit Memo' | 'Payment' | 'Refund';
 export type AccountType = 'G/L Account' | 'Customer' | 'Vendor' | 'Bank Account';
 export type SuggestedLine = {
   accountType: AccountType | ''; accountNo: string; accountName: string; description: string;
-  amount: number; appliesToDocType?: 'Invoice' | 'Credit Memo'; appliesToDocNo?: string;
+  amount: number; appliesToDocType?: AppliesType; appliesToDocNo?: string;
 };
 export type Suggestion = { documentNo: string; source: string; note: string; lines: SuggestedLine[] };
 export type MovementResult = Movement & {
@@ -278,7 +279,7 @@ export const normName = (s: string) => s.toLowerCase().normalize('NFD').replace(
 
 const toAccountType = (t: string): AccountType | '' =>
   t === 'G/L Account' || t === 'Customer' || t === 'Vendor' || t === 'Bank Account' ? t : '';
-const docType = (t: string) => (/credit/i.test(t) ? 'Credit Memo' : 'Invoice');
+const docType = (t: string): AppliesType => (/credit/i.test(t) ? 'Credit Memo' : /refund/i.test(t) ? 'Refund' : /payment/i.test(t) ? 'Payment' : 'Invoice');
 const amazonPaymentNo = (purpose: string) => purpose.match(/PAYMENT-NUM\s+([\d ]{6,})/i)?.[1].replace(/\s/g, '') || '';
 
 const ownAccount = (m: Movement) => !!m.iban && !!m.account && (m.account === m.iban || m.account.endsWith(m.iban));
@@ -334,6 +335,48 @@ function citedEntries(m: Movement, open: OpenEntry[]) {
   });
 }
 
+// Índices de values (hasta 14) que suman target
+function subsetIndexes(values: number[], target: number): number[] | null {
+  const n = Math.min(values.length, 14);
+  for (let mask = 1; mask < (1 << n); mask++) {
+    let sum = 0;
+    for (let i = 0; i < n; i++) if (mask & (1 << i)) sum += values[i];
+    if (sum === target) return Array.from({ length: n }, (_, i) => i).filter(i => mask & (1 << i));
+  }
+  return null;
+}
+
+// Facturas abiertas de la cuenta ya elegida que liquida el movimiento: las que cita el concepto (nº de documento,
+// nº externo o solo su número, p. ej. "Rechnung 02657" o "RG 1215217008"); si no cita ninguna, la que tiene pendiente
+// el importe o varias que lo suman
+function applyWithinAccount(m: Movement, side: 'Customer' | 'Vendor', no: string, name: string, open: OpenEntry[]) {
+  const own = open.filter(o => o.side === side && o.no === no && o.remaining);
+  const compact = m.purpose.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const runs = new Set((m.purpose.match(/\d{4,}/g) || []).filter(r => !/^20[2-3]\d$/.test(r)).map(r => r.replace(/^0+/, '')));
+  const cites = (o: OpenEntry) => [o.docNo, o.extDocNo].some(d => {
+    const c = d.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const tail = d.match(/(\d{4,})\D*$/)?.[1].replace(/^0+/, '') || '';
+    return (c.length >= 4 && compact.includes(c)) || (!!tail && runs.has(tail));
+  });
+  const lineFor = (o: OpenEntry, amount = o.remaining): SuggestedLine => ({
+    accountType: side, accountNo: no, accountName: name, description: `${name} ${o.docNo}`.substring(0, 100), amount: r2(amount),
+    appliesToDocType: docType(o.docType), appliesToDocNo: o.docNo,
+  });
+  const target = cents(m.amount);
+  const cited = own.filter(cites);
+  if (cited.length) {
+    const total = cents(cited.reduce((t, o) => t + o.remaining, 0));
+    if (total === target) return { lines: cited.map(o => lineFor(o)), note: `El concepto cita ${cited.map(o => o.docNo).join(', ')}` };
+    if (cited.length === 1) return { lines: [lineFor(cited[0], m.amount)], note: `El concepto cita ${cited[0].docNo}, con pendiente ${r2(cited[0].remaining).toFixed(2)}: revisa la diferencia` };
+  }
+  const same = own.filter(o => cents(o.remaining) === target);
+  if (same.length) return { lines: [lineFor(same[0])], note: `${same[0].docNo} tiene pendiente el mismo importe${same.length > 1 ? ` (y ${same.length - 1} más)` : ''}` };
+  const idx = own.length >= 2 ? subsetIndexes(own.map(o => cents(o.remaining)), target) : null;
+  if (idx) return { lines: idx.map(i => lineFor(own[i])), note: `${idx.map(i => own[i].docNo).join(' + ')} suman el importe` };
+  const refs = m.purpose.toUpperCase().match(/\b(?:[A-Z]{2,5}-)?[A-Z]{2,5}\d{2}-\d{4,6}\b/g);
+  return refs ? { lines: null, note: `El concepto cita ${Array.from(new Set(refs)).join(', ')}, sin pendiente en esta cuenta` } : null;
+}
+
 function matchParty(m: Movement, parties: Party[]) {
   const name = normName(m.name);
   if (name.length < 3) return null;
@@ -360,6 +403,13 @@ export function suggest(
       accountType, accountNo, accountName: accountType === 'Customer' || accountType === 'Vendor' ? partyName.get(`${accountType}|${accountNo}`) || '' : '',
       description: description.substring(0, 100), amount: r2(amount),
     });
+
+    // Con la cuenta de un cliente o proveedor, las facturas que liquida (si no, la línea tal cual)
+    const withApply = (l: SuggestedLine) => {
+      if (l.accountType !== 'Customer' && l.accountType !== 'Vendor') return { lines: [l], note: '' };
+      const a = applyWithinAccount(m, l.accountType, l.accountNo, l.accountName || partyName.get(`${l.accountType}|${l.accountNo}`) || m.name, open);
+      return { lines: a?.lines || [l], note: a?.note || '' };
+    };
 
     // Facturas abiertas citadas en el concepto
     const cited = citedEntries(m, open);
@@ -398,14 +448,17 @@ export function suggest(
         continue;
       }
       const description = documentNo || (rule.usesPurpose ? m.purpose : rule.description) || defaultDescription(m);
-      out.set(m.idx, { documentNo, source: 'Histórico', note: when, lines: [line(rule.accountType, rule.accountNo, description)] });
+      const single = line(rule.accountType, rule.accountNo, description);
+      const applied = withApply(single);
+      out.set(m.idx, { documentNo, source: 'Histórico', note: [when, applied.note].filter(Boolean).join(' · '), lines: applied.lines });
       continue;
     }
 
     // Cliente o proveedor con ese nombre
     const party = matchParty(m, parties);
     if (party) {
-      out.set(m.idx, { documentNo, source: 'Nombre', note: '', lines: [{ ...line(party.side, party.no, party.name), accountName: party.name }] });
+      const applied = withApply({ ...line(party.side, party.no, party.name), accountName: party.name });
+      out.set(m.idx, { documentNo, source: 'Nombre', note: applied.note, lines: applied.lines });
       continue;
     }
     out.set(m.idx, { documentNo, source: '', note: 'Sin sugerencia: indica la cuenta', lines: [line('', '', `${m.name} ${m.purpose}`.trim())] });
