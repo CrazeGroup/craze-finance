@@ -6,17 +6,17 @@ import { FileDown, RefreshCw } from 'lucide-react';
 import { companyLabel, useCompany } from '@/contexts/CompanyContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { makeT } from './i18n';
-import OperationalView, { InventoryAnalysisView, Loaded } from './OperationalView';
+import OperationalView, { InventoryAnalysisView, KpisView, Loaded } from './OperationalView';
 import ManagementView from './ManagementView';
 
 const SECTIONS = ['inventory', 'purchases', 'receivables', 'payables', 'provisions', 'bwa', 'cashflow', 'analysis', 'purAnalysis', 'invKpis'] as const;
 type SectionKey = typeof SECTIONS[number];
-type View = 'operational' | 'management';
-const VIEWS: View[] = ['operational', 'management'];
+type View = 'kpis' | 'operational' | 'management';
+const VIEWS: View[] = ['kpis', 'operational', 'management'];
 // Reporting (Operacional / Dirección) o Análisis Inventario (apartado propio del menú, solo inventario y compras)
 export type ReportMode = 'reporting' | 'inventory';
 const MODE_SECTIONS: Record<ReportMode, readonly SectionKey[]> = {
-  reporting: ['inventory', 'purchases', 'receivables', 'payables', 'provisions', 'bwa', 'cashflow'],
+  reporting: ['inventory', 'purchases', 'receivables', 'payables', 'provisions', 'bwa', 'cashflow', 'analysis', 'invKpis'],
   inventory: ['inventory', 'purchases', 'invKpis', 'analysis', 'purAnalysis'],
 };
 // analysis / purAnalysis = inventario de cada fin de mes y compras CHINA TRF por línea (Análisis Inventario)
@@ -47,6 +47,9 @@ export default function ReportPage({ mode }: { mode: ReportMode }) {
   useEffect(() => {
     const v = store.get('crz-view') as View | null;
     if (v && VIEWS.includes(v)) setView(v);
+    // ?month=YYYY-MM (p. ej. desde un KPI de Reporting > KPIs)
+    const m = new URLSearchParams(window.location.search).get('month');
+    if (m && /^\d{4}-\d{2}$/.test(m)) setMonth(m);
   }, []);
 
   // Carga de todos los bloques (en paralelo; los pesados quedan en caché en el servidor)
@@ -82,6 +85,7 @@ export default function ReportPage({ mode }: { mode: ReportMode }) {
   const cutoff = sections.receivables.data?.date || sections.inventory.data?.date;
   const company = selectedCompany === 'ALL' ? 'CRAZE' : selectedCompany;
 
+  const kpis = <KpisView fmt={fmt} month={month} inv={sections.inventory} an={sections.analysis} kp={sections.invKpis} />;
   const operational = <OperationalView fmt={fmt} inv={sections.inventory} ar={sections.receivables} />;
   const inventory = <InventoryAnalysisView fmt={fmt} month={month} inv={sections.inventory} pur={sections.purchases} an={sections.analysis} pa={sections.purAnalysis} kp={sections.invKpis} />;
   const management = <ManagementView fmt={fmt} month={month} company={company} ar={sections.receivables} ap={sections.payables} prov={sections.provisions} bwa={sections.bwa} cf={sections.cashflow} />;
@@ -127,11 +131,13 @@ export default function ReportPage({ mode }: { mode: ReportMode }) {
           <p className="text-sm text-gray-600">{t('selectCompany')}</p>
         ) : mode === 'inventory' ? inventory : printing ? (
           <>
+            {kpis}
+            <div className="rpt-pagebreak" />
             {operational}
             <div className="rpt-pagebreak" />
             {management}
           </>
-        ) : view === 'operational' ? operational : management}
+        ) : view === 'kpis' ? kpis : view === 'operational' ? operational : management}
         <p className="text-xs text-gray-500 border-t border-gray-200 pt-4">{t('footer')}</p>
       </main>
     </div>

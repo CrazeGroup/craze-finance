@@ -38,8 +38,9 @@ export type InvKpis = Analysis & {
   destroyed: { value: number; qty: number }[]; pallets: number; noPallet: number; ads: { days: number | null; qty: number }[];
 };
 
-export function InventorySection({ fmt, inv, an, kp }: { fmt: Fmt; inv: Loaded; an: Loaded<Analysis>; kp: Loaded<InvKpis> }) {
-  const { t, short, num, date, eur } = fmt;
+// Los 4 KPIs de inventario (Análisis Inventario y Reporting > KPIs). link: enlace de cada KPI al informe de origen.
+export function InventoryKpis({ fmt, d, an, kp, link }: { fmt: Fmt; d: any; an: Loaded<Analysis>; kp: Loaded<InvKpis>; link?: string }) {
+  const { t, short, num, date } = fmt;
   const k = kp.data;
   const cur = k ? k.prevDates.length + k.curDates.length - 1 : -1;     // mes del informe
   const ly = k && k.curDates.length <= k.prevDates.length ? k.curDates.length - 1 : -1;
@@ -51,38 +52,47 @@ export function InventorySection({ fmt, inv, an, kp }: { fmt: Fmt; inv: Loaded; 
   };
   const pending = kp.error ? '!' : '…';
   const kpiSub = (text: string) => (kp.error ? kp.error : text);
+  // Mismo fin de mes del año anterior (del análisis por meses)
+  const lyInv = an.data?.totals.find(x => x.date === an.data!.prevDates[an.data!.curDates.length - 1]);
+  const adsCur = k ? k.ads[cur].days : null;
+  const adsLy = k && ly >= 0 ? k.ads[ly].days : null;
+  const go = link ? { href: link, title: t('openReport', { report: t('inventory') }) } : undefined;
+  return (
+      <Grid cols={4}>
+        <Kpi link={go} highlight tone="main" label={t('kpiInvValue', { date: date(d.date) })} value={short(d.total)} sub={t('unitsRefs', { qty: num(d.qty), n: num(d.nItems) })}
+          extra={lyInv && (
+            <p className="text-[11px] text-gray-500 mt-1.5 pt-1.5 border-t border-gray-100">
+              {t('vsLastYear', { date: date(lyInv.date) })}: {short(lyInv.value)} · {t('unitsRefs', { qty: num(lyInv.qty), n: num(lyInv.skus) })}
+              <span className="block font-semibold">
+                <Delta fmt={fmt} cur={d.total} prev={lyInv.value} /> {t('yoyValue')} · <Delta fmt={fmt} cur={d.qty} prev={lyInv.qty} /> {t('yoyUnits')}
+              </span>
+            </p>
+          )} />
+        {/* Lo destruido en el año hasta el mes del informe; en pequeño, lo del propio mes */}
+        <Kpi link={go} tone="red" label={t('kpiDestroyed', { year: k?.year ?? '' })} value={k ? short(ytd(k.prevDates.length, cur, i => k.destroyed[i].value)) : pending}
+          sub={kpiSub(k ? t('destroyedSub', { qty: num(ytd(k.prevDates.length, cur, i => k.destroyed[i].qty)), month: fmt.monthCode(k.month), mv: short(k.destroyed[cur].value), mq: num(k.destroyed[cur].qty) }) : t('loading'))} />
+        <Kpi link={go} label={t('kpiPallets', { date: date(d.date) })} value={k ? num(k.pallets) : pending}
+          sub={kpiSub(k ? t('palletsSub', { n: num(k.noPallet) }) : t('loading'))} />
+        <Kpi link={go} label={t('kpiAds')} value={k ? (adsCur == null ? '–' : t('daysN', { n: num(adsCur) })) : pending}
+          sub={kpiSub(k ? t('adsSub', { ytd: adsOf(k.prevDates.length, cur) == null ? '–' : num(adsOf(k.prevDates.length, cur)!) }) : t('loading'))}
+          extra={k && adsLy != null && (
+            <p className="text-[11px] text-gray-500 mt-1.5 pt-1.5 border-t border-gray-100">
+              {t('vsLastYear', { date: fmt.monthName(k.prevDates[ly].substring(0, 7)) })}: {t('daysN', { n: num(adsLy) })} · <span className="font-semibold"><Delta fmt={fmt} cur={adsCur} prev={adsLy} invert /></span>
+            </p>
+          )} />
+      </Grid>
+  );
+}
+
+export function InventorySection({ fmt, inv, an, kp }: { fmt: Fmt; inv: Loaded; an: Loaded<Analysis>; kp: Loaded<InvKpis> }) {
+  const { t, num, date, eur } = fmt;
+  const k = kp.data;
   return (
     <Section title={t('invTitle')} source={inv.data ? t('invSource', { date: date(inv.data.date) }) : undefined}>
       <Block state={inv} fmt={fmt}>{(d: any) => {
-        // Mismo fin de mes del año anterior (del análisis por meses)
-        const lyInv = an.data?.totals.find(x => x.date === an.data!.prevDates[an.data!.curDates.length - 1]);
-        const adsCur = k ? k.ads[cur].days : null;
-        const adsLy = k && ly >= 0 ? k.ads[ly].days : null;
         return (
           <>
-            <Grid cols={4}>
-              <Kpi highlight tone="main" label={t('kpiInvValue', { date: date(d.date) })} value={short(d.total)} sub={t('unitsRefs', { qty: num(d.qty), n: num(d.nItems) })}
-                extra={lyInv && (
-                  <p className="text-[11px] text-gray-500 mt-1.5 pt-1.5 border-t border-gray-100">
-                    {t('vsLastYear', { date: date(lyInv.date) })}: {short(lyInv.value)} · {t('unitsRefs', { qty: num(lyInv.qty), n: num(lyInv.skus) })}
-                    <span className="block font-semibold">
-                      <Delta fmt={fmt} cur={d.total} prev={lyInv.value} /> {t('yoyValue')} · <Delta fmt={fmt} cur={d.qty} prev={lyInv.qty} /> {t('yoyUnits')}
-                    </span>
-                  </p>
-                )} />
-              {/* Lo destruido en el año hasta el mes del informe; en pequeño, lo del propio mes */}
-              <Kpi tone="red" label={t('kpiDestroyed', { year: k?.year ?? '' })} value={k ? short(ytd(k.prevDates.length, cur, i => k.destroyed[i].value)) : pending}
-                sub={kpiSub(k ? t('destroyedSub', { qty: num(ytd(k.prevDates.length, cur, i => k.destroyed[i].qty)), month: fmt.monthCode(k.month), mv: short(k.destroyed[cur].value), mq: num(k.destroyed[cur].qty) }) : t('loading'))} />
-              <Kpi label={t('kpiPallets', { date: date(d.date) })} value={k ? num(k.pallets) : pending}
-                sub={kpiSub(k ? t('palletsSub', { n: num(k.noPallet) }) : t('loading'))} />
-              <Kpi label={t('kpiAds')} value={k ? (adsCur == null ? '–' : t('daysN', { n: num(adsCur) })) : pending}
-                sub={kpiSub(k ? t('adsSub', { ytd: adsOf(k.prevDates.length, cur) == null ? '–' : num(adsOf(k.prevDates.length, cur)!) }) : t('loading'))}
-                extra={k && adsLy != null && (
-                  <p className="text-[11px] text-gray-500 mt-1.5 pt-1.5 border-t border-gray-100">
-                    {t('vsLastYear', { date: fmt.monthName(k.prevDates[ly].substring(0, 7)) })}: {t('daysN', { n: num(adsLy) })} · <span className="font-semibold"><Delta fmt={fmt} cur={adsCur} prev={adsLy} invert /></span>
-                  </p>
-                )} />
-            </Grid>
+            <InventoryKpis fmt={fmt} d={d} an={an} kp={kp} />
             {an.error ? <ErrorBox message={an.error} />
               : an.loading || !an.data ? <Loading text={t('anLoading')} />
               : <InventoryBreakdown fmt={fmt} an={an.data} adsData={k} />}
@@ -228,6 +238,18 @@ export default function OperationalView({ fmt, inv, ar }: { fmt: Fmt; inv: Loade
 }
 
 // Análisis de inventario: valor por Location Code y compras de inventario (CHINA TRF)
+// Reporting > KPIs: los indicadores principales de cada informe, con un enlace al informe de origen
+export function KpisView({ fmt, month, inv, an, kp }: { fmt: Fmt; month: string; inv: Loaded; an: Loaded<Analysis>; kp: Loaded<InvKpis> }) {
+  const { t } = fmt;
+  return (
+    <div className="space-y-10">
+      <Section title={t('kpiInventory')} source={t('kpiInventorySource')}>
+        <Block state={inv} fmt={fmt}>{(d: any) => <InventoryKpis fmt={fmt} d={d} an={an} kp={kp} link={`/inventory-analysis?month=${month}`} />}</Block>
+      </Section>
+    </div>
+  );
+}
+
 export function InventoryAnalysisView({ fmt, month, inv, pur, an, pa, kp }: { fmt: Fmt; month: string; inv: Loaded; pur: Loaded; an: Loaded<Analysis>; pa: Loaded<Analysis>; kp: Loaded<InvKpis> }) {
   return (
     <div className="space-y-10">

@@ -5,7 +5,8 @@ import {
   Chart as ChartJS, BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend, Filler,
 } from 'chart.js';
 import { Bar, Line } from 'react-chartjs-2';
-import { AlertCircle } from 'lucide-react';
+import Link from 'next/link';
+import { AlertCircle, ArrowUpRight } from 'lucide-react';
 import type { Fmt } from './i18n';
 
 ChartJS.register(BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend, Filler);
@@ -41,10 +42,21 @@ export const Grid = ({ cols = 2, children }: { cols?: 2 | 3 | 4; children: React
 type Tone = 'main' | 'red' | 'green' | 'amber' | 'neutral';
 const TONE: Record<Tone, string> = { main: 'text-[#C8186C]', red: 'text-[#C0392B]', green: 'text-[#2E7D4F]', amber: 'text-[#B7791F]', neutral: 'text-gray-900' };
 
-export function Kpi({ label, value, sub, tone = 'neutral', highlight = false, extra }: { label: string; value: string; sub?: string; tone?: Tone; highlight?: boolean; extra?: React.ReactNode }) {
+// link: botón pequeño para abrir el informe del que sale el KPI
+export function Kpi({ label, value, sub, tone = 'neutral', highlight = false, extra, link }: {
+  label: string; value: string; sub?: string; tone?: Tone; highlight?: boolean; extra?: React.ReactNode; link?: { href: string; title: string };
+}) {
   return (
     <div className={`rpt-card bg-white rounded-xl p-4 border ${highlight ? 'border-[#C8186C]' : 'border-gray-200'}`}>
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 mb-2">{label}</p>
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">{label}</p>
+        {link && (
+          <Link href={link.href} title={link.title} aria-label={link.title}
+            className="rpt-noprint -mt-1 -mr-1 p-1 rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 shrink-0">
+            <ArrowUpRight size={15} />
+          </Link>
+        )}
+      </div>
       <p className={`text-2xl font-mono font-semibold ${TONE[tone]}`}>{value}</p>
       {sub && <p className="text-xs text-gray-500 mt-1">{sub}</p>}
       {extra}

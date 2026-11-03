@@ -6,6 +6,7 @@ export const LANGS: Lang[] = ['es', 'en', 'de'];
 const es = {
   title: 'Reporting mensual',
   closing: 'Cierre {month} · datos a {date}',
+  kpis: 'KPIs', openReport: 'Abrir {report}', kpiInventory: 'Inventario', kpiInventorySource: 'Desde Análisis Inventario (últimos datos calculados)',
   operational: 'Operacional', inventory: 'Análisis Inventario', management: 'Dirección', month: 'Mes',
   exportPdf: 'Exportar PDF', refresh: 'Actualizar datos', refreshing: 'Actualizando…',
   loading: 'Cargando…', selectCompany: 'Selecciona una empresa concreta en el menú lateral.',
@@ -96,6 +97,7 @@ type Dict = typeof es;
 const en: Dict = {
   title: 'Monthly reporting',
   closing: '{month} close · data as of {date}',
+  kpis: 'KPIs', openReport: 'Open {report}', kpiInventory: 'Inventory', kpiInventorySource: 'From Inventory Analysis (last calculated data)',
   operational: 'Operations', inventory: 'Inventory Analysis', management: 'Management', month: 'Month',
   exportPdf: 'Export PDF', refresh: 'Refresh data', refreshing: 'Refreshing…',
   loading: 'Loading…', selectCompany: 'Select a specific company in the side menu.',
@@ -184,6 +186,7 @@ const en: Dict = {
 const de: Dict = {
   title: 'Monatsreporting',
   closing: 'Abschluss {month} · Daten zum {date}',
+  kpis: 'KPIs', openReport: '{report} öffnen', kpiInventory: 'Bestand', kpiInventorySource: 'Aus Bestandsanalyse (zuletzt berechnete Daten)',
   operational: 'Operativ', inventory: 'Bestandsanalyse', management: 'Geschäftsführung', month: 'Monat',
   exportPdf: 'PDF exportieren', refresh: 'Daten aktualisieren', refreshing: 'Aktualisiere…',
   loading: 'Wird geladen…', selectCompany: 'Bitte im Seitenmenü eine einzelne Gesellschaft wählen.',
