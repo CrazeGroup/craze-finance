@@ -62,7 +62,7 @@ export function InventoryKpis({ fmt, d, an, kp, link }: { fmt: Fmt; d: any; an: 
   const ageLy = k && ly >= 0 ? k.stockAge?.[ly]?.days ?? null : null;
   const go = link ? { href: link, title: t('openReport', { report: t('inventory') }) } : undefined;
   return (
-      <Grid cols={5}>
+      <Grid cols={4}>
         <Kpi link={go} highlight tone="main" label={t('kpiInvValue', { date: date(d.date) })} value={short(d.total)} sub={t('unitsRefs', { qty: num(d.qty), n: num(d.nItems) })}
           extra={lyInv && (
             <p className="text-[11px] text-gray-500 mt-1.5 pt-1.5 border-t border-gray-100">
@@ -77,19 +77,27 @@ export function InventoryKpis({ fmt, d, an, kp, link }: { fmt: Fmt; d: any; an: 
           sub={kpiSub(k ? t('destroyedSub', { qty: num(ytd(k.prevDates.length, cur, i => k.destroyed[i].qty)), month: fmt.monthCode(k.month), mv: short(k.destroyed[cur].value), mq: num(k.destroyed[cur].qty) }) : t('loading'))} />
         <Kpi link={go} label={t('kpiPallets', { date: date(d.date) })} value={k ? num(k.pallets) : pending}
           sub={kpiSub(k ? t('palletsSub', { n: num(k.noPallet) }) : t('loading'))} />
-        <Kpi link={go} label={t('kpiAds')} value={k ? (adsCur == null ? '–' : t('daysN', { n: num(adsCur) })) : pending}
-          sub={kpiSub(k ? t('adsSub', { ytd: adsOf(k.prevDates.length, cur) == null ? '–' : num(adsOf(k.prevDates.length, cur)!) }) : t('loading'))}
-          extra={k && adsLy != null && (
-            <p className="text-[11px] text-gray-500 mt-1.5 pt-1.5 border-t border-gray-100">
-              {t('vsLastYear', { date: fmt.monthName(k.prevDates[ly].substring(0, 7)) })}: {t('daysN', { n: num(adsLy) })} · <span className="font-semibold"><Delta fmt={fmt} cur={adsCur} prev={adsLy} invert /></span>
-            </p>
-          )} />
-        <Kpi link={go} label={t('kpiAge', { date: date(d.date) })} value={k ? (ageCur == null ? '–' : t('daysN', { n: num(ageCur) })) : pending}
-        sub={kpiSub(k ? t('stockAgeSub', { qty: num(k.stockAge?.[cur]?.qty || 0) }) : t('loading'))}
-        extra={k && ageLy != null && (
-          <p className="text-[11px] text-gray-500 mt-1.5 pt-1.5 border-t border-gray-100">
-            {t('vsLastYear', { date: date(k.prevDates[ly]) })}: {t('daysN', { n: num(ageLy) })} · <span className="font-semibold"><Delta fmt={fmt} cur={ageCur} prev={ageLy} invert /></span>
-          </p>
+        {/* Un solo KPI con los dos ADS: lo vendido en el mes y la antigüedad del stock aún sin vender al cierre */}
+        <Kpi link={go} label={t('kpiAdsTitle')} value="" extra={(
+          <div className="grid grid-cols-2 gap-3 -mt-1">
+            {[
+              { label: t('kpiAds'), v: adsCur, ly: adsLy, lyLabel: k && ly >= 0 ? fmt.monthCode(k.prevDates[ly].substring(0, 7)) : '',
+                sub: k ? t('adsSub', { ytd: adsOf(k.prevDates.length, cur) == null ? '–' : num(adsOf(k.prevDates.length, cur)!) }) : '' },
+              { label: t('kpiAge', { date: fmt.shortDate(d.date) }), v: ageCur, ly: ageLy, lyLabel: k && ly >= 0 ? date(k.prevDates[ly]) : '',
+                sub: k ? t('stockAgeSub', { qty: num(k.stockAge?.[cur]?.qty || 0) }) : '' },
+            ].map(x => (
+              <div key={x.label}>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{x.label}</p>
+                <p className="text-2xl font-mono font-semibold text-gray-900">{k ? (x.v == null ? '–' : t('daysN', { n: num(x.v) })) : pending}</p>
+                <p className="text-[11px] text-gray-500 mt-0.5">{kpiSub(k ? x.sub : t('loading'))}</p>
+                {k && x.ly != null && (
+                  <p className="text-[11px] text-gray-500 mt-1 pt-1 border-t border-gray-100">
+                    vs {x.lyLabel}: {t('daysN', { n: num(x.ly) })} · <span className="font-semibold"><Delta fmt={fmt} cur={x.v} prev={x.ly} invert /></span>
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
         )} />
     </Grid>
   );

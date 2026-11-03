@@ -57,7 +57,7 @@ export function Kpi({ label, value, sub, tone = 'neutral', highlight = false, ex
           </Link>
         )}
       </div>
-      <p className={`text-2xl font-mono font-semibold ${TONE[tone]}`}>{value}</p>
+      {value && <p className={`text-2xl font-mono font-semibold ${TONE[tone]}`}>{value}</p>}
       {sub && <p className="text-xs text-gray-500 mt-1">{sub}</p>}
       {extra}
     </div>
