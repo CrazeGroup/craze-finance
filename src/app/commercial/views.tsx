@@ -2,8 +2,8 @@
 
 import { Fragment, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { FileDown } from 'lucide-react';
-import { Ctx, Facts, Filters, groupBy, keyFn, PARAMS, ParamId, pctVar, projection, records, totals, type Pair } from './engine';
+import { FileDown, MinusSquare, PlusSquare } from 'lucide-react';
+import { Ctx, Facts, Filters, groupBy, keyFn, PARAMS, ParamId, pctVar, projection, records, totals, type Pair, type Rec } from './engine';
 import { Bars, Card, COLORS, Donut, fmtMoney, fmtNum, fmtPct, fmtShare, Gauge, Kpi, LineArea, tone } from './ui';
 
 // Páginas de Commercial Analysis (mismas que el Power BI): YoY Status, Sales Performance, Budget (Summary, Analysis,
@@ -82,11 +82,9 @@ export function YoYStatus({ ctx, facts, filters }: P) {
 // ---------- Sales Performance ----------
 // Como la página del Power BI (sin filtro de fecha): el año entero, con los pedidos abiertos de meses futuros
 export function SalesPerformance({ ctx, facts, filters }: P) {
-  const [param, setParam] = useState<ParamId>('customer');
   const recs = useMemo(() => records(ctx, facts, filters, 'full'), [ctx, facts, filters]);
   const months = Array.from({ length: 12 }, (_, i) => i + 1).filter(m => !filters.months.length || filters.months.includes(m));
   const byMonth = groupBy(recs, r => String(r.m));
-  const detail = sortedEntries(groupBy(recs, keyFn(ctx, param)), p => p.cur.sIn);
   const t = totals(recs);
   const cur = ctx.currency;
   // Δ hoy: pedidos de venta con Order Date de hoy, por el mes de su Requested Delivery Date
@@ -145,33 +143,137 @@ export function SalesPerformance({ ctx, facts, filters }: P) {
           ]} />
         </Card>
       </div>
-      <Card title="Detalle (año completo)" right={<div className="flex items-center gap-2"><ParamSelect value={param} onChange={setParam} />
-        <ExportBtn onClick={() => exportRows(`Sales Performance ${param}`, detail.map(([k, p]) => ({
-          [PARAMS.find(x => x.id === param)!.label]: k, 'Sell-in Prev. Year': p.prev.sIn, 'Sell-in Year': p.cur.sIn, Budget: p.cur.bdg,
-          'Units Prev. Year': p.prev.sInQty, 'Units Year': p.cur.sInQty, 'Budget Units': p.cur.bdgQty,
-        })))} /></div>}>
-        <div className="overflow-x-auto max-h-[600px]">
-          <table className="w-full text-[12px]">
-            <thead className="sticky top-0 bg-white"><tr className="border-b border-gray-200">
-              <th className={`${th} text-left`}>{PARAMS.find(x => x.id === param)!.label}</th>
-              <th className={th}>Sell-in Prev. Year</th><th className={th}>%chg</th><th className={th}>Sell-in Year</th><th className={th}>%chg vs Bdg</th><th className={th}>Budget</th>
-              <th className={th}>Units Prev. Year</th><th className={th}>%chg</th><th className={th}>Units Year</th><th className={th}>%chg vs Bdg</th><th className={th}>Budget Units</th>
-            </tr></thead>
-            <tbody>
-              {detail.map(([k, p]) => (
-                <tr key={k} className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="py-1.5 px-2 max-w-[340px] truncate" title={k}>{k}</td>
-                  <td className={td}>{fmtNum(p.prev.sIn)}</td><td className={td}><Var v={pctVar(p.cur.sIn, p.prev.sIn)} /></td>
-                  <td className={`${td} font-semibold`}>{fmtNum(p.cur.sIn)}</td><td className={td}><Var v={pctVar(p.cur.sIn, p.cur.bdg)} /></td><td className={td}>{fmtNum(p.cur.bdg)}</td>
-                  <td className={td}>{fmtNum(p.prev.sInQty)}</td><td className={td}><Var v={pctVar(p.cur.sInQty, p.prev.sInQty)} /></td>
-                  <td className={`${td} font-semibold`}>{fmtNum(p.cur.sInQty)}</td><td className={td}><Var v={pctVar(p.cur.sInQty, p.cur.bdgQty)} /></td><td className={td}>{fmtNum(p.cur.bdgQty)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      <DetailTree ctx={ctx} recs={recs} />
     </div>
+  );
+}
+
+// ---------- Detalle por varias características (como la matriz del Power BI) ----------
+
+// Nodo de la matriz: grupo de un nivel con sus importes y, si hay más niveles, sus subgrupos
+type TreeNode = { key: string; path: string; p: Pair; children: TreeNode[] };
+function buildTree(ctx: Ctx, recs: Rec[], params: ParamId[], parent = ''): TreeNode[] {
+  if (!params.length) return [];
+  const key = keyFn(ctx, params[0]);
+  const by = new Map<string, Rec[]>();
+  for (const r of recs) {
+    const k = key(r);
+    const list = by.get(k);
+    if (list) list.push(r); else by.set(k, [r]);
+  }
+  return Array.from(by.entries())
+    .map(([k, list]) => {
+      const path = parent ? `${parent}\u0001${k}` : k;
+      return { key: k, path, p: totals(list), children: buildTree(ctx, list, params.slice(1), path) };
+    })
+    .sort((a, b) => b.p.cur.sIn - a.p.cur.sIn);
+}
+
+// Detalle (año completo): se eligen una o varias características en orden (1.º, 2.º…), como los botones del Power BI;
+// cada fila del primer nivel se despliega en el siguiente
+function DetailTree({ ctx, recs }: { ctx: Ctx; recs: Rec[] }) {
+  const [params, setParams] = useState<ParamId[]>(['customer']);
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const tree = useMemo(() => buildTree(ctx, recs, params), [ctx, recs, params]);
+  const t = totals(recs);
+  const label = (id: ParamId) => PARAMS.find(x => x.id === id)!.label;
+  const toggleParam = (id: ParamId) => {
+    setParams(prev => (prev.includes(id) ? (prev.length > 1 ? prev.filter(x => x !== id) : prev) : [...prev, id]));
+    setOpen(new Set());
+  };
+  const toggleRow = (path: string) => setOpen(prev => {
+    const next = new Set(prev);
+    if (next.has(path)) next.delete(path); else next.add(path);
+    return next;
+  });
+  const allPaths = (nodes: TreeNode[]): string[] => nodes.flatMap(n => (n.children.length ? [n.path, ...allPaths(n.children)] : []));
+  // Filas visibles: cada nodo y, si está desplegado, sus hijos
+  const visible: { n: TreeNode; depth: number }[] = [];
+  const walk = (nodes: TreeNode[], depth: number) => {
+    for (const n of nodes) {
+      visible.push({ n, depth });
+      if (n.children.length && open.has(n.path)) walk(n.children, depth + 1);
+    }
+  };
+  walk(tree, 0);
+  // Excel: todas las filas del último nivel, con una columna por característica
+  const exportAll = () => {
+    const rows: Record<string, unknown>[] = [];
+    const add = (nodes: TreeNode[], keys: string[]) => {
+      for (const n of nodes) {
+        const ks = [...keys, n.key];
+        if (n.children.length) { add(n.children, ks); continue; }
+        rows.push({
+          ...Object.fromEntries(params.map((id, i) => [label(id), ks[i]])),
+          'Sell-in Prev. Year': n.p.prev.sIn, 'Sell-in Year': n.p.cur.sIn, Budget: n.p.cur.bdg,
+          'Units Prev. Year': n.p.prev.sInQty, 'Units Year': n.p.cur.sInQty, 'Budget Units': n.p.cur.bdgQty,
+        });
+      }
+    };
+    add(tree, []);
+    exportRows(`Sales Performance ${params.join('-')}`, rows);
+  };
+  const nums = (p: Pair) => (
+    <>
+      <td className={td}>{fmtNum(p.prev.sIn)}</td><td className={td}><Var v={pctVar(p.cur.sIn, p.prev.sIn)} /></td>
+      <td className={`${td} font-semibold`}>{fmtNum(p.cur.sIn)}</td><td className={td}><Var v={pctVar(p.cur.sIn, p.cur.bdg)} /></td><td className={td}>{fmtNum(p.cur.bdg)}</td>
+      <td className={td}>{fmtNum(p.prev.sInQty)}</td><td className={td}><Var v={pctVar(p.cur.sInQty, p.prev.sInQty)} /></td>
+      <td className={`${td} font-semibold`}>{fmtNum(p.cur.sInQty)}</td><td className={td}><Var v={pctVar(p.cur.sInQty, p.cur.bdgQty)} /></td><td className={td}>{fmtNum(p.cur.bdgQty)}</td>
+    </>
+  );
+  return (
+    <Card title="Detalle (año completo)" right={<div className="flex items-center gap-2">
+      {params.length > 1 && (
+        <>
+          <button onClick={() => setOpen(new Set(allPaths(tree)))} className="text-xs font-semibold text-gray-600 hover:text-gray-900">Desplegar todo</button>
+          <button onClick={() => setOpen(new Set())} className="text-xs font-semibold text-gray-600 hover:text-gray-900">Plegar todo</button>
+        </>
+      )}
+      <ExportBtn onClick={exportAll} />
+    </div>}>
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-11 gap-1.5 mb-3">
+        {PARAMS.map(x => {
+          const i = params.indexOf(x.id);
+          return (
+            <button key={x.id} onClick={() => toggleParam(x.id)} title={i >= 0 ? `Nivel ${i + 1}` : 'Añadir como siguiente nivel'}
+              className={`relative px-2 py-1.5 rounded-md text-xs font-semibold border ${i >= 0 ? 'bg-black text-white border-black' : 'bg-gray-100 text-gray-700 border-gray-200 hover:border-gray-400'}`}>
+              {x.label}
+              {i >= 0 && params.length > 1 && <span className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-[#C8186C] text-[10px] leading-4 text-white">{i + 1}</span>}
+            </button>
+          );
+        })}
+      </div>
+      <div className="overflow-x-auto max-h-[600px]">
+        <table className="w-full text-[12px]">
+          <thead className="sticky top-0 bg-white"><tr className="border-b border-gray-200">
+            <th className={`${th} text-left`}>{params.map(label).join(' › ')}</th>
+            <th className={th}>Sell-in Prev. Year</th><th className={th}>%chg</th><th className={th}>Sell-in Year</th><th className={th}>%chg vs Bdg</th><th className={th}>Budget</th>
+            <th className={th}>Units Prev. Year</th><th className={th}>%chg</th><th className={th}>Units Year</th><th className={th}>%chg vs Bdg</th><th className={th}>Budget Units</th>
+          </tr></thead>
+          <tbody>
+            {visible.map(({ n, depth }) => (
+              <tr key={n.path} className={`border-b border-gray-100 hover:bg-gray-50 ${depth === 0 && params.length > 1 ? 'font-semibold' : ''}`}>
+                <td className="py-1.5 px-2 max-w-[380px]" title={n.key}>
+                  <div className="flex items-center gap-1.5 truncate" style={{ paddingLeft: depth * 18 }}>
+                    {n.children.length ? (
+                      <button onClick={() => toggleRow(n.path)} className="text-gray-500 hover:text-gray-900 shrink-0" aria-label={open.has(n.path) ? 'Plegar' : 'Desplegar'}>
+                        {open.has(n.path) ? <MinusSquare size={14} /> : <PlusSquare size={14} />}
+                      </button>
+                    ) : params.length > 1 ? <span className="w-[14px] shrink-0" /> : null}
+                    <span className="truncate">{n.key}</span>
+                  </div>
+                </td>
+                {nums(n.p)}
+              </tr>
+            ))}
+          </tbody>
+          <tfoot className="sticky bottom-0"><tr className="border-t-2 border-gray-300 font-bold bg-gray-50">
+            <td className="py-1.5 px-2">Total</td>
+            {nums(t)}
+          </tr></tfoot>
+        </table>
+      </div>
+    </Card>
   );
 }
 
