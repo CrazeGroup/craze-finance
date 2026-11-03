@@ -124,6 +124,44 @@ async function setLineExtras(ctx: BcContext, side: 'sales' | 'purchase', docNo: 
     `o indícalo en el ajuste ${side === 'sales' ? 'dforceSalesLinesService' : 'dforcePurchaseLinesService'}) o rellénalos en BC.`];
 }
 
+// ---------- Ignore Custom Qty. Fields ----------
+// Los artículos de revista tienen múltiplo de venta (05995_2608: 30) y BC rechaza las líneas con otras cantidades
+// ("The multiple quantity for product … is 30") salvo que la cabecera tenga activado "Ignore Custom Qty. Fields"
+// (AIT_Ignore_Custom_Qty_Fields, campo de extensión que la API v2 no tiene). Se activa antes de añadir las líneas por
+// una página de cabecera de venta publicada en OData que lo tenga (ajuste dforceSalesHeaderService o por nombre).
+const IGNORE_QTY = /ignore_?custom_?qty/i;
+
+async function salesHeaderServices(ctx: BcContext, kind: 'invoice' | 'credit') {
+  const configured = await readSetting<Record<string, string>>('dforceSalesHeaderService', {});
+  if (configured[kind]) return [configured[kind]];
+  const root = ctx.odataCompanyBase.replace(/\/Company\(.*$/, '');
+  const res = await fetch(root, { headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json' } });
+  if (!res.ok) return [];
+  const list: string[] = ((await res.json()).value || []).map((s: any) => s.name);
+  const own = kind === 'invoice' ? /invoice/i : /cr(edit)?_?memo/i;
+  return list.filter(n => /^sales_?(invoice|cr(edit)?_?memo)/i.test(n) && own.test(n) && !/line|posted|archiv/i.test(n));
+}
+
+async function ignoreCustomQty(ctx: BcContext, kind: 'invoice' | 'credit', no: string) {
+  const tried: string[] = [];
+  for (const name of await salesHeaderServices(ctx, kind)) {
+    const base = `${ctx.odataCompanyBase}/${name}`;
+    try {
+      const row = (await odataGet(ctx, odataUrl(base, { $filter: `No eq '${q(no)}'` }))).value?.[0];
+      const field = row && Object.keys(row).find(k => IGNORE_QTY.test(k));
+      if (!row) { tried.push(`${name}: no encuentra ${no}`); continue; }
+      if (!field) { tried.push(`${name}: sin el campo Ignore Custom Qty. Fields`); continue; }
+      if (row[field] === true) return;
+      const link = row['@odata.editLink'];
+      await bcRequest('PATCH', /^https?:/.test(link) ? link : `${ctx.odataCompanyBase}/${link}`, ctx.token, { [field]: true });
+      return;
+    } catch (e) { tried.push(`${name}: ${short(e)}`); }
+  }
+  const page = kind === 'invoice' ? '43 "Sales Invoice"' : '44 "Sales Credit Memo"';
+  throw new Error(`no se ha podido activar "Ignore Custom Qty. Fields" en ${no} (${tried.join(' · ') || 'no hay ninguna página publicada'}). ` +
+    `Publica en "Servicios web" la página ${page} (nombre ${kind === 'invoice' ? 'SalesInvoice' : 'SalesCreditMemo'}).`);
+}
+
 // ---------- Documentos ----------
 
 export type DocInput = { kind: Exclude<DForceKind, 'journal'>; ref: string; date: string; lines: (SalesLine | PurchaseLine)[] };
@@ -139,6 +177,8 @@ export async function createDocument(ctx: BcContext, input: DocInput, files: Att
   const headUrl = `${ctx.apiBase}/${d.entity}(${id})`;
   const extras = new Map<number, Extras>();
   try {
+    // Antes de las líneas: sin "Ignore Custom Qty. Fields" BC exige el múltiplo de venta de cada revista
+    if (input.kind !== 'purchase') await ignoreCustomQty(ctx, input.kind, no);
     // Las líneas estándar que BC añade al poner el cliente/proveedor no son de la Gutschrift: fuera
     const auto = await bcRequest('GET', `${headUrl}/${d.lines}?$select=id`, ctx.token);
     for (const l of auto?.value || []) await bcRequest('DELETE', `${headUrl}/${d.lines}(${l.id})`, ctx.token);

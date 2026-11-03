@@ -40,6 +40,14 @@ export async function GET(req: Request) {
     }
     // ?metadata=<entidad>[&api=custom|v2]: definición $metadata de la entidad (clave, campos y si se puede insertar/modificar)
     const metadata = searchParams.get('metadata');
+    // ?metadata=<servicio>&api=odata: campos de un servicio web OData (páginas publicadas), aunque no tenga filas
+    if (metadata && searchParams.get('api') === 'odata') {
+      const res = await fetch(`${ctx.odataCompanyBase.replace(/\/Company\(.*$/, '')}/$metadata`, { headers: { Authorization: `Bearer ${ctx.token}` } });
+      const xml = await res.text();
+      const entity = xml.match(new RegExp(`<EntityType Name="${metadata}"[\\s\\S]*?</EntityType>`, 'i'))?.[0] || '';
+      const fields = Array.from(entity.matchAll(/<Property Name="([^"]+)"/g)).map(m => m[1]);
+      return NextResponse.json({ company: ctx.companyName, status: res.status, service: metadata, fields });
+    }
     if (metadata) {
       const base = (searchParams.get('api') === 'v2' ? ctx.apiBase : ctx.customApiBase).replace(/\/companies\(.*$/, '');
       const res = await fetch(`${base}/$metadata`, { headers: { Authorization: `Bearer ${ctx.token}` } });
