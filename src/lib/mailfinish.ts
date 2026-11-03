@@ -199,24 +199,46 @@ export async function suggestOrders(ctx: BcContext, gadgets: ExcelGadget[], date
 
 export type OrderInput = { output: string; location: string; quantity: number; input: string; inputLocation: string; date: string };
 
-// Assembly Order sin registrar (API v2): cabecera con el gadget y una línea con la revista (Quantity per 1).
+// La API v2 assemblyOrders es de solo lectura ("Entity does not support insert"): las órdenes se crean por la página
+// 900 "Assembly Order" publicada como servicio web OData (nombre "AssemblyOrder", o el del ajuste
+// mailfinishAssemblyService), que expone sus líneas (subpágina 901) como "<servicio>Lines".
+const ASSEMBLY_SETUP = 'BC no permite crear Assembly Orders por la API estándar. Publica en BC la página 900 "Assembly Order" ' +
+  'como servicio web (Servicios web → Nuevo: Tipo de objeto Página, Id. de objeto 900, Nombre del servicio AssemblyOrder, Publicado).';
+
+async function assemblyService(ctx: BcContext) {
+  const root = ctx.odataCompanyBase.replace(/\/Company\(.*$/, '');
+  const res = await fetch(root, { headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json' } });
+  const list: string[] = res.ok ? ((await res.json()).value || []).map((s: any) => s.name) : [];
+  const configured = await readSetting<string>('mailfinishAssemblyService', '');
+  const head = configured || list.find(n => /^assembly_?order$/i.test(n)) || list.find(n => /^assembly_?orders?(_card)?$/i.test(n));
+  if (!head || (list.length && !list.includes(head))) throw new Error(ASSEMBLY_SETUP);
+  const lines = list.find(n => n !== head && n.toLowerCase().startsWith(head.toLowerCase()) && /line/i.test(n));
+  if (!lines) throw new Error(`El servicio web ${head} no expone las líneas de la orden: publica la página 900 "Assembly Order" (con su subpágina de líneas).`);
+  return { head: `${ctx.odataCompanyBase}/${head}`, lines: `${ctx.odataCompanyBase}/${lines}` };
+}
+
+// Assembly Order sin registrar: cabecera con el gadget y una línea con la revista (Quantity per 1).
 // Las líneas que BC copia de la lista de materiales del gadget se quitan antes.
 export async function createAssemblyOrder(ctx: BcContext, o: OrderInput) {
-  const head = await bcRequest('POST', `${ctx.apiBase}/assemblyOrders`, ctx.token, {
-    itemNumber: o.output, quantity: o.quantity, locationCode: o.location, postingDate: o.date, dueDate: o.date,
-  });
-  const id: string = head.id, no: string = head.number;
-  const headUrl = `${ctx.apiBase}/assemblyOrders(${id})`;
+  const svc = await assemblyService(ctx);
+  const head = await bcRequest('POST', svc.head, ctx.token, { Item_No: o.output, Posting_Date: o.date });
+  const no: string = head.No;
+  const docType = encodeURIComponent(String(head.Document_Type || 'Order').replace(/'/g, "''"));
+  const headUrl = `${svc.head}(Document_Type='${docType}',No='${encodeURIComponent(q(no))}')`;
   try {
-    const auto = await bcRequest('GET', `${headUrl}/assemblyOrderLines?$select=id`, ctx.token);
-    for (const l of auto?.value || []) await bcRequest('DELETE', `${headUrl}/assemblyOrderLines(${l.id})`, ctx.token);
-    await bcRequest('POST', `${headUrl}/assemblyOrderLines`, ctx.token, {
-      lineType: 'Item', lineObjectNumber: o.input, quantityPer: 1, locationCode: o.inputLocation,
+    // La location y la cantidad después del artículo (al validarlas BC recalcula las líneas y las fechas)
+    await bcRequest('PATCH', headUrl, ctx.token, { Location_Code: o.location, Quantity: o.quantity, Due_Date: o.date });
+    const auto = await bcRequest('GET', odataUrl(svc.lines, { $filter: `Document_No eq '${q(no)}'`, $select: 'Document_Type,Document_No,Line_No' }), ctx.token);
+    for (const l of auto?.value || []) {
+      await bcRequest('DELETE', `${svc.lines}(Document_Type='${encodeURIComponent(l.Document_Type)}',Document_No='${encodeURIComponent(q(no))}',Line_No=${l.Line_No})`, ctx.token);
+    }
+    await bcRequest('POST', svc.lines, ctx.token, {
+      Document_Type: head.Document_Type || 'Order', Document_No: no, Type: 'Item', No: o.input, Location_Code: o.inputLocation, Quantity_per: 1,
     });
   } catch (e) {
     // No dejar una orden a medias
     await bcRequest('DELETE', headUrl, ctx.token).catch(() => {});
     throw e;
   }
-  return { id, no };
+  return { id: String(head.SystemId || ''), no };
 }
