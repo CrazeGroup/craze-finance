@@ -451,7 +451,10 @@ export function propose(text: string, history: HistoryInvoice[], examples: Examp
     .map(e => ({ e, s: similarity(t, e.text) }));
   const best = byItem ? scored.find(x => x.e.number === byItem.number) ?? null
     : scored.reduce<{ e: Example; s: number } | null>((a, b) => (!a || b.s > a.s + 0.02 ? b : a), null);
-  const model = byItem || (best && history.find(h => h.number === best.e.number)) || history[0];
+  // Sin PDF parecido, la más reciente (sin facturas de acuerdo si noAgreements: las de un artículo de los ejemplos de acuerdo)
+  const agreementItems = new Set(examples.map(e => ownItem(history.find(h => h.number === e.number), flat(e.text))).filter(Boolean));
+  const newest = noAgreements ? history.find(h => !h.lines.some(l => agreementItems.has(l.number))) : history[0];
+  const model = byItem || (best && history.find(h => h.number === best.e.number)) || newest || history[0];
   const oldText = best && model.number === best.e.number ? flat(best.e.text) : '';
 
   // Nº de factura y fechas: en el mismo sitio que en el PDF del modelo, si no por las etiquetas habituales
@@ -517,6 +520,9 @@ export function propose(text: string, history: HistoryInvoice[], examples: Examp
     if (found && found !== l.number) {
       itemFromPdf = { number: found, model: l.number, modelDescription: l.description };
       l.number = found;
+    } else if (m && !found && !byItem && !noAgreements) {
+      // Factura de acuerdo como modelo, pero el PDF nuevo no trae ni su acuerdo ni otro en su sitio: no es de acuerdo
+      return propose(text, history, examples, true);
     }
   }
 
@@ -541,8 +547,12 @@ export function propose(text: string, history: HistoryInvoice[], examples: Examp
 // - promociones con "Rebate" o "Flexible" → AA-00069 FLEXIBLE ASIN BASED (las demás siguen al modelo: AA-00108…)
 // - Amazon Ads (AA-00015): inversión del sujeto pasivo, 19% SERVICES con VAT Bus. Posting Group UE
 const AMZ_FLEXIBLE = { number: 'AA-00069', description: 'AMZ AGREEMENT - FLEXIBLE ASIN BASED (Rebate Per Unit)', taxCode: '19% DEBIT NOTE' };
-function amazonRules(s: OcrSuggestion, text: string, vendorName: string) {
+function amazonRules(s: OcrSuggestion, text: string, vendorName: string, warnings: string[]) {
   if (!/amazon/i.test(vendorName)) return;
+  const rma = flat(text).match(/RMA Number:?\s*(\S+)/i);
+  if (rma || /Return ID/i.test(text)) {
+    warnings.push(`Devolución de distribuidor de Amazon${rma ? ` (RMA ${rma[1]})` : ''}: no hay ninguna registrada como factura de compra, así que las líneas no salen de una factura anterior. Revisa artículo e IVA.`);
+  }
   const items = s.lines.filter(l => l.lineType !== 'Comment');
   if (items.length === 1 && /rebate|flexible/i.test(text) && items[0].number !== AMZ_FLEXIBLE.number) {
     Object.assign(items[0], { lineType: 'Item', ...AMZ_FLEXIBLE });
@@ -590,7 +600,7 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
       if (suggestion) suggestion.comment += ` El PDF trae ${pdfItem.number} donde las facturas de acuerdo traen su artículo (${pdfItem.model}) y no es un artículo de BC: si es un acuerdo nuevo, crea el artículo ${pdfItem.number}.`;
     }
   }
-  if (suggestion && vendor) amazonRules(suggestion, text, vendor.name);
+  if (suggestion && vendor) amazonRules(suggestion, text, vendor.name, warnings);
   if (suggestion?.documentType === 'credit_note') warnings.push('Parece un abono (credit note): aquí solo se crean facturas; regístralo como Credit Memo en BC.');
   if (vendor && currency && currency !== vendor.currency) {
     warnings.push(`La factura está en ${currency} y el proveedor ${vendor.number} en ${vendor.currency}: ¿es otro proveedor (p. ej. la ficha en ${currency})?`);
