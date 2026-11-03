@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import type { Fmt } from './i18n';
+import { companyLabel } from '@/contexts/CompanyContext';
 import { BarChart, C, Card, ErrorBox, Grid, Kpi, Loading, Neg, Section, Signed, StepLineChart, Table } from './ui';
 import type { Loaded } from './OperationalView';
 
@@ -278,10 +279,10 @@ export function BwaSection({ fmt, bwa, company, month }: { fmt: Fmt; bwa: Loaded
             </div>
             <div className="rpt-noprint flex flex-wrap gap-2">
               {[...companyCols, 'CRAZE Intercompany'].map(c => (
-                <button key={c} onClick={() => setCol(c)} className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${selected === c ? 'bg-[#24305E] text-white border-[#24305E]' : 'bg-white text-gray-700 border-gray-300'}`}>{c}</button>
+                <button key={c} onClick={() => setCol(c)} className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${selected === c ? 'bg-[#24305E] text-white border-[#24305E]' : 'bg-white text-gray-700 border-gray-300'}`}>{companyLabel(c)}</button>
               ))}
             </div>
-            <Card title={selected} sub={`· ${period === 'ytd' ? t('periodYtd', { month: monthOnly }) : t('periodMonth', { month: monthName(month) })}`}>
+            <Card title={companyLabel(selected)} sub={`· ${period === 'ytd' ? t('periodYtd', { month: monthOnly }) : t('periodMonth', { month: monthName(month) })}`}>
               <Table
                 cols={[{ label: t('bwaLine') }, { label: t('amount'), align: 'right', mono: true }, { label: t('pctSales'), align: 'right', mono: true }]}
                 rowClass={i => (d.lines[i].bold ? 'bg-gray-100 font-semibold' : '')}
@@ -291,7 +292,7 @@ export function BwaSection({ fmt, bwa, company, month }: { fmt: Fmt; bwa: Loaded
                 })}
               />
             </Card>
-            <Card title={t('yoyTitle', { company: yoyCompany })} sub={t('yoySub', { month: monthOnly })}>
+            <Card title={t('yoyTitle', { company: companyLabel(yoyCompany) })} sub={t('yoySub', { month: monthOnly })}>
               <Table
                 cols={[{ label: '' }, { label: month.substring(0, 4), align: 'right', mono: true }, { label: String(Number(month.substring(0, 4)) - 1), align: 'right', mono: true }, { label: 'Δ', align: 'right', mono: true }, { label: 'Δ %', align: 'right', mono: true }]}
                 rowClass={i => (d.lines[i].bold ? 'bg-gray-100 font-semibold' : '')}
@@ -319,7 +320,7 @@ const CATS = ['markant', 'customers', 'china', 'paymentRuns', 'customs', 'banks'
 export function CashflowSection({ fmt, cf, company }: { fmt: Fmt; cf: Loaded; company: string }) {
   const { t, eur, short, date, monthName } = fmt;
   return (
-    <Section title={t('cfTitle', { company })} source={cf.data ? t('cfSource', { date: date(cf.data.today), limit: short(cf.data.limit) }) : undefined}>
+    <Section title={t('cfTitle', { company: companyLabel(company) })} source={cf.data ? t('cfSource', { date: date(cf.data.today), limit: short(cf.data.limit) }) : undefined}>
       <Block state={cf} fmt={fmt}>{(d: any) => {
         const below = d.min.balance - d.limit;
         const months = d.months.slice(0, 6);

@@ -1,11 +1,11 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Chart as ChartJS, BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend, Filler,
 } from 'chart.js';
 import { Bar, Line } from 'react-chartjs-2';
-import { RefreshCw, Sparkles, AlertCircle } from 'lucide-react';
+import { RefreshCw, Sparkles, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react';
 import type { Fmt } from './i18n';
 
 ChartJS.register(BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend, Filler);
@@ -210,24 +210,33 @@ export function KeyPoints({ title, state, onRegenerate, fmt }: {
   state: { points: string[] | null; loading: boolean; error: string | null; waiting: boolean };
   onRegenerate: () => void;
 }) {
+  // Plegados por defecto; en el PDF salen siempre
+  const [open, setOpen] = useState(false);
   return (
     <div className="rpt-card bg-white rounded-xl border border-gray-200 p-5">
-      <div className="flex items-center justify-between gap-3 mb-3">
-        <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#C8186C]">{title}</p>
+      <div className="flex items-center justify-between gap-3">
+        <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+          className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.12em] text-[#C8186C] hover:opacity-80">
+          <span className="rpt-noprint">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
+          {title}
+          {!open && state.points && <span className="rpt-noprint font-semibold normal-case tracking-normal text-gray-400">· {state.points.length}</span>}
+        </button>
         <button onClick={onRegenerate} disabled={state.loading || state.waiting}
           className="rpt-noprint flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-900 disabled:opacity-40">
           <RefreshCw size={13} className={state.loading ? 'animate-spin' : ''} /> {fmt.t('regenerate')}
         </button>
       </div>
-      {state.error ? <ErrorBox message={state.error} />
-        : state.waiting ? <p className="text-sm text-gray-500">{fmt.t('aiWaiting')}</p>
-        : state.loading || !state.points ? <Loading text={fmt.t('aiGenerating')} />
-        : (
-          <ol className="list-decimal pl-5 space-y-2 text-[14px] text-gray-800 leading-relaxed max-w-5xl">
-            {state.points.map((p, i) => <li key={i}><RichText text={p} /></li>)}
-          </ol>
-        )}
-      <p className="mt-3 flex items-center gap-1.5 text-[11px] text-gray-400"><Sparkles size={12} /> {fmt.t('aiNote')}</p>
+      <div className={`mt-3 ${open ? '' : 'hidden rpt-print-show'}`}>
+        {state.error ? <ErrorBox message={state.error} />
+          : state.waiting ? <p className="text-sm text-gray-500">{fmt.t('aiWaiting')}</p>
+          : state.loading || !state.points ? <Loading text={fmt.t('aiGenerating')} />
+          : (
+            <ol className="list-decimal pl-5 space-y-2 text-[14px] text-gray-800 leading-relaxed max-w-5xl">
+              {state.points.map((p, i) => <li key={i}><RichText text={p} /></li>)}
+            </ol>
+          )}
+        <p className="mt-3 flex items-center gap-1.5 text-[11px] text-gray-400"><Sparkles size={12} /> {fmt.t('aiNote')}</p>
+      </div>
     </div>
   );
 }

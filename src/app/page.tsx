@@ -88,6 +88,11 @@ export default function Dashboard() {
               Dashboard Contable
             </h1>
             <p className="text-gray-500 mt-2 font-medium">Visión global de cobros, pagos y métricas financieras.</p>
+            {selectedCompany === 'ALL' && (
+              <p className="text-xs text-gray-500 mt-1">
+                <span className="font-bold text-gray-800">CRAZE Consolidated</span> · todas las empresas en EUR (tipo de cambio de CRAZE GmbH), sin cobros ni pagos intercompañía; el disponible se suma por divisa
+              </p>
+            )}
           </div>
           <div className="text-right">
             <button onClick={syncNow} disabled={!!syncing}
@@ -99,6 +104,11 @@ export default function Dashboard() {
             </p>
           </div>
         </header>
+        {kpis?.fxErrors?.length > 0 && (
+          <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            Sin tipo de cambio a EUR (esos importes se suman sin convertir): {kpis.fxErrors.join(' · ')}
+          </div>
+        )}
         {syncErrors.length > 0 && (
           <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
             Algunos pasos no se han podido sincronizar: {syncErrors.join(' · ')}

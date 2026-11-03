@@ -16,6 +16,9 @@ type CompanyContextType = {
   setSelectedCompany: (company: string) => void;
 };
 
+// Nombre visible de cada empresa (el identificador interno no cambia): CRAZE siempre en mayúsculas y la alemana como CRAZE GmbH
+export const companyLabel = (company: string) => (company === 'CRAZE' ? 'CRAZE GmbH' : company.replace(/^craze\b/i, 'CRAZE'));
+
 const CompanyContext = createContext<CompanyContextType | undefined>(undefined);
 
 // Cada pestaña del navegador trabaja con su propia empresa: se guarda en sessionStorage (por pestaña) y en localStorage

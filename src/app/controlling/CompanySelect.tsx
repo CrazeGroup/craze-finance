@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { COMPANIES } from '@/contexts/CompanyContext';
+import { COMPANIES, companyLabel } from '@/contexts/CompanyContext';
 
 // Selector de empresa de cada informe de Controlling (como el de BWA (Power BI)). "CRAZE Consolidated" suma todas las
 // empresas (en EUR cuando el informe lo convierte); arranca con la empresa del menú.
@@ -22,7 +22,7 @@ export default function CompanySelect({ value, onChange, allowConsolidated = tru
       <select value={value} onChange={e => onChange(e.target.value)}
         className="block mt-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-900 bg-white normal-case tracking-normal">
         {allowConsolidated && <option value={CONSOLIDATED}>{CONSOLIDATED}</option>}
-        {REPORT_COMPANIES.map(c => <option key={c} value={c}>{c}</option>)}
+        {REPORT_COMPANIES.map(c => <option key={c} value={c}>{companyLabel(c)}</option>)}
       </select>
     </label>
   );

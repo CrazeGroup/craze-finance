@@ -336,7 +336,7 @@ export function companyCurrency(company: string) {
 }
 
 // Tipo de cambio a EUR (EUR por 1 unidad de la divisa) de Currencies_Excel en CRAZE GmbH, como el BWA
-async function eurRate(ctx: BcContext | null, currency: string, force: boolean) {
+export async function eurRate(ctx: BcContext | null, currency: string, force: boolean) {
   try {
     const gmbh = ctx && ctx.companyName.toLowerCase() === MASTER_COMPANY.toLowerCase() ? ctx : await getBcContext(MASTER_COMPANY);
     return await cached(`royalties:fx:${currency}`, 6 * HOUR, async () => {

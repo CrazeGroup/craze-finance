@@ -6,7 +6,7 @@ export const LANGS: Lang[] = ['es', 'en', 'de'];
 const es = {
   title: 'Reporting mensual',
   closing: 'Cierre {month} · datos a {date}',
-  operational: 'Operacional', management: 'Dirección', month: 'Mes',
+  operational: 'Operacional', inventory: 'Análisis Inventario', management: 'Dirección', month: 'Mes',
   exportPdf: 'Exportar PDF', refresh: 'Actualizar datos', refreshing: 'Actualizando…',
   loading: 'Cargando…', selectCompany: 'Selecciona una empresa concreta en el menú lateral.',
   keyPointsOp: 'Puntos clave · Operacional', keyPointsDir: 'Puntos clave · Dirección',
@@ -90,7 +90,7 @@ type Dict = typeof es;
 const en: Dict = {
   title: 'Monthly reporting',
   closing: '{month} close · data as of {date}',
-  operational: 'Operations', management: 'Management', month: 'Month',
+  operational: 'Operations', inventory: 'Inventory Analysis', management: 'Management', month: 'Month',
   exportPdf: 'Export PDF', refresh: 'Refresh data', refreshing: 'Refreshing…',
   loading: 'Loading…', selectCompany: 'Select a specific company in the side menu.',
   keyPointsOp: 'Key points · Operations', keyPointsDir: 'Key points · Management',
@@ -172,7 +172,7 @@ const en: Dict = {
 const de: Dict = {
   title: 'Monatsreporting',
   closing: 'Abschluss {month} · Daten zum {date}',
-  operational: 'Operativ', management: 'Geschäftsführung', month: 'Monat',
+  operational: 'Operativ', inventory: 'Bestandsanalyse', management: 'Geschäftsführung', month: 'Monat',
   exportPdf: 'PDF exportieren', refresh: 'Daten aktualisieren', refreshing: 'Aktualisiere…',
   loading: 'Wird geladen…', selectCompany: 'Bitte im Seitenmenü eine einzelne Gesellschaft wählen.',
   keyPointsOp: 'Kernpunkte · Operativ', keyPointsDir: 'Kernpunkte · Geschäftsführung',

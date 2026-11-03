@@ -4,6 +4,7 @@ import "./globals.css";
 import Sidebar from '@/components/Sidebar';
 import { getSession, AUTH_ENABLED } from '@/lib/auth';
 import { CompanyProvider } from '@/contexts/CompanyContext';
+import { LanguageProvider } from '@/contexts/LanguageContext';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -22,9 +23,10 @@ export default async function RootLayout({
   const username = session?.username || '';
 
   return (
-    <html lang="es">
+    <html lang="en">
       <body className={`${inter.className} flex h-screen bg-slate-50 text-slate-900 overflow-hidden`}>
         <CompanyProvider>
+        <LanguageProvider>
           {/* Sidebar */}
           <Sidebar permissions={permissions} username={username} authEnabled={AUTH_ENABLED} />
 
@@ -32,6 +34,7 @@ export default async function RootLayout({
           <main className="flex-1 overflow-auto bg-transparent">
             {children}
           </main>
+        </LanguageProvider>
         </CompanyProvider>
       </body>
     </html>

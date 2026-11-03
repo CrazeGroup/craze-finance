@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useCompany } from '@/contexts/CompanyContext';
+import { companyLabel, useCompany } from '@/contexts/CompanyContext';
 import DForceView from './DForceView';
 import MailfinishView from './MailfinishView';
 
@@ -31,7 +31,7 @@ export default function MagazinesPage() {
   if (selectedCompany !== COMPANY) {
     return (
       <div className="min-h-screen bg-[#F3F4F7] p-8">
-        <p className="text-sm text-gray-600">MAGAZINES solo está disponible para {COMPANY}. Selecciónala en el menú lateral.</p>
+        <p className="text-sm text-gray-600">MAGAZINES solo está disponible para {companyLabel(COMPANY)}. Selecciónala en el menú lateral.</p>
       </div>
     );
   }
@@ -42,7 +42,7 @@ export default function MagazinesPage() {
         <div className="w-full px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="mr-auto">
             <p className="font-bold text-gray-900 leading-tight text-lg">MAGAZINES</p>
-            <p className="text-xs text-gray-500">{COMPANY}</p>
+            <p className="text-xs text-gray-500">{companyLabel(COMPANY)}</p>
           </div>
           <div className="flex bg-gray-100 rounded-lg p-1">
             {TABS.map(t => (

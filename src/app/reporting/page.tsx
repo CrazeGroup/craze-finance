@@ -3,15 +3,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import { FileDown, RefreshCw } from 'lucide-react';
-import { useCompany } from '@/contexts/CompanyContext';
-import { Lang, LANGS, makeT } from './i18n';
+import { companyLabel, useCompany } from '@/contexts/CompanyContext';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { makeT } from './i18n';
 import { KeyPoints } from './ui';
-import OperationalView, { Loaded } from './OperationalView';
+import OperationalView, { InventoryAnalysisView, Loaded } from './OperationalView';
 import ManagementView from './ManagementView';
 
 const SECTIONS = ['inventory', 'purchases', 'receivables', 'payables', 'provisions', 'bwa', 'cashflow'] as const;
 type SectionKey = typeof SECTIONS[number];
-type View = 'operational' | 'management';
+type View = 'operational' | 'inventory' | 'management';
+const VIEWS: View[] = ['operational', 'inventory', 'management'];
+// Vistas con puntos clave de IA (Análisis Inventario no lleva)
+type SummaryView = 'operational' | 'management';
 
 const monthKey = (d: Date) => d.toISOString().substring(0, 7);
 const shift = (ym: string, n: number) => { const [y, m] = ym.split('-').map(Number); return monthKey(new Date(Date.UTC(y, m - 1 + n, 1))); };
@@ -21,7 +25,7 @@ const store = {
 };
 
 // Cifras compactas que se envían a la IA para redactar los puntos clave de cada vista
-function summaryInput(view: View, d: Record<SectionKey, any>) {
+function summaryInput(view: SummaryView, d: Record<SectionKey, any>) {
   if (view === 'operational') {
     const inv = d.inventory, pur = d.purchases, ar = d.receivables;
     return {
@@ -52,14 +56,14 @@ function summaryInput(view: View, d: Record<SectionKey, any>) {
 }
 
 type SummaryState = { points: string[] | null; loading: boolean; error: string | null; waiting: boolean };
-const VIEW_SECTIONS: Record<View, SectionKey[]> = {
+const VIEW_SECTIONS: Record<SummaryView, SectionKey[]> = {
   operational: ['inventory', 'purchases', 'receivables'],
   management: ['receivables', 'payables', 'provisions', 'bwa', 'cashflow'],
 };
 
 export default function ReportingPage() {
   const { selectedCompany } = useCompany();
-  const [lang, setLang] = useState<Lang>('es');
+  const { lang } = useLanguage();
   const [view, setView] = useState<View>('operational');
   const [month, setMonth] = useState(() => shift(monthKey(new Date()), -1));
   const [reload, setReload] = useState({ n: 0, force: false });
@@ -67,22 +71,20 @@ export default function ReportingPage() {
   const [sections, setSections] = useState<Record<SectionKey, Loaded>>(
     () => Object.fromEntries(SECTIONS.map(s => [s, { data: null, loading: true, error: null }])) as Record<SectionKey, Loaded>
   );
-  const [summaries, setSummaries] = useState<Record<View, SummaryState>>({
+  const [summaries, setSummaries] = useState<Record<SummaryView, SummaryState>>({
     operational: { points: null, loading: false, error: null, waiting: true },
     management: { points: null, loading: false, error: null, waiting: true },
   });
-  const [summaryForce, setSummaryForce] = useState<Record<View, number>>({ operational: 0, management: 0 });
+  const [summaryForce, setSummaryForce] = useState<Record<SummaryView, number>>({ operational: 0, management: 0 });
   // Nº de petición por vista: se descartan respuestas de peticiones anteriores (otro mes o idioma)
-  const summaryReq = useRef<Record<View, number>>({ operational: 0, management: 0 });
+  const summaryReq = useRef<Record<SummaryView, number>>({ operational: 0, management: 0 });
 
   const fmt = useMemo(() => makeT(lang), [lang]);
   const { t } = fmt;
 
   useEffect(() => {
-    const l = store.get('crz-lang') as Lang | null;
-    if (l && LANGS.includes(l)) setLang(l);
     const v = store.get('crz-view') as View | null;
-    if (v === 'operational' || v === 'management') setView(v);
+    if (v && VIEWS.includes(v)) setView(v);
   }, []);
 
   // Carga de todos los bloques (en paralelo; los pesados quedan en caché en el servidor)
@@ -103,9 +105,9 @@ export default function ReportingPage() {
   }, [month, reload, selectedCompany]);
 
   // Puntos clave de cada vista, cuando sus bloques han cargado
-  const viewReady = useCallback((v: View) => VIEW_SECTIONS[v].every(s => !sections[s].loading), [sections]);
+  const viewReady = useCallback((v: SummaryView) => VIEW_SECTIONS[v].every(s => !sections[s].loading), [sections]);
   useEffect(() => {
-    for (const v of ['operational', 'management'] as View[]) {
+    for (const v of ['operational', 'management'] as SummaryView[]) {
       if (!viewReady(v)) { setSummaries(prev => ({ ...prev, [v]: { points: null, loading: false, error: null, waiting: true } })); continue; }
       const data = summaryInput(v, Object.fromEntries(SECTIONS.map(s => [s, sections[s].data])) as Record<SectionKey, any>);
       const req = ++summaryReq.current[v];
@@ -127,7 +129,6 @@ export default function ReportingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewReady('operational'), viewReady('management'), lang, month, summaryForce]);
 
-  const changeLang = (l: Lang) => { setLang(l); store.set('crz-lang', l); };
   const changeView = (v: View) => { setView(v); store.set('crz-view', v); };
 
   // PDF: se muestran las dos vistas y se abre el diálogo de impresión (Guardar como PDF)
@@ -147,9 +148,10 @@ export default function ReportingPage() {
   const operational = (
     <div className="space-y-8">
       <KeyPoints title={t('keyPointsOp')} state={summaries.operational} fmt={fmt} onRegenerate={() => setSummaryForce(f => ({ ...f, operational: f.operational + 1 }))} />
-      <OperationalView fmt={fmt} month={month} inv={sections.inventory} pur={sections.purchases} ar={sections.receivables} />
+      <OperationalView fmt={fmt} inv={sections.inventory} ar={sections.receivables} />
     </div>
   );
+  const inventory = <InventoryAnalysisView fmt={fmt} month={month} inv={sections.inventory} pur={sections.purchases} />;
   const management = (
     <div className="space-y-8">
       <KeyPoints title={t('keyPointsDir')} state={summaries.management} fmt={fmt} onRegenerate={() => setSummaryForce(f => ({ ...f, management: f.management + 1 }))} />
@@ -165,23 +167,20 @@ export default function ReportingPage() {
             <Image src="/logo.png" alt="Craze Group" width={104} height={50} className="object-contain" />
             <div>
               <p className="font-bold text-gray-900 leading-tight">{t('title')}</p>
-              <p className="text-xs text-gray-500">{t('closing', { month: fmt.monthText(month), date: cutoff ? fmt.date(cutoff) : '…' })} · {company}</p>
+              <p className="text-xs text-gray-500">{t('closing', { month: fmt.monthText(month), date: cutoff ? fmt.date(cutoff) : '…' })} · {companyLabel(company)}</p>
             </div>
           </div>
           <div className="rpt-noprint flex flex-wrap items-center gap-3">
             <div className="flex bg-gray-100 rounded-lg p-1">
-              {(['operational', 'management'] as View[]).map(v => (
+              {VIEWS.map(v => (
                 <button key={v} onClick={() => changeView(v)} className={`px-4 py-1.5 rounded-md text-sm font-semibold ${view === v ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
-                  {t(v === 'operational' ? 'operational' : 'management')}
+                  {t(v)}
                 </button>
               ))}
             </div>
             <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 hidden sm:inline">{t('month')}</span>
             <select value={month} onChange={e => setMonth(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold bg-white">
               {months.map(m => <option key={m} value={m}>{fmt.monthName(m)}</option>)}
-            </select>
-            <select value={lang} onChange={e => changeLang(e.target.value as Lang)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-semibold bg-white">
-              {LANGS.map(l => <option key={l} value={l}>{l.toUpperCase()}</option>)}
             </select>
             <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={anyLoading} title={t('refresh')}
               className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">
@@ -201,9 +200,11 @@ export default function ReportingPage() {
           <>
             {operational}
             <div className="rpt-pagebreak" />
+            {inventory}
+            <div className="rpt-pagebreak" />
             {management}
           </>
-        ) : view === 'operational' ? operational : management}
+        ) : view === 'operational' ? operational : view === 'inventory' ? inventory : management}
         <p className="text-xs text-gray-500 border-t border-gray-200 pt-4">{t('footer')}</p>
       </main>
     </div>

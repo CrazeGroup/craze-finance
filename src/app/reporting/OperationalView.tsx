@@ -173,13 +173,21 @@ export function CostSection({ fmt, inv }: { fmt: Fmt; inv: Loaded }) {
   );
 }
 
-export default function OperationalView({ fmt, month, inv, pur, ar }: { fmt: Fmt; month: string; inv: Loaded; pur: Loaded; ar: Loaded }) {
+export default function OperationalView({ fmt, inv, ar }: { fmt: Fmt; inv: Loaded; ar: Loaded }) {
+  return (
+    <div className="space-y-10">
+      <UninsuredSection fmt={fmt} ar={ar} />
+      <CostSection fmt={fmt} inv={inv} />
+    </div>
+  );
+}
+
+// Análisis de inventario: valor por Location Code y compras de inventario (CHINA TRF)
+export function InventoryAnalysisView({ fmt, month, inv, pur }: { fmt: Fmt; month: string; inv: Loaded; pur: Loaded }) {
   return (
     <div className="space-y-10">
       <InventorySection fmt={fmt} inv={inv} />
       <PurchasesSection fmt={fmt} pur={pur} month={month} />
-      <UninsuredSection fmt={fmt} ar={ar} />
-      <CostSection fmt={fmt} inv={inv} />
     </div>
   );
 }

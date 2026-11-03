@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2, Plus, Send, Trash2, Upload } from 'lucide-react';
-import { useCompany } from '@/contexts/CompanyContext';
+import { companyLabel, useCompany } from '@/contexts/CompanyContext';
 import type { AccountType, MovementResult, SuggestedLine } from '@/lib/banco';
 
 // BANCO: sube el extracto CSV del banco, cuadra los movimientos con las Bank Account Ledger Entries de la cuenta elegida
@@ -147,7 +147,7 @@ export default function BancoPage() {
         <div className="w-full px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="mr-auto">
             <p className="font-bold text-gray-900 leading-tight text-lg">BANCO</p>
-            <p className="text-xs text-gray-500">{selectedCompany} · extracto del banco → General Journal</p>
+            <p className="text-xs text-gray-500">{companyLabel(selectedCompany)} · extracto del banco → General Journal</p>
           </div>
           {loading && <span className="flex items-center gap-2 text-sm text-gray-500"><Loader2 size={16} className="animate-spin" /> {loading}</span>}
         </div>

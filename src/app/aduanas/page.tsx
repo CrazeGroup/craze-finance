@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { AlertCircle, CheckCircle2, FileText, Landmark, RefreshCw, Upload, X } from 'lucide-react';
 import DocPdfLink from '@/components/DocPdfLink';
-import { useCompany } from '@/contexts/CompanyContext';
+import { companyLabel, useCompany } from '@/contexts/CompanyContext';
 import TariffCheck, { Position } from './TariffCheck';
 import HistoryView from './HistoryView';
 
@@ -118,8 +118,8 @@ export default function AduanasPage() {
             <h1 className="text-3xl font-black text-black tracking-tight flex items-center gap-2"><Landmark /> Aduanas</h1>
             <p className="text-gray-500 mt-1 text-sm">
               {tab === 'history'
-                ? `Facturas Zoll (${config?.zollVendor || '7300184'}) de ${selectedCompany} del año: el PDF adjunto de cada AT/C se lee una sola vez y sus códigos arancelarios se comparan con el Tariff No. de los artículos importados. Los resultados quedan guardados; solo se procesan los AT/C nuevos.`
-                : <>Sube los Einfuhrabgabenbescheide (PDF de ATLAS): cada declaración crea en BC ({selectedCompany}) dos Purchase Invoices, Zoll y EUSt, sin registrar: revísalas y regístralas (Post) en BC. También compara el código arancelario de cada posición con el Tariff No. de los artículos de la factura de China.</>}
+                ? `Facturas Zoll (${config?.zollVendor || '7300184'}) de ${companyLabel(selectedCompany)} del año: el PDF adjunto de cada AT/C se lee una sola vez y sus códigos arancelarios se comparan con el Tariff No. de los artículos importados. Los resultados quedan guardados; solo se procesan los AT/C nuevos.`
+                : <>Sube los Einfuhrabgabenbescheide (PDF de ATLAS): cada declaración crea en BC ({companyLabel(selectedCompany)}) dos Purchase Invoices, Zoll y EUSt, sin registrar: revísalas y regístralas (Post) en BC. También compara el código arancelario de cada posición con el Tariff No. de los artículos de la factura de China.</>}
             </p>
           </div>
           <div className="flex bg-gray-200/70 rounded-lg p-1">
