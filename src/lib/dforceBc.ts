@@ -9,8 +9,8 @@ import type { JournalLine } from '@/lib/dforceProvisions';
 // - Cabecera y líneas por la API v2 (como OCR y Aduanas); el nº de la Gutschrift va en External Document No. (ventas)
 //   y Vendor Invoice No. (compra), y sirve para no duplicar.
 // - Project No., Project Task No., Project Task No.2 y Return Reason Code no están en las líneas de la API v2: se ponen
-//   después por OData en un servicio web de líneas (Sales/Purchase Lines editable con esos campos), buscado por nombre
-//   o fijado con los ajustes dforceSalesLinesService / dforcePurchaseLinesService.
+//   después por OData en un servicio web de líneas (ventas: líneas de las páginas 43/44 publicadas, campos AIT; compras:
+//   Purchase Lines editable), buscado por nombre o fijado con el ajuste dforceLinesService { invoice, credit, purchase }.
 
 export const JOURNAL_BATCH = 'D-FORCE';
 export type DForceKind = 'invoice' | 'credit' | 'purchase' | 'journal';
@@ -38,11 +38,22 @@ export async function existingDocs(ctx: BcContext, kind: Exclude<DForceKind, 'jo
 // ---------- Campos de línea fuera de la API v2 ----------
 
 type Extras = { project: string; task: string; task2?: string; returnReason?: string };
-const FIELD_PATTERNS: Record<keyof Extras, RegExp> = {
-  project: /^(job|project)_?(no|number)$/i,
-  task: /^(job|project)_?task_?(no|number)$/i,
-  task2: /task_?(no|number)_?2$/i,
-  returnReason: /^return_?reason_?code$/i,
+// Ventas: el proyecto va en los campos de la extensión AIT (AIT_Job_No, AIT_Job_Task_No, AIT_Job_Task_No_2), como en
+// todas las facturas y abonos de D-FORCE registrados; el Job No. estándar de las líneas de venta queda vacío.
+// Compras: los estándar (Job_No, Job_Task_No).
+const FIELD_PATTERNS: Record<'sales' | 'purchase', Record<keyof Extras, RegExp>> = {
+  sales: {
+    project: /^ait_?job_?no$/i,
+    task: /^ait_?job_?task_?no$/i,
+    task2: /^ait_?job_?task_?no_?2$/i,
+    returnReason: /^return_?reason_?code$/i,
+  },
+  purchase: {
+    project: /^(job|project)_?(no|number)$/i,
+    task: /^(job|project)_?task_?(no|number)$/i,
+    task2: /^(job|project)_?task_?(no|number)_?2$/i,
+    returnReason: /^return_?reason_?code$/i,
+  },
 };
 const FIELD_LABEL: Record<keyof Extras, string> = { project: 'Project No.', task: 'Project Task No.', task2: 'Project Task No.2', returnReason: 'Return Reason Code' };
 
@@ -58,28 +69,35 @@ async function odataGet(ctx: BcContext, url: string) {
   return res.json();
 }
 
-// Servicios OData candidatos: el del ajuste o los publicados con "Sales/Purchase … Lines" en el nombre
-// (salesDocumentLines, purchaseDocumentLines, Purchase_Lines_Editable_Excel…; los "_Excel" no editables, al final)
-async function lineServiceNames(ctx: BcContext, side: 'sales' | 'purchase') {
-  const configured = await readSetting<string>(side === 'sales' ? 'dforceSalesLinesService' : 'dforcePurchaseLinesService', '');
-  if (configured) return [configured];
+// Servicios OData candidatos: el del ajuste o, por nombre, en ventas las líneas de la página 43/44 publicada
+// (Sales_Invoice_ExcelSalesLines, Sales_Credit_Memo_ExcelSalesLines: tienen los campos AIT) y en compras las de
+// Purchase … Lines (purchaseDocumentLines, Purchase_Lines_Editable_Excel…; los "_Excel" no editables, al final)
+async function lineServiceNames(ctx: BcContext, kind: Exclude<DForceKind, 'journal'>) {
+  const side = DOCS[kind].side;
+  const configured = await readSetting<Record<string, string>>('dforceLinesService', {});
+  if (configured[kind]) return [configured[kind]];
   const root = ctx.odataCompanyBase.replace(/\/Company\(.*$/, '');
   const res = await fetch(root, { headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json' } });
   if (!res.ok) return [];
   const list: string[] = ((await res.json()).value || []).map((s: any) => s.name);
-  const pattern = side === 'sales' ? /^sales.?(document.?)?lines?/i : /^purch(ase)?.?(document.?)?lines?/i;
+  if (side === 'sales') {
+    const own = kind === 'invoice' ? /^sales_?invoice/i : /^sales_?cr(edit)?_?memo/i;
+    return list.filter(n => own.test(n) && /sales_?lines$/i.test(n));
+  }
+  const pattern = /^purch(ase)?.?(document.?)?lines?/i;
   const late = (n: string) => Number(/excel/i.test(n) && !/editable/i.test(n));
   return list.filter(n => pattern.test(n) && !/posted|archiv|shipment|receipt/i.test(n)).sort((a, b) => late(a) - late(b));
 }
 
 // Pone en las líneas ya creadas los campos que la API v2 no tiene. byLine: Line No. → valores. Devuelve avisos.
-async function setLineExtras(ctx: BcContext, side: 'sales' | 'purchase', docNo: string, byLine: Map<number, Extras>) {
+async function setLineExtras(ctx: BcContext, kind: Exclude<DForceKind, 'journal'>, docNo: string, byLine: Map<number, Extras>) {
+  const side = DOCS[kind].side;
   const wanted = new Set<keyof Extras>();
   byLine.forEach(e => (Object.keys(e) as (keyof Extras)[]).forEach(k => { if (e[k]) wanted.add(k); }));
   if (!wanted.size) return [];
   const fieldList = Array.from(wanted).map(k => FIELD_LABEL[k]).join(', ');
   const tried: string[] = [];
-  for (const name of await lineServiceNames(ctx, side)) {
+  for (const name of await lineServiceNames(ctx, kind)) {
     const base = `${ctx.odataCompanyBase}/${name}`;
     // Páginas publicadas (Document_No, Line_No) o de tipo API (documentNumber, lineNumber)
     let rows: any[] = [], error = '';
@@ -93,7 +111,7 @@ async function setLineExtras(ctx: BcContext, side: 'sales' | 'purchase', docNo: 
     if (error) { tried.push(`${name}: ${error}`); continue; }
     if (!rows.length) { tried.push(`${name}: no devuelve las líneas de ${docNo}`); continue; }
     const keys = Object.keys(rows[0]);
-    const field = (k: keyof Extras) => keys.find(x => FIELD_PATTERNS[k].test(x));
+    const field = (k: keyof Extras) => keys.find(x => FIELD_PATTERNS[side][k].test(x));
     const missing = Array.from(wanted).filter(k => !field(k));
     if (missing.includes('project') || missing.includes('task')) { tried.push(`${name}: sin ${missing.map(k => FIELD_LABEL[k]).join(', ')}`); continue; }
 
@@ -126,8 +144,10 @@ async function setLineExtras(ctx: BcContext, side: 'sales' | 'purchase', docNo: 
     return warnings;
   }
   return [`${docNo}: no se han podido poner ${fieldList} en las líneas: ${tried.length ? tried.join(' · ') : 'no hay ningún servicio web OData de líneas publicado'}. ` +
-    `Publica en "Servicios web" una página de líneas editable con esos campos (nombre que empiece por "${side === 'sales' ? 'SalesLines' : 'PurchaseLines'}", ` +
-    `o indícalo en el ajuste ${side === 'sales' ? 'dforceSalesLinesService' : 'dforcePurchaseLinesService'}) o rellénalos en BC.`];
+    (side === 'sales'
+      ? `Publica en "Servicios web" la página ${kind === 'invoice' ? '43 "Sales Invoice"' : '44 "Sales Credit Memo"'} (sus líneas tienen los campos AIT) `
+      : 'Publica en "Servicios web" una página de líneas de compra editable con esos campos ') +
+    `(o indica el servicio en el ajuste dforceLinesService) o rellénalos en BC.`];
 }
 
 // ---------- Ignore Custom Qty. Fields ----------
@@ -216,7 +236,7 @@ export async function createDocument(ctx: BcContext, input: DocInput, files: Att
     throw e;
   }
   try {
-    warnings.push(...await setLineExtras(ctx, d.side, no, extras));
+    warnings.push(...await setLineExtras(ctx, input.kind, no, extras));
   } catch (e) {
     warnings.push(`${no}: no se han podido poner proyecto y tarea en las líneas (${short(e)}); complétalos en BC.`);
   }
