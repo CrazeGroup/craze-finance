@@ -113,15 +113,12 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
     router.refresh();
   };
 
-  // Menú oculto: arriba a la izquierda, el logo y debajo el botón para volver a mostrarlo
+  // Menú oculto: sin barra; solo un botón flotante arriba a la izquierda (debajo del logo de la cabecera de la página)
   if (hidden) return (
-    <aside className="app-menu-toggle flex-shrink-0 border-r border-gray-200 bg-white flex flex-col items-center gap-3 px-3 py-4">
-      <Image src="/logo.png" alt="Craze Group Logo" width={72} height={21} className="object-contain" />
-      <button type="button" onClick={() => toggleHidden(false)} title={tx('show')}
-        className="flex items-center gap-1.5 bg-black text-white text-xs font-semibold px-3 py-1.5 rounded-full hover:bg-gray-800">
-        <MenuIcon size={14} /> {tx('menu')}
-      </button>
-    </aside>
+    <button type="button" onClick={() => toggleHidden(false)} title={tx('show')}
+      className="app-menu-toggle fixed top-[84px] left-3 z-50 flex items-center gap-1.5 bg-black text-white text-xs font-semibold px-3 py-1.5 rounded-full shadow-lg hover:bg-gray-800">
+      <MenuIcon size={14} /> {tx('menu')}
+    </button>
   );
 
   // Selector de idioma: dentro de la sección Config del usuario (o al final si no la tiene)
