@@ -57,9 +57,14 @@ export function InventoryKpis({ fmt, d, an, kp, link }: { fmt: Fmt; d: any; an: 
   const lyInv = an.data?.totals.find(x => x.date === an.data!.prevDates[an.data!.curDates.length - 1]);
   const adsCur = k ? k.ads[cur].days : null;
   const adsLy = k && ly >= 0 ? k.ads[ly].days : null;
-  // Antigüedad del stock aún no vendido al cierre (y al mismo cierre del año anterior)
-  const ageCur = k?.stockAge?.[cur]?.days ?? null;
-  const ageLy = k && ly >= 0 ? k.stockAge?.[ly]?.days ?? null : null;
+  // ADS de todo: las salidas del mes y el stock aún sin vender al cierre (días desde su entrada), ponderado por uds
+  const allOf = (i: number) => {
+    const a = k?.ads[i], st = k?.stockAge?.[i];
+    const q = (a?.qty || 0) + (st?.qty || 0);
+    return q ? ((a?.days || 0) * (a?.qty || 0) + (st?.days || 0) * (st?.qty || 0)) / q : null;
+  };
+  const ageCur = k ? allOf(cur) : null;
+  const ageLy = k && ly >= 0 ? allOf(ly) : null;
   const go = link ? { href: link, title: t('openReport', { report: t('inventory') }) } : undefined;
   return (
       <Grid cols={4}>
@@ -77,14 +82,14 @@ export function InventoryKpis({ fmt, d, an, kp, link }: { fmt: Fmt; d: any; an: 
           sub={kpiSub(k ? t('destroyedSub', { qty: num(ytd(k.prevDates.length, cur, i => k.destroyed[i].qty)), month: fmt.monthCode(k.month), mv: short(k.destroyed[cur].value), mq: num(k.destroyed[cur].qty) }) : t('loading'))} />
         <Kpi link={go} label={t('kpiPallets', { date: date(d.date) })} value={k ? num(k.pallets) : pending}
           sub={kpiSub(k ? t('palletsSub', { n: num(k.noPallet) }) : t('loading'))} />
-        {/* Un solo KPI con los dos ADS: lo vendido en el mes y la antigüedad del stock aún sin vender al cierre */}
+        {/* Un solo KPI con los dos ADS: lo vendido en el mes y todo (lo vendido más el stock aún sin vender al cierre) */}
         <Kpi link={go} label={t('kpiAdsTitle')} value="" extra={(
           <div className="grid grid-cols-2 gap-3 -mt-1">
             {[
               { label: t('kpiAds'), v: adsCur, ly: adsLy, lyLabel: k && ly >= 0 ? fmt.monthCode(k.prevDates[ly].substring(0, 7)) : '',
                 sub: k ? t('adsSub', { ytd: adsOf(k.prevDates.length, cur) == null ? '–' : num(adsOf(k.prevDates.length, cur)!) }) : '' },
-              { label: t('kpiAge', { date: fmt.shortDate(d.date) }), v: ageCur, ly: ageLy, lyLabel: k && ly >= 0 ? date(k.prevDates[ly]) : '',
-                sub: k ? t('stockAgeSub', { qty: num(k.stockAge?.[cur]?.qty || 0) }) : '' },
+              { label: t('kpiAge'), v: ageCur, ly: ageLy, lyLabel: k && ly >= 0 ? fmt.monthCode(k.prevDates[ly].substring(0, 7)) : '',
+                sub: k ? t('stockAgeSub', { qty: num((k.ads[cur]?.qty || 0) + (k.stockAge?.[cur]?.qty || 0)) }) : '' },
             ].map(x => (
               <div key={x.label}>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{x.label}</p>
