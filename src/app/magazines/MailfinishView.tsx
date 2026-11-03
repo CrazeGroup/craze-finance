@@ -179,7 +179,9 @@ export default function MailfinishView() {
                     </th>
                     <th className={`${th} text-left`}>Output (gadget)</th><th className={`${th} text-left`}>Location</th>
                     <th className={`${th} text-right`}>Cantidad</th><th className={`${th} text-left`}>Input (revista)</th>
-                    <th className={`${th} text-right`}>Stock {dmy(data.date)}</th><th className={`${th} text-right`}>Queda</th>
+                    <th className={`${th} text-right`}>Stock {dmy(data.date)}</th>
+                    <th className={`${th} text-right`} title="Stock de la revista menos la cantidad de esta línea">Queda</th>
+                    <th className={`${th} text-right`} title="Stock de la revista menos todas las líneas marcadas que la usan">Queda (todas)</th>
                     <th className={`${th} text-left`}>Última recuperación</th><th className={`${th} text-left`}>BC</th>
                   </tr>
                 </thead>
@@ -187,6 +189,8 @@ export default function MailfinishView() {
                   {rows.map(r => {
                     const k = `${r.input}|${r.inputLocation}`;
                     const rest = restOf(k);
+                    const own = (stockOf.get(k)?.qty || 0) - (r.include ? r.quantity : 0);
+                    const sharing = rows.filter(x => x.include && x.input === r.input && x.inputLocation === r.inputLocation).length;
                     const cand = r.candidates.find(c => c.item === r.input && c.location === r.inputLocation);
                     const open = openFor(r);
                     const others = (data.stock || []).filter(s => s.qty > 0 && !r.candidates.some(c => c.item === s.item && c.location === s.location));
@@ -228,8 +232,12 @@ export default function MailfinishView() {
                           {r.input && <div className="text-[11px] text-gray-500 max-w-[380px] truncate">{stockOf.get(k)?.description}</div>}
                         </td>
                         <td className={`${td} text-right tabular-nums`}>{r.input ? qf.format(stockOf.get(k)?.qty || 0) : ''}</td>
-                        <td className={`${td} text-right tabular-nums font-semibold ${r.input && rest < 0 ? 'text-red-700' : 'text-gray-600'}`}>
+                        <td className={`${td} text-right tabular-nums ${r.input && own < 0 ? 'text-red-700 font-semibold' : 'text-gray-600'}`}>
+                          {r.input ? qf.format(own) : ''}
+                        </td>
+                        <td className={`${td} text-right tabular-nums font-semibold ${r.input && rest < 0 ? 'text-red-700' : 'text-gray-900'}`}>
                           {r.input ? qf.format(rest) : ''}{r.input && rest < 0 && <AlertCircle size={12} className="inline ml-1 -mt-0.5" />}
+                          {r.input && sharing > 1 && <div className="text-[10px] font-normal text-gray-500">{sharing} líneas</div>}
                         </td>
                         <td className={`${td} text-xs text-gray-600`}>
                           {cand?.lastOrder ? <>{cand.lastOrder} · {dmy(cand.lastDate)}</> : r.source === 'description' ? 'revista de la descripción' : r.input ? 'elegida a mano' : '—'}
