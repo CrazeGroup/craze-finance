@@ -15,7 +15,7 @@ type Suggestion = {
   currency: string; net: number | null; vat: number | null; total: number | null; lines: Line[]; comment: string; vatBusPostingGroup?: string;
 };
 type Doc = {
-  file: string; error?: string; loading?: boolean; reading?: boolean; scanned: boolean; ocr?: boolean; currency: string; ids: string[];
+  file: string; error?: string; loading?: boolean; reading?: boolean; scanned: boolean; ocr?: boolean; currency: string; ids: string[]; vatRates?: Record<string, number>;
   candidates: Candidate[]; vendor: Candidate | null; history: HistoryInvoice[]; suggestion: Suggestion | null;
   existing: { no: string; status: string }[]; warnings: string[];
 };
@@ -402,7 +402,14 @@ function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRem
                 <td className="p-1"><input value={l.description2} maxLength={50} onChange={e => setLine(i, 'description2', e.target.value)} disabled={l.lineType === 'Comment'} className={`${input} w-full min-w-[140px]`} /></td>
                 <td className="p-1"><input value={l.quantity} onChange={e => setLine(i, 'quantity', e.target.value)} disabled={l.lineType === 'Comment'} className={`${input} w-20 text-right tabular-nums`} /></td>
                 <td className="p-1"><input value={l.unitCost} onChange={e => setLine(i, 'unitCost', e.target.value)} disabled={l.lineType === 'Comment'} className={`${input} w-28 text-right tabular-nums`} /></td>
-                <td className="p-1"><VatSelect value={l.taxCode} onChange={v => setLine(i, 'taxCode', v)} disabled={l.lineType === 'Comment'} /></td>
+                <td className="p-1"><VatSelect value={l.taxCode} onChange={v => {
+                  setLine(i, 'taxCode', v);
+                  // Una sola línea: neto = total del PDF sin el IVA del grupo elegido (OHNE MWST: el total)
+                  const pct = d.vatRates?.[v];
+                  if (pct != null && s?.total != null && f.lines.filter(x => x.lineType !== 'Comment').length === 1) {
+                    setLine(i, 'unitCost', toText(Math.round((s.total / (1 + pct / 100) / (toNum(l.quantity) || 1)) * 100) / 100));
+                  }
+                }} disabled={l.lineType === 'Comment'} /></td>
                 <td className="p-2 text-right tabular-nums whitespace-nowrap">{l.lineType === 'Comment' ? '' : fmt(toNum(l.quantity) * toNum(l.unitCost))}</td>
                 <td className="p-1"><button onClick={() => removeLine(i)} title="Quitar línea" className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"><Trash2 size={14} /></button></td>
               </tr>

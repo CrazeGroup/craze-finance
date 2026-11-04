@@ -28,7 +28,7 @@ export type OcrSuggestion = {
   itemFromPdf?: { number: string; model: string; modelDescription: string }; vatBusPostingGroup?: string;
 };
 export type OcrResult = {
-  file: string; scanned: boolean; ocr: boolean; currency: string; ids: string[];
+  file: string; scanned: boolean; ocr: boolean; currency: string; ids: string[]; vatRates: Record<string, number>;
   candidates: VendorCandidate[]; vendor: VendorCandidate | null; history: HistoryInvoice[];
   suggestion: OcrSuggestion | null; existing: { no: string; status: string }[]; warnings: string[];
 };
@@ -379,13 +379,14 @@ function modelSplit(model: HistoryInvoice) {
 // Totales: base con IVA + IVA (+ parte exenta) = total, y los tres (o cuatro) importes aparecen en el texto; el tipo
 // del modelo primero. Si el modelo no lleva IVA (o el PDF dice que está exento), neto = total = el importe que más se
 // repite entre los mayores
-function totals(t: string, model: HistoryInvoice | undefined) {
+// rate: el % de IVA de los grupos de IVA de las líneas (VAT Posting Setup), si se sabe: solo ese (0 = sin IVA)
+export function totals(t: string, model: HistoryInvoice | undefined, rate?: number) {
   const list = amounts(t);
   const set = [...new Set(list)].filter(v => v > 0).sort((a, b) => b - a);
   const near = (v: number) => set.find(x => Math.abs(x - v) <= Math.max(0.02, v * 0.0002));
   const split = model ? modelSplit(model) : null;
-  const taxFree = split?.rate === 0 || /tax ?free|steuerfrei|exento|reverse charge|nicht steuerbar|0[.,]00 ?%/i.test(t);
-  const rates = [...new Set([...(split?.rate ? [split.rate] : []), ...RATES])];
+  const taxFree = rate != null ? rate === 0 : split?.rate === 0 || /tax ?free|steuerfrei|exento|reverse charge|nicht steuerbar|0[.,]00 ?%/i.test(t);
+  const rates = rate != null ? (rate ? [rate] : []) : [...new Set([...(split?.rate ? [split.rate] : []), ...RATES])];
   // Sin parte exenta primero; luego con una parte exenta que también aparezca ("MwSt frei")
   for (const withFree of [false, true]) {
     for (const r of rates) {
@@ -595,6 +596,44 @@ function uberRules(s: OcrSuggestion, text: string, vendorName: string) {
   for (const l of s.lines) if (l.lineType !== 'Comment') l.taxCode = 'OHNE MWST';
 }
 
+// % de IVA de cada VAT Prod. Posting Group con el VAT Bus. Posting Group de la factura (VAT Posting Setup): el IVA que
+// cobra el proveedor; inversión del sujeto pasivo = 0. Sin la combinación (o Full VAT…), no se sabe
+async function vatRates(ctx: BcContext, vendorNo: string, busGroup?: string) {
+  const [setup, bus] = await Promise.all([
+    cached(`ocr:vatsetup:${ctx.companyName}`, 6 * HOUR, async () =>
+      (await bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/VAT_Posting_Setup_Excel`, {
+        $select: 'VAT_Bus_Posting_Group,VAT_Prod_Posting_Group,VAT_Percent,VAT_Calculation_Type',
+      }), ctx.token)).map((r: any) => {
+        const calc = String(r.VAT_Calculation_Type || '').replace(/_x0020_/g, ' ');
+        return { bus: String(r.VAT_Bus_Posting_Group || ''), prod: String(r.VAT_Prod_Posting_Group || ''), pct: calc === 'Normal VAT' ? Number(r.VAT_Percent) || 0 : calc === 'Reverse Charge VAT' ? 0 : null };
+      })),
+    busGroup?.trim() ? Promise.resolve(busGroup.trim()) : bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Vendor_Card_Excel`, {
+      $filter: `No eq '${q(vendorNo)}'`, $select: 'No,VAT_Bus_Posting_Group',
+    }), ctx.token).then(r => String(r[0]?.VAT_Bus_Posting_Group || '')).catch(() => ''),
+  ]);
+  const rates: Record<string, number> = {};
+  for (const r of setup) if (r.bus === bus && r.pct != null) rates[r.prod] = r.pct;
+  return rates;
+}
+
+// Importes con el % de IVA de los grupos de las líneas (OHNE MWST = 0 %: el total del PDF es el neto). Solo si todas las
+// líneas tienen el mismo %; las líneas se reparten el neto nuevo en su proporción
+function applyVatRates(s: OcrSuggestion, text: string, rates: Record<string, number>) {
+  const ls = s.lines.filter(l => l.lineType !== 'Comment');
+  const pcts = [...new Set(ls.map(l => rates[l.taxCode]))];
+  if (!ls.length || pcts.length !== 1 || pcts[0] == null) return;
+  const r = totals(flat(text), undefined, pcts[0] / 100);
+  if (r.net == null || (r.net === s.net && r.vat === s.vat)) return;
+  const sum = ls.reduce((a, l) => a + l.quantity * l.unitCost, 0);
+  let rest = r.net;
+  ls.forEach((l, k) => {
+    const part = k === ls.length - 1 ? r2(rest) : r2(sum ? r.net! * (l.quantity * l.unitCost) / sum : r.net! / ls.length);
+    rest -= part;
+    l.unitCost = r2(part / (l.quantity || 1));
+  });
+  s.net = r.net; s.vat = r.vat; s.total = r.total;
+}
+
 // VAT Product Posting Groups de la empresa (v2 taxGroups), para elegir el Grupo IVA de cada línea en la página
 export async function vatGroups(ctx: BcContext) {
   return cached(`ocr:vatgroups:${ctx.companyName}`, 6 * HOUR, async () => {
@@ -669,12 +708,15 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
   }
   if (suggestion && vendor) amazonRules(suggestion, text, vendor.name, warnings);
   if (suggestion && vendor) uberRules(suggestion, text, vendor.name);
+  // Importes con el % de IVA de los grupos de IVA propuestos (y los % para recalcular en la página al cambiar de grupo)
+  const rates = vendor ? await vatRates(ctx, vendor.number, suggestion?.vatBusPostingGroup).catch(() => ({} as Record<string, number>)) : {};
+  if (suggestion && text) applyVatRates(suggestion, text, rates);
   if (suggestion?.documentType === 'credit_note') warnings.push('Parece un abono (credit note): aquí solo se crean facturas; regístralo como Credit Memo en BC.');
   if (vendor && currency && currency !== vendor.currency && !known) {
     warnings.push(`La factura está en ${currency} y el proveedor ${vendor.number} en ${vendor.currency}: ¿es otro proveedor (p. ej. la ficha en ${currency})?`);
   }
   const existing = vendor && suggestion?.invoiceNo ? await existingFor(ctx, vendor.number, suggestion.invoiceNo) : [];
-  return { file, scanned, ocr, currency, ids, candidates, vendor, history, suggestion, existing, warnings };
+  return { file, scanned, ocr, currency, ids, vatRates: rates, candidates, vendor, history, suggestion, existing, warnings };
 }
 
 // ---------- Crear en BC ----------
