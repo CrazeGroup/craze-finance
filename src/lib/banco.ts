@@ -1,7 +1,8 @@
 import { bcFetchAll, odataUrl, type BcContext } from '@/lib/bcClient';
 import { bcRequest } from '@/lib/bcWrite';
+import * as XLSX from 'xlsx';
 
-// BANCO: extracto CSV del banco (formato CSV-CAMT de Sparkasse) → movimientos que aún no están en las Bank Account Ledger
+// BANCO: extracto del banco en CSV (CSV-CAMT de Sparkasse…) o Excel (.xls/.xlsx: Sabadell…) → movimientos que aún no están en las Bank Account Ledger
 // Entries de la cuenta → sugerencia de líneas para el General Journal (lote con esa cuenta de banco como contrapartida).
 // - Cuadre: cada movimiento con un movimiento de banco del mismo importe (±7 días) o con varios del mismo nº de
 //   documento que suman su importe (cobros repartidos por factura, comisiones descontadas…).
@@ -57,38 +58,113 @@ function splitCsvLine(line: string, sep: string) {
   return out;
 }
 
-// "03.11.26" / "03.11.2026" → "2026-11-03"
-function germanDate(s: string) {
-  const m = s.trim().match(/^(\d{1,2})\.(\d{1,2})\.(\d{2}|\d{4})$/);
+// Fecha de una celda: Date (Excel), nº de serie de Excel, "03.11.26", "03/11/2026", "2026-11-03" → "2026-11-03"
+function cellDate(v: unknown) {
+  if (v instanceof Date && !isNaN(v.getTime())) {
+    return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}`;
+  }
+  // Nº de serie de Excel, sin zona horaria (con cellDates los .xls salían un día antes)
+  if (typeof v === 'number' && v > 20000 && v < 80000) {
+    const d = XLSX.SSF.parse_date_code(v);
+    return `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}`;
+  }
+  const s = String(v ?? '').trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  m = s.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2}|\d{4})$/);
   if (!m) return '';
   const y = m[3].length === 2 ? `20${m[3]}` : m[3];
   return `${y}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
 }
-// "-1.234,56" → -1234.56
-const germanNumber = (s: string) => parseFloat(s.trim().replace(/\./g, '').replace(',', '.'));
+// Importe de una celda: número, "-1.234,56", "1,234.56", "-12.50", "1.234 €" → -1234.56…
+function cellNumber(v: unknown) {
+  if (typeof v === 'number') return v;
+  let s = String(v ?? '').replace(/[^\d,.\-+]/g, '');
+  if (!s) return NaN;
+  const lastComma = s.lastIndexOf(','), lastDot = s.lastIndexOf('.');
+  if (lastComma >= 0 && lastDot >= 0) s = lastComma > lastDot ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+  else if (lastComma >= 0) s = /,\d{3}$/.test(s) && s.split(',').length > 2 ? s.replace(/,/g, '') : s.replace(/\./g, '').replace(',', '.');
+  else if (/^-?\d{1,3}(\.\d{3}){2,}$/.test(s)) s = s.replace(/\./g, '');
+  return parseFloat(s);
+}
+
+// Nombres de columna de los bancos (Sparkasse CSV-CAMT, Sabadell, Santander, BBVA, inglés…), sin acentos ni ":"
+const COLUMNS = {
+  account: ['auftragskonto', 'cuenta', 'numero de cuenta', 'account'],
+  date: ['buchungstag', 'buchungsdatum', 'datum', 'fecha', 'fecha operacion', 'fecha operativa', 'f. operativa', 'fecha contable', 'f. contable', 'fecha de operacion', 'booking date', 'date', 'transaction date'],
+  value: ['valutadatum', 'valuta', 'wertstellung', 'fecha valor', 'f. valor', 'value date'],
+  text: ['buchungstext', 'tipo', 'tipo de movimiento', 'booking text', 'type'],
+  purpose: ['verwendungszweck', 'concepto', 'descripcion', 'concepto comun', 'description', 'details', 'reference'],
+  extra: ['mas datos', 'concepto propio', 'referencia 1', 'referencia 2', 'referencia', 'observaciones', 'informacion adicional'],
+  name: ['beguenstigter/zahlungspflichtiger', 'begunstigter/zahlungspflichtiger', 'ordenante', 'beneficiario', 'ordenante/beneficiario', 'nombre', 'name', 'counterparty', 'payee'],
+  iban: ['kontonummer/iban', 'kontonummer', 'iban', 'iban contrapartida'],
+  e2e: ['kundenreferenz (end-to-end)', 'end-to-end'],
+  amount: ['betrag', 'importe', 'importe (eur)', 'importe eur', 'amount', 'cantidad', 'betrag (eur)'],
+  debit: ['cargo', 'cargos', 'debe', 'soll', 'debit', 'ausgang'],
+  credit: ['abono', 'abonos', 'haber', 'haben', 'credit', 'eingang'],
+  info: ['info', 'estado', 'status'],
+};
+const normHead = (v: unknown) => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[:*]+$/, '').replace(/\s+/g, ' ').trim();
+
+// Movimientos de una tabla (filas × celdas) de CSV o Excel: la cabecera es la primera fila (de las 40 primeras) con
+// columna de fecha y de importe (o de cargo/abono); los bancos ponen antes el titular, la cuenta, el periodo…
+function parseBankRows(rows: unknown[][]): Movement[] {
+  let h = -1;
+  let c: Record<keyof typeof COLUMNS, number> | null = null;
+  // Columnas que completan el concepto (Sabadell: Más datos, Referencia 1, Referencia 2), todas
+  let extras: number[] = [];
+  for (let i = 0; i < Math.min(rows.length, 40) && !c; i++) {
+    const head = (rows[i] || []).map(normHead);
+    const col = (k: keyof typeof COLUMNS) => head.findIndex(x => COLUMNS[k].includes(x));
+    const found = Object.fromEntries(Object.keys(COLUMNS).map(k => [k, col(k as keyof typeof COLUMNS)])) as Record<keyof typeof COLUMNS, number>;
+    if (found.date >= 0 && (found.amount >= 0 || (found.debit >= 0 && found.credit >= 0))) {
+      h = i; c = found;
+      extras = head.map((x, j) => (COLUMNS.extra.includes(x) ? j : -1)).filter(j => j >= 0);
+    }
+  }
+  if (!c) throw new Error('No se reconoce el formato: no hay una fila con columnas de fecha e importe (p. ej. Buchungstag/Betrag, Fecha/Importe o Cargo/Abono).');
+  const cols = c;
+  const get = (row: unknown[], i: number) => (i >= 0 ? String(row[i] ?? '').trim() : '');
+  // Si la fila de cabecera tiene la cuenta encima (Sabadell: "Cuenta: ES12 …"), es la del extracto
+  const above = rows.slice(0, h).flat().map(x => String(x ?? '')).join(' ').match(/\b([A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){4,7}(?:\s?[A-Z0-9]{1,3})?)\b/)?.[1] || '';
+  return rows.slice(h + 1).map((row, idx) => {
+    const amount = cols.amount >= 0 ? cellNumber(row[cols.amount]) : (cellNumber(row[cols.credit]) || 0) - Math.abs(cellNumber(row[cols.debit]) || 0);
+    const purpose = [get(row, cols.purpose), ...extras.map(j => get(row, j))].filter(Boolean).join(' ');
+    return {
+      idx, date: cellDate(row[cols.date]), valueDate: cellDate(row[cols.value]), text: get(row, cols.text),
+      purpose: purpose.replace(/\s+/g, ' '), name: get(row, cols.name), iban: get(row, cols.iban).replace(/\s/g, '').toUpperCase(),
+      endToEnd: get(row, cols.e2e), amount, pending: /vorgemerkt|pendiente/i.test(get(row, cols.info)),
+      account: (get(row, cols.account) || above).replace(/\s/g, '').toUpperCase(),
+    };
+  }).filter(m => m.date && Number.isFinite(m.amount) && m.amount !== 0).map((m, idx) => ({ ...m, idx }));
+}
 
 export function parseBankCsv(text: string): Movement[] {
-  const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim());
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(l => l.trim());
   if (!lines.length) throw new Error('El fichero está vacío.');
-  const sep = lines[0].includes(';') ? ';' : ',';
-  const head = splitCsvLine(lines[0], sep).map(h => h.trim().toLowerCase());
-  const col = (...names: string[]) => head.findIndex(h => names.includes(h));
-  const c = {
-    account: col('auftragskonto'), date: col('buchungstag'), value: col('valutadatum'), text: col('buchungstext'),
-    purpose: col('verwendungszweck'), name: col('beguenstigter/zahlungspflichtiger', 'begünstigter/zahlungspflichtiger'),
-    iban: col('kontonummer/iban', 'kontonummer'), e2e: col('kundenreferenz (end-to-end)'), amount: col('betrag'), info: col('info'),
-  };
-  if (c.date < 0 || c.amount < 0) throw new Error('No se reconoce el formato: faltan las columnas Buchungstag y Betrag (CSV-CAMT de Sparkasse).');
-  const get = (row: string[], i: number) => (i >= 0 ? (row[i] || '').trim() : '');
-  return lines.slice(1).map((l, idx) => {
-    const row = splitCsvLine(l, sep);
-    return {
-      idx, date: germanDate(get(row, c.date)), valueDate: germanDate(get(row, c.value)), text: get(row, c.text),
-      purpose: get(row, c.purpose).replace(/\s+/g, ' '), name: get(row, c.name), iban: get(row, c.iban).replace(/\s/g, '').toUpperCase(),
-      endToEnd: get(row, c.e2e), amount: germanNumber(get(row, c.amount)), pending: /vorgemerkt/i.test(get(row, c.info)),
-      account: get(row, c.account).replace(/\s/g, '').toUpperCase(),
-    };
-  }).filter(m => m.date && Number.isFinite(m.amount));
+  const sep = [';', '\t', ','].find(x => lines.slice(0, 40).some(l => l.includes(x))) || ';';
+  return parseBankRows(lines.map(l => splitCsvLine(l, sep)));
+}
+
+// Extracto CSV o Excel (.xls/.xlsx, la primera hoja con movimientos)
+export function parseBankFile(bytes: Uint8Array, fileName: string): Movement[] {
+  if (/\.xlsx?$/i.test(fileName) || (bytes[0] === 0x50 && bytes[1] === 0x4b) || (bytes[0] === 0xd0 && bytes[1] === 0xcf)) {
+    const wb = XLSX.read(bytes, { type: 'array' });
+    let error: unknown = null;
+    for (const name of wb.SheetNames) {
+      const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[name], { header: 1, raw: true, defval: '' });
+      try {
+        const out = parseBankRows(rows);
+        if (out.length) return out;
+      } catch (e) { error = e; }
+    }
+    if (error) throw error;
+    return [];
+  }
+  // Los CSV de Sparkasse vienen en ISO-8859-1; si es UTF-8 válido se lee como UTF-8
+  let text: string;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { text = new TextDecoder('latin1').decode(bytes); }
+  return parseBankCsv(text);
 }
 
 // ---------- BC ----------

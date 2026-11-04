@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import prisma from '@/lib/prisma';
 import { bcFetchAll, getBcContext, odataUrl } from '@/lib/bcClient';
 import {
-  bankLedgerEntries, batchLines, journalByCode, matchBatch, matchMovements, openEntries, parseBankCsv, suggest,
+  bankLedgerEntries, batchLines, journalByCode, matchBatch, matchMovements, openEntries, parseBankFile, suggest,
   type MovementResult, type Party,
 } from '@/lib/banco';
 
@@ -43,14 +43,10 @@ export async function POST(req: Request) {
     const file = form.get('file');
     const bankNo = String(form.get('bankNo') || '');
     const journalCode = String(form.get('journalCode') || '');
-    if (!(file instanceof File)) return NextResponse.json({ error: 'Sube el CSV del banco.' }, { status: 400 });
+    if (!(file instanceof File)) return NextResponse.json({ error: 'Sube el extracto del banco (CSV o Excel).' }, { status: 400 });
     if (!bankNo) return NextResponse.json({ error: 'Elige la cuenta de banco.' }, { status: 400 });
 
-    // Los CSV de Sparkasse vienen en ISO-8859-1; si es UTF-8 válido se lee como UTF-8
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    let text: string;
-    try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { text = new TextDecoder('latin1').decode(bytes); }
-    const movements = parseBankCsv(text);
+    const movements = parseBankFile(new Uint8Array(await file.arrayBuffer()), file.name);
     if (!movements.length) return NextResponse.json({ error: 'El fichero no tiene movimientos.' }, { status: 400 });
 
     const ctx = await getBcContext(companyId);

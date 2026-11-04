@@ -5,7 +5,7 @@ import { AlertCircle, CheckCircle2, FileText, Loader2, Plus, Send, Trash2, Uploa
 import { companyLabel, useCompany } from '@/contexts/CompanyContext';
 import type { AccountType, MovementResult, SuggestedLine } from '@/lib/banco';
 
-// BANCO: sube el extracto CSV del banco, cuadra los movimientos con las Bank Account Ledger Entries de la cuenta elegida
+// BANCO: sube el extracto del banco (CSV o Excel), cuadra los movimientos con las Bank Account Ledger Entries de la cuenta elegida
 // y sugiere las líneas del General Journal de los que faltan, para enviarlas al lote del banco (p. ej. SPARKASSE).
 type Bank = { number: string; name: string; iban: string; currency: string };
 type Journal = { code: string; name: string; bankNo: string };
@@ -66,7 +66,8 @@ export default function BancoPage() {
     setInfo(null);
     setSent(null);
     if (!f) return;
-    const iban = (await f.text()).split(/\r?\n/)[1]?.split(';')[0]?.replace(/["\s]/g, '').toUpperCase();
+    // Solo en CSV (Sparkasse: Auftragskonto en la primera columna); en Excel la cuenta se elige a mano
+    const iban = /\.csv$/i.test(f.name) ? (await f.text()).split(/\r?\n/)[1]?.split(';')[0]?.replace(/["\s]/g, '').toUpperCase() : '';
     const bank = iban && banks.find(b => b.iban === iban);
     if (bank && bank.number !== bankNo) {
       setBankNo(bank.number);
@@ -169,12 +170,12 @@ export default function BancoPage() {
             </select>
           </label>
           <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-            Extracto (CSV)
+            Extracto (CSV o Excel)
             {/* El input de fichero, oculto: el botón es la etiqueta */}
             <label className={`mt-1 flex items-center gap-2 cursor-pointer border rounded-lg px-3 py-2 text-sm font-semibold normal-case tracking-normal max-w-xs ${file ? 'border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100' : 'border-dashed border-indigo-400 bg-white text-indigo-700 hover:bg-indigo-50'}`}>
               <FileText size={16} className="shrink-0" />
               <span className="truncate">{file ? file.name : 'Seleccionar extracto…'}</span>
-              <input type="file" accept=".csv,text/csv" onChange={e => chooseFile(e.target.files?.[0] || null)} className="hidden" />
+              <input type="file" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={e => chooseFile(e.target.files?.[0] || null)} className="hidden" />
             </label>
           </div>
           <button onClick={analyze} disabled={!file || !bankNo || !!loading}
