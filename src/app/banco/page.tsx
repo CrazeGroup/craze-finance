@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, Loader2, Plus, Send, Trash2, Upload } from 'lucide-react';
+import { AlertCircle, CheckCircle2, FileText, Loader2, Plus, Send, Trash2, Upload } from 'lucide-react';
 import { companyLabel, useCompany } from '@/contexts/CompanyContext';
 import type { AccountType, MovementResult, SuggestedLine } from '@/lib/banco';
 
@@ -168,10 +168,15 @@ export default function BancoPage() {
               {journals.map(j => <option key={j.code} value={j.code}>{j.code}{j.name && j.name !== j.code ? ` · ${j.name}` : ''}{j.bankNo ? ` → ${j.bankNo}` : ''}</option>)}
             </select>
           </label>
-          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
             Extracto (CSV)
-            <input type="file" accept=".csv,text/csv" onChange={e => chooseFile(e.target.files?.[0] || null)} className="block mt-1 text-sm normal-case tracking-normal font-normal" />
-          </label>
+            {/* El input de fichero, oculto: el botón es la etiqueta */}
+            <label className={`mt-1 flex items-center gap-2 cursor-pointer border rounded-lg px-3 py-2 text-sm font-semibold normal-case tracking-normal max-w-xs ${file ? 'border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100' : 'border-dashed border-indigo-400 bg-white text-indigo-700 hover:bg-indigo-50'}`}>
+              <FileText size={16} className="shrink-0" />
+              <span className="truncate">{file ? file.name : 'Seleccionar extracto…'}</span>
+              <input type="file" accept=".csv,text/csv" onChange={e => chooseFile(e.target.files?.[0] || null)} className="hidden" />
+            </label>
+          </div>
           <button onClick={analyze} disabled={!file || !bankNo || !!loading}
             className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
             <Upload size={16} /> Analizar
