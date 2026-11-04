@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, FileText, Paperclip, Plus, RefreshCw, ScanText, Search, Trash2, Upload, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, Eye, EyeOff, FileText, Paperclip, Plus, RefreshCw, ScanText, Search, Trash2, Upload, X } from 'lucide-react';
 import DocPdfLink from '@/components/DocPdfLink';
 import { useCompany } from '@/contexts/CompanyContext';
 import { ACCEPT, droppedFiles, expandFiles, isPdf, pickInvoice } from './emailFiles';
@@ -325,31 +325,46 @@ export default function OcrPage() {
             onAttachNow={() => status[d.file]?.created && uploadAttachments(d.file, status[d.file].created!.id)} st={status[d.file] || {}} selected={selected.has(d.file)}
             onToggle={() => toggle(d.file)} onRemove={() => remove(d.file)} onVendor={v => changeVendor(d, v)} onCreate={() => create(d)}
             setField={(k, v) => setField(d.file, k, v)} setLine={(i, k, v) => setLine(d.file, i, k, v)}
-            addLine={l => addLine(d.file, l)} removeLine={i => removeLine(d.file, i)} />
+            addLine={l => addLine(d.file, l)} removeLine={i => removeLine(d.file, i)} pdf={files.find(x => x.name === d.file)} />
         ))}
       </main>
     </div>
   );
 }
 
-function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRemove, onVendor, onCreate, setField, setLine, addLine, removeLine }: {
+function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRemove, onVendor, onCreate, setField, setLine, addLine, removeLine, pdf }: {
   d: Doc; f?: Form; attachments: Attachment[]; onAttachNow: () => void; st: Status; selected: boolean;
   onToggle: () => void; onRemove: () => void; onVendor: (v: string) => void; onCreate: () => void;
   setField: (k: Exclude<keyof Form, 'lines'>, v: string) => void; setLine: (i: number, k: keyof FormLine, v: string) => void;
-  addLine: (l?: Line) => void; removeLine: (i: number) => void;
+  addLine: (l?: Line) => void; removeLine: (i: number) => void; pdf?: File;
 }) {
   const [showHistory, setShowHistory] = useState(false);
+  // Vista previa del PDF subido (se crea al mostrarla y se libera al ocultarla)
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  useEffect(() => () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl); }, [pdfUrl]);
+  const togglePdf = () => setPdfUrl(u => (u ? null : pdf ? URL.createObjectURL(pdf) : null));
   const s = d.suggestion;
-  const head = (
+  const head = (<>
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 border-b border-gray-200">
       {!d.loading && !d.error && d.vendor && !st.created && <input type="checkbox" checked={selected} onChange={onToggle} title="Marcar para enviar junto con las demás" />}
       <FileText size={16} className="text-gray-400" />
       <span className="font-bold text-gray-900">{d.vendor ? `${d.vendor.number} · ${d.vendor.name}` : 'Proveedor sin reconocer'}</span>
       <span className="text-xs text-gray-500">{d.file}{d.ocr ? ' · sin texto, leído con OCR' : d.scanned ? ' · escaneado (sin texto)' : ''}</span>
       {s && <span className="ml-auto text-sm text-gray-600">PDF: neto <b>{fmt(s.net)}</b> · IVA {fmt(s.vat)} · total <b>{fmt(s.total)} {s.currency || d.currency}</b></span>}
-      <button onClick={onRemove} title="Quitar de la lista (no se envía a BC)" className={`${s ? '' : 'ml-auto '}p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50`}><X size={16} /></button>
+      {pdf && (
+        <button onClick={togglePdf} className={`${s ? '' : 'ml-auto '}inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg border ${pdfUrl ? 'border-indigo-300 bg-indigo-50 text-indigo-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}>
+          {pdfUrl ? <EyeOff size={14} /> : <Eye size={14} />} {pdfUrl ? 'Ocultar PDF' : 'Ver PDF'}
+        </button>
+      )}
+      <button onClick={onRemove} title="Quitar de la lista (no se envía a BC)" className={`${s || pdf ? '' : 'ml-auto '}p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50`}><X size={16} /></button>
     </div>
-  );
+    {pdfUrl && (
+      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
+        <iframe src={pdfUrl} title={d.file} className="w-full max-w-3xl h-[480px] border border-gray-300 rounded-lg bg-white" />
+        <a href={pdfUrl} target="_blank" rel="noreferrer" className="inline-block mt-1 text-xs text-indigo-700 hover:underline">Abrir en otra pestaña</a>
+      </div>
+    )}
+  </>);
   if (d.loading) return <section className="bg-white border border-gray-200 rounded-xl shadow-sm">{head}<p className="p-4 text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> {d.reading ? 'PDF sin texto: leyendo la imagen con OCR…' : 'Leyendo el PDF…'}</p></section>;
   if (d.error) return <div className="rounded-lg border px-4 py-3 text-sm bg-red-50 border-red-200 text-red-800"><b>{d.file}</b>: {d.error}</div>;
   if (!f) return null;
