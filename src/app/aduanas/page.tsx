@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { AlertCircle, CheckCircle2, FileText, Landmark, RefreshCw, Upload, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { AlertCircle, CheckCircle2, Eye, EyeOff, FileText, Landmark, RefreshCw, Upload, X } from 'lucide-react';
 import DocPdfLink from '@/components/DocPdfLink';
 import { companyLabel, useCompany } from '@/contexts/CompanyContext';
 import TariffCheck, { Position } from './TariffCheck';
@@ -39,10 +39,22 @@ export default function AduanasPage() {
   const [status, setStatus] = useState<Record<string, Status>>({});
   // Declaraciones marcadas para enviar juntas
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Vista previa de cada PDF subido (URL local; se crea al mostrarla y se libera al ocultarla)
+  const [previews, setPreviews] = useState<Record<string, string>>({});
+  const previewsRef = useRef(previews);
+  previewsRef.current = previews;
+  useEffect(() => () => Object.values(previewsRef.current).forEach(u => URL.revokeObjectURL(u)), []);
+  const closePreviews = () => { Object.values(previews).forEach(u => URL.revokeObjectURL(u)); setPreviews({}); };
+  const togglePreview = (name: string) => {
+    const { [name]: url, ...rest } = previews;
+    if (url) { URL.revokeObjectURL(url); setPreviews(rest); return; }
+    const pdf = files.find(x => x.name === name);
+    if (pdf) setPreviews({ ...rest, [name]: URL.createObjectURL(pdf) });
+  };
 
   const read = async (list: File[]) => {
     if (!list.length) return;
-    setLoading(true); setError(null);
+    setLoading(true); setError(null); closePreviews();
     try {
       const form = new FormData();
       list.forEach(f => form.append('files', f));
@@ -103,6 +115,7 @@ export default function AduanasPage() {
   const allSelected = valid.length > 0 && valid.every(d => selected.has(d.file));
   // Quitar una declaración de la lista (no se envía a BC)
   const remove = (file: string) => {
+    if (previews[file]) togglePreview(file);
     setDocs(l => l.filter(d => d.file !== file));
     setFiles(l => l.filter(f => f.name !== file));
     setForms(({ [file]: _f, ...rest }) => rest);
@@ -183,8 +196,19 @@ export default function AduanasPage() {
                 <span className="font-bold text-gray-900">{d.atc || 'Sin nº AT/C'}</span>
                 <span className="text-xs text-gray-500">Registriernr. {d.registration || '—'} · LRN {d.lrn || '—'} · {d.file}</span>
                 <span className="ml-auto text-sm text-gray-600">Total Abgaben: <b>{d.total != null ? fmt(d.total) : '—'} €</b></span>
+                {files.some(x => x.name === d.file) && (
+                  <button onClick={() => togglePreview(d.file)} className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg border ${previews[d.file] ? 'border-indigo-300 bg-indigo-50 text-indigo-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}>
+                    {previews[d.file] ? <EyeOff size={14} /> : <Eye size={14} />} {previews[d.file] ? 'Ocultar PDF' : 'Ver PDF'}
+                  </button>
+                )}
                 <button onClick={() => remove(d.file)} title="Quitar de la lista (no se envía a BC)" className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"><X size={16} /></button>
               </div>
+              {previews[d.file] && (
+                <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
+                  <iframe src={previews[d.file]} title={d.file} className="w-full max-w-3xl h-[480px] border border-gray-300 rounded-lg bg-white" />
+                  <a href={previews[d.file]} target="_blank" rel="noreferrer" className="inline-block mt-1 text-xs text-indigo-700 hover:underline">Abrir en otra pestaña</a>
+                </div>
+              )}
               <div className="p-4 space-y-3">
                 <div className="flex flex-wrap gap-3 items-end">
                   <label className="text-xs font-semibold text-gray-500">Nº AT/C (Vendor Invoice No.)
