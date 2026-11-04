@@ -67,13 +67,18 @@ export function identifiers(text: string) {
   return [...ids];
 }
 
+const ISO_CURRENCIES = ['AED', 'AUD', 'BGN', 'BRL', 'CAD', 'CLP', 'COP', 'CZK', 'DKK', 'EGP', 'HKD', 'HRK', 'HUF', 'IDR', 'ILS', 'INR', 'ISK',
+  'JPY', 'KRW', 'KWD', 'MAD', 'MOP', 'MXN', 'MYR', 'NOK', 'NZD', 'PEN', 'PHP', 'PKR', 'PLN', 'QAR', 'RON', 'RSD', 'SAR', 'SEK', 'SGD', 'THB',
+  'TND', 'TRY', 'TWD', 'UAH', 'VND', 'ZAR'];
+
 // Divisa del documento: la que más aparece
 export function detectCurrency(text: string) {
   const count = (re: RegExp) => (text.match(re) || []).length;
   const scores: [string, number][] = [
     ['EUR', count(/\bEUR\b|€/g)], ['USD', count(/\bUSD\b|US\$/g)], ['GBP', count(/\bGBP\b|£/g)],
     ['CHF', count(/\bCHF\b/g)], ['CNY', count(/\bCNY\b|\bRMB\b/g)],
-    ...['AED', 'SEK', 'DKK', 'NOK', 'PLN', 'CZK', 'HUF', 'JPY', 'CAD', 'AUD', 'HKD', 'SGD', 'TRY'].map(c => [c, count(new RegExp(`\\b${c}\\b`, 'g'))] as [string, number]),
+    // Las demás (MOP, AED, HKD…): solo junto a un importe ("71,00 MOP", "MOP 71.00"), para no confundir palabras
+    ...ISO_CURRENCIES.map(c => [c, count(new RegExp(`\\d[.,]\\d{2}\\s?${c}\\b|\\b${c}\\s?\\d[\\d.,]*[.,]\\d{2}`, 'g'))] as [string, number]),
   ];
   scores.sort((a, b) => b[1] - a[1]);
   return scores[0][1] ? scores[0][0] : '';
@@ -712,7 +717,15 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
   const rates = vendor ? await vatRates(ctx, vendor.number, suggestion?.vatBusPostingGroup).catch(() => ({} as Record<string, number>)) : {};
   if (suggestion && text) applyVatRates(suggestion, text, rates);
   if (suggestion?.documentType === 'credit_note') warnings.push('Parece un abono (credit note): aquí solo se crean facturas; regístralo como Credit Memo en BC.');
-  if (vendor && currency && currency !== vendor.currency && !known) {
+  // La divisa del PDF manda aunque el proveedor no tenga facturas en ella (Uber en Macao: MOP; el modelo puede estar en
+  // CHF); la local va vacía al crearla. Se avisa si no existe en BC
+  if (suggestion && currency && suggestion.currency !== currency) {
+    const lcy = companyCurrency(ctx.companyName);
+    const found = currency === lcy ? null : await bcGet(ctx, odataUrl(`${ctx.apiBase}/currencies`, { $filter: `code eq '${q(currency)}'`, $select: 'code' })).catch(() => null);
+    const exists = currency === lcy || !!found?.value?.length;
+    warnings.push(`Divisa ${currency} (la del PDF): no hay facturas anteriores de este proveedor en ${currency} (el modelo está en ${suggestion.currency || lcy}).${exists ? '' : ` ${currency} no existe en BC: créala en Currencies o cambia la divisa.`}`);
+    suggestion.currency = currency;
+  } else if (vendor && currency && currency !== vendor.currency && !known) {
     warnings.push(`La factura está en ${currency} y el proveedor ${vendor.number} en ${vendor.currency}: ¿es otro proveedor (p. ej. la ficha en ${currency})?`);
   }
   const existing = vendor && suggestion?.invoiceNo ? await existingFor(ctx, vendor.number, suggestion.invoiceNo) : [];
