@@ -52,8 +52,10 @@ export async function POST(req: Request) {
     const ctx = await getBcContext(companyId);
     const from = new Date(Date.parse(movements.reduce((a, m) => (m.date < a ? m.date : a), movements[0].date)) - 10 * 86400000).toISOString().slice(0, 10);
     const journal = journalCode ? await journalByCode(ctx, journalCode) : null;
-    const [entries, open, inBatch, customers, vendors] = await Promise.all([
-      bankLedgerEntries(ctx, bankNo, from),
+    // Para cuadrar, desde 10 días antes del extracto; para sugerir, los últimos 12 meses (o desde el extracto si es anterior)
+    const yearAgo = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
+    const [history, open, inBatch, customers, vendors] = await Promise.all([
+      bankLedgerEntries(ctx, bankNo, from < yearAgo ? from : yearAgo),
       openEntries(ctx).catch(() => []),
       journal ? batchLines(ctx, journal.id, bankNo) : Promise.resolve([]),
       prisma.customer.findMany({ where: { companyId }, select: { bcId: true, name: true } }),
@@ -64,10 +66,11 @@ export async function POST(req: Request) {
       ...vendors.filter(v => v.bcId).map(v => ({ side: 'Vendor' as const, no: v.bcId!, name: v.name })),
     ];
 
+    const entries = history.filter(e => !e.reversed && e.date >= from);
     const matched = matchMovements(movements, entries);
     const unposted = movements.filter(m => !matched.has(m.idx));
     const batched = matchBatch(unposted, inBatch);
-    const suggestions = suggest(movements, matched, bankNo, open, parties);
+    const suggestions = suggest(movements, matched, bankNo, open, parties, history, companyId);
     const usedEntries = new Set(Array.from(matched.values()).flat().map(e => e.entryNo));
     const freeEntries = entries.filter(e => !usedEntries.has(e.entryNo));
 

@@ -15,6 +15,7 @@ export type Movement = {
 };
 export type LedgerEntry = {
   entryNo: number; date: string; docNo: string; description: string; amount: number; balType: string; balNo: string;
+  reversed?: boolean;
 };
 export type AppliesType = 'Invoice' | 'Credit Memo' | 'Payment' | 'Refund';
 export type AccountType = 'G/L Account' | 'Customer' | 'Vendor' | 'Bank Account';
@@ -174,10 +175,10 @@ export async function bankLedgerEntries(ctx: BcContext, bankNo: string, from: st
     $filter: `Bank_Account_No eq '${q(bankNo)}' and Posting_Date ge ${from}`,
     $select: 'Entry_No,Posting_Date,Document_No,Description,Amount,Bal_Account_Type,Bal_Account_No,Reversed',
   }), ctx.token);
-  // Un movimiento anulado y su anulación no cuentan como registrados
-  return rows.filter((r: any) => !r.Reversed).map((r: any) => ({
+  // Un movimiento anulado y su anulación no cuentan como registrados (reversed: solo para aprender de las correcciones)
+  return rows.map((r: any) => ({
     entryNo: r.Entry_No, date: r.Posting_Date, docNo: String(r.Document_No || ''), description: String(r.Description || ''),
-    amount: Number(r.Amount) || 0, balType: String(r.Bal_Account_Type || ''), balNo: String(r.Bal_Account_No || ''),
+    amount: Number(r.Amount) || 0, balType: String(r.Bal_Account_Type || ''), balNo: String(r.Bal_Account_No || ''), reversed: !!r.Reversed,
   }));
 }
 
@@ -275,6 +276,22 @@ export function matchMovements(movements: Movement[], entries: LedgerEntry[]) {
     }
   }
 
+  // 4b. Pago del Payment Journal (Iberia: "TRANSFERENCIA CRAZE IBERIA S.L." -18.404,59): BC registra un movimiento de
+  //     banco por proveedor, cada uno con su nº de documento, el mismo día; el extracto trae uno solo con la suma
+  for (const m of pending()) {
+    const dates = Array.from(new Set(entries.filter(e => !used.has(e.entryNo)).map(e => e.date)))
+      .filter(d => dist(m, d) <= 3).sort((a, b) => dist(m, a) - dist(m, b));
+    for (const d of dates) {
+      const group = entries.filter(e => !used.has(e.entryNo) && e.date === d && Math.sign(e.amount) === Math.sign(m.amount));
+      const found = group.length >= 2 ? subsetAnySize(group, cents(m.amount)) : null;
+      if (found) {
+        result.set(m.idx, found);
+        found.forEach(e => used.add(e.entryNo));
+        break;
+      }
+    }
+  }
+
   // 5. Cobro neto de una factura de compra (o al revés): movimientos del mismo día de documentos distintos con el
   //    nombre de la contrapartida (p. ej. dm drogerie markt GmbH 17.689,69 y dm drogerie markt GmbH AT -308,16)
   for (const m of pending()) {
@@ -321,6 +338,34 @@ function combinationWithSum(group: LedgerEntry[], k: number, target: number): Le
   if (!dfs(0, size, 0)) return null;
   const chosen = new Set(pick);
   return group.filter((_, i) => chosen.has(i) !== invert);
+}
+
+// Dos o más movimientos (de hasta 34) que suman target: mitad y mitad (2^17 sumas por lado, cada suma a partir de la
+// de la máscara sin su bit más bajo)
+function subsetAnySize(group: LedgerEntry[], target: number): LedgerEntry[] | null {
+  if (group.length > 34) return null;
+  const values = group.map(e => cents(e.amount));
+  // Todos juntos no llegan al importe: no hay solución
+  if (Math.abs(values.reduce((t, v) => t + v, 0)) < Math.abs(target)) return null;
+  const half = Math.floor(values.length / 2);
+  const sums = (from: number, n: number) => {
+    const out = new Float64Array(1 << n);
+    for (let mask = 1; mask < out.length; mask++) {
+      const low = 31 - Math.clz32(mask & -mask);
+      out[mask] = out[mask & (mask - 1)] + values[from + low];
+    }
+    return out;
+  };
+  const left = sums(0, half), right = sums(half, values.length - half);
+  const index = new Map<number, number>();
+  for (let mask = 0; mask < left.length; mask++) if (!index.has(left[mask])) index.set(left[mask], mask);
+  for (let maskR = 0; maskR < right.length; maskR++) {
+    const maskL = index.get(target - right[maskR]);
+    if (maskL == null) continue;
+    const pick = group.filter((_, i) => (i < half ? maskL & (1 << i) : maskR & (1 << (i - half))));
+    if (pick.length >= 2) return pick;
+  }
+  return null;
 }
 
 function subsetWithSum(group: LedgerEntry[], target: number): LedgerEntry[] | null {
@@ -398,6 +443,83 @@ function pickRule(m: Movement, rules: Rule[] | undefined) {
   return recent.find(r => cents(r.amount) === cents(m.amount)) || recent.find(r => r.text === m.text) || recent[0];
 }
 
+// ---------- Histórico de la cuenta ----------
+// Lo registrado en la cuenta de banco en los últimos 12 meses, por el texto: la descripción de los movimientos de banco
+// suele ser el texto del extracto ("TRAMISEC SL-Hospitalet de", "INTERESES Y/O COMISIONES CUENTA", "TIKET CONSUM") o
+// el nombre de la contrapartida ("Deutsche Lufthansa Aktiengesellschaft"). Sirve aunque el extracto no traiga el
+// nombre (Sabadell) y para movimientos de otros extractos.
+type Booking = { date: string; amount: number; description: string; balType: AccountType; balNo: string; via?: string };
+
+// Palabras que no distinguen un movimiento
+const GENERIC = new Set(['compra', 'compras', 'tarj', 'tarjeta', 'card', 'transferencia', 'transf', 'trf', 'recibo', 'pago', 'pagos', 'cargo',
+  'abono', 'adeudo', 'sepa', 'devolucion', 'anul', 'anulacion', 'payment', 'paypal', 'sumup', 'visa', 'mastercard', 'xxxx', 'xxxxxxxx',
+  'aktiengesellschaft', 'company', 'unlimited', 'spain', 'espana', 'services', 'servicios', 'international', 'group', 'holding', 'gutschrift',
+  'lastschrift', 'ueberweisung', 'uberweisung', 'folgelastschrift', 'erstlastschrift', 'kartenzahlung', 'girocard', 'sabadell', 'santander']);
+const words = (s: string, own: Set<string>) => new Set(normName(s).split(' ').filter(w => w.length >= 3 && !/\d/.test(w) && !GENERIC.has(w) && !own.has(w)));
+
+// Correcciones: un movimiento anulado (Reversed, o a mano con el mismo importe en positivo y en negativo contra la
+// misma cuenta en el mismo documento) y, por ese importe y ±3 días, el bueno con otra cuenta (TRAMISEC: VE-00078
+// anulado → UPS VE-00010): el texto anulado vale para la cuenta buena
+export function bookings(history: LedgerEntry[], bankNo: string): Booking[] {
+  const valid = history.filter(e => toAccountType(e.balType) && e.balNo && !(e.balType === 'Bank Account' && e.balNo === bankNo));
+  const cancelled = new Set<number>();
+  const byDoc = new Map<string, LedgerEntry[]>();
+  for (const e of valid) byDoc.set(e.docNo, [...(byDoc.get(e.docNo) || []), e]);
+  const out: Booking[] = [];
+  const add = (a: LedgerEntry) => {
+    const good = valid.find(x => !x.reversed && x.docNo !== a.docNo && cents(x.amount) === cents(a.amount) && x.balNo !== a.balNo && days(x.date, a.date) <= 3);
+    if (good) out.push({ date: good.date, amount: good.amount, description: a.description, balType: toAccountType(good.balType) as AccountType, balNo: good.balNo, via: good.description });
+  };
+  // Anulados en BC: el original (no la anulación, que lleva el signo contrario)
+  for (const e of valid) {
+    if (!e.reversed) continue;
+    cancelled.add(e.entryNo);
+    const twin = valid.find(x => x.reversed && x.docNo === e.docNo && x.entryNo !== e.entryNo && cents(x.amount) === -cents(e.amount));
+    if (!twin || e.entryNo < twin.entryNo) add(e);
+  }
+  for (const es of byDoc.values()) {
+    for (const a of es) {
+      if (cancelled.has(a.entryNo) || a.amount >= 0) continue;
+      const b = es.find(x => !cancelled.has(x.entryNo) && x.entryNo !== a.entryNo && x.balNo === a.balNo && cents(x.amount) === -cents(a.amount));
+      if (!b) continue;
+      cancelled.add(a.entryNo); cancelled.add(b.entryNo);
+      add(a);
+    }
+  }
+  for (const e of valid) if (!cancelled.has(e.entryNo)) out.push({ date: e.date, amount: e.amount, description: e.description, balType: toAccountType(e.balType) as AccountType, balNo: e.balNo });
+  return out;
+}
+
+// La cuenta con la que más se parece el texto del movimiento: palabras en común (ponderadas por lo raras que son en la
+// cuenta) sobre las de la descripción o las del movimiento, la que tenga menos; ≥ 50 % y una palabra de ≥ 4 letras.
+// Entre las cuentas que pasan, la de más peso (mismo signo × 2, más recientes primero)
+function fromHistory(m: Movement, books: Booking[], own: Set<string>) {
+  if (!books.length) return null;
+  const docs = books.map(b => words(b.description, own));
+  const df = new Map<string, number>();
+  for (const ws of docs) for (const w of ws) df.set(w, (df.get(w) || 0) + 1);
+  const idf = (w: string) => Math.log(1 + books.length / (df.get(w) || 1));
+  const mw = words(`${m.name} ${m.purpose}`, own);
+  if (!mw.size) return null;
+  const mWeight = [...mw].reduce((t, w) => t + idf(w), 0);
+  const votes = new Map<string, { weight: number; best: Booking; score: number }>();
+  books.forEach((b, i) => {
+    const ws = docs[i];
+    if (!ws.size) return;
+    const shared = [...ws].filter(w => mw.has(w));
+    if (!shared.some(w => w.length >= 4)) return;
+    const score = shared.reduce((t, w) => t + idf(w), 0) / Math.min([...ws].reduce((t, w) => t + idf(w), 0), mWeight);
+    if (score < 0.5) return;
+    const key = `${b.balType}|${b.balNo}`;
+    const weight = score * (Math.sign(b.amount) === Math.sign(m.amount) ? 2 : 1);
+    const v = votes.get(key);
+    if (!v) votes.set(key, { weight, best: b, score });
+    else { v.weight += weight; if (score > v.score || (score === v.score && b.date > v.best.date)) { v.best = b; v.score = score; } }
+  });
+  const top = [...votes.values()].sort((a, b) => b.weight - a.weight)[0];
+  return top || null;
+}
+
 // Facturas abiertas citadas en el concepto (nº de documento o nº de documento externo)
 function citedEntries(m: Movement, open: OpenEntry[]) {
   const side = m.amount > 0 ? 'Customer' : 'Vendor';
@@ -464,10 +586,15 @@ function matchParty(m: Movement, parties: Party[]) {
   return hits.find(p => p.side === preferred) || hits[0] || null;
 }
 
+// history: movimientos de banco de la cuenta de los últimos 12 meses; ownName: la empresa (no distingue: "TRANSFERENCIA
+// CRAZE IBERIA S.L." no es un cobro de CRAZE GmbH)
 export function suggest(
   movements: Movement[], matched: Map<number, LedgerEntry[]>, bankNo: string, open: OpenEntry[], parties: Party[],
+  history: LedgerEntry[] = [], ownName = '',
 ): Map<number, Suggestion> {
   const { byIban, byName } = learnRules(movements, matched, bankNo);
+  const books = bookings(history, bankNo);
+  const own = new Set(normName(ownName).split(' '));
   const partyName = new Map(parties.map(p => [`${p.side}|${p.no}`, p.name]));
   const out = new Map<number, Suggestion>();
   const defaultDescription = (m: Movement) => (m.name || m.purpose).substring(0, 100);
@@ -526,6 +653,16 @@ export function suggest(
       const description = documentNo || (rule.usesPurpose ? m.purpose : rule.description) || defaultDescription(m);
       const single = line(rule.accountType, rule.accountNo, description);
       const applied = withApply(single);
+      out.set(m.idx, { documentNo, source: 'Histórico', note: [when, applied.note].filter(Boolean).join(' · '), lines: applied.lines });
+      continue;
+    }
+
+    // Lo registrado antes en la cuenta con un texto parecido
+    const hist = fromHistory(m, books, own);
+    if (hist) {
+      const b = hist.best;
+      const applied = withApply(line(b.balType, b.balNo, b.via || b.description));
+      const when = `Como "${b.description.substring(0, 40)}" el ${b.date.split('-').reverse().join('.')}${b.via ? ` (corregido a ${b.via.substring(0, 30)})` : ''}`;
       out.set(m.idx, { documentNo, source: 'Histórico', note: [when, applied.note].filter(Boolean).join(' · '), lines: applied.lines });
       continue;
     }
