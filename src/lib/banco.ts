@@ -463,7 +463,31 @@ export function suggest(
     }
     out.set(m.idx, { documentNo, source: '', note: 'Sin sugerencia: indica la cuenta', lines: [line('', '', `${m.name} ${m.purpose}`.trim())] });
   }
+  // En las líneas de cliente o proveedor el nombre ya está en la cuenta: la descripción no lo repite ("ALDI TURNHOUT N.V.
+  // CRZ-SI26-03349" → "CRZ-SI26-03349"); si no queda nada, la factura que liquida o el concepto del banco
+  for (const [idx, sug] of out) {
+    const m = movements.find(x => x.idx === idx)!;
+    for (const l of sug.lines) {
+      if (l.accountType !== 'Customer' && l.accountType !== 'Vendor') continue;
+      const own = partyName.get(`${l.accountType}|${l.accountNo}`) || '';
+      l.description = (withoutName(l.description, [l.accountName, own, m.name]) || l.appliesToDocNo || m.purpose || l.description).substring(0, 100);
+    }
+  }
   return out;
+}
+
+// La descripción sin el nombre de la cuenta delante (comparando sin mayúsculas, acentos ni puntuación)
+function withoutName(description: string, names: string[]) {
+  for (const name of names.filter(n => n && n.trim().length >= 3).sort((a, b) => b.length - a.length)) {
+    const target = normName(name);
+    // El prefijo más largo de la descripción que, normalizado, es el nombre ("ALDI TURNHOUT N.V." entero, con su N.V.)
+    let end = 0;
+    for (let i = 1; i <= description.length; i++) {
+      if (!/[A-Za-z0-9]/.test(description[i] || ' ') && normName(description.slice(0, i)) === target) end = i;
+    }
+    if (end) return description.slice(end).replace(/^[\s,.;:\-–]+/, '').trim();
+  }
+  return description.trim();
 }
 
 // ---------- Envío al lote ----------
