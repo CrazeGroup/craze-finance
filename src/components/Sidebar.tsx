@@ -37,6 +37,7 @@ const TEXT: Record<Lang, Record<string, string>> = {
   },
 };
 const HIDDEN_KEY = 'crz-menu-hidden';
+const COLLAPSED_KEY = 'crz-menu-collapsed';
 
 export default function Sidebar({ permissions = [], username = '', authEnabled = true }: { permissions: string[], username: string, authEnabled?: boolean }) {
   const pathname = usePathname();
@@ -50,16 +51,30 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
   const [renaming, setRenaming] = useState<string | null>(null);
   const dragged = useRef<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<string[]>([]);
 
-  // Secciones del usuario (se guardan en la base de datos)
+  // Secciones del menú, comunes a todos (se guardan en la base de datos); las plegadas son de cada navegador
   useEffect(() => {
     if (pathname === '/login') return;
-    fetch('/api/sidebar-layout', { cache: 'no-store' }).then(r => r.json()).then(d => Array.isArray(d?.sections) && setLayout(d)).catch(() => {});
+    fetch('/api/sidebar-layout', { cache: 'no-store' }).then(r => r.json()).then((d: Layout) => {
+      if (!Array.isArray(d?.sections)) return;
+      setLayout(d);
+      // Primera vez en este navegador: respeta las secciones que ya estaban plegadas en el menú antiguo (por usuario)
+      let stored: string | null = null;
+      try { stored = localStorage.getItem(COLLAPSED_KEY); } catch { /* sin almacenamiento */ }
+      if (stored === null) setCollapsed(d.sections.filter(x => x.collapsed).map(x => x.id));
+    }).catch(() => {});
   }, [pathname === '/login']); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     try { setHidden(localStorage.getItem(HIDDEN_KEY) === '1'); } catch { /* sin almacenamiento */ }
+    try { setCollapsed(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '[]')); } catch { /* sin almacenamiento */ }
   }, []);
+  const toggleCollapsed = (id: string) => setCollapsed(c => {
+    const next = c.includes(id) ? c.filter(x => x !== id) : [...c, id];
+    try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify(next)); } catch { /* sin almacenamiento */ }
+    return next;
+  });
   const toggleHidden = (h: boolean) => {
     setHidden(h);
     try { localStorage.setItem(HIDDEN_KEY, h ? '1' : '0'); } catch { /* sin almacenamiento */ }
@@ -233,7 +248,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
                 const items = sec.items.map(h => byHref.get(h)).filter(Boolean) as MenuItem[];
                 const isConfig = sec === configSection;
                 if (!editing && !items.length && !isConfig) return null;
-                const open = editing || !sec.collapsed;
+                const open = editing || !collapsed.includes(sec.id);
                 return (
                   <div key={sec.id} className="pt-3" onDragOver={over(`sec:${sec.id}`)} onDrop={onDrop(sec.id)}>
                     <div className="flex items-center gap-1 px-2 mb-1">
@@ -244,7 +259,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
                           className="flex-1 text-xs font-bold uppercase tracking-wider border border-gray-300 rounded px-1.5 py-0.5" />
                       ) : (
                         <button type="button" disabled={editing}
-                          onClick={() => save({ sections: layout.sections.map(x => (x.id === sec.id ? { ...x, collapsed: !x.collapsed } : x)) })}
+                          onClick={() => toggleCollapsed(sec.id)}
                           className="flex-1 flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-gray-400 hover:text-gray-700 text-left">
                           {!editing && (open ? <ChevronDown size={12} /> : <ChevronRight size={12} />)} {sec.name}
                         </button>
