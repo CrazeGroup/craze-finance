@@ -580,6 +580,30 @@ export function propose(text: string, history: HistoryInvoice[], examples: Examp
   };
 }
 
+// Recibos de Uber (capturas sin nº de factura): la fecha y hora del pago ("Zahlungen … 20.10.26 18:29") es la fecha
+// de documento, de registro y de vencimiento, y también el Vendor Invoice No. (lo único que identifica el recibo); sin
+// IVA (OHNE MWST)
+function uberRules(s: OcrSuggestion, text: string, vendorName: string) {
+  if (!/\buber\b/i.test(vendorName)) return;
+  const pay = Math.max(0, text.search(/Zahlungen|Payments|Pagos/i));
+  const m = text.slice(pay).match(/(?<![\d.\/])(\d{1,2}[./]\d{1,2}[./]\d{2,4})\s+(\d{1,2}:\d{2})/);
+  const iso = m ? parseDate(m[1]) : '';
+  if (iso) {
+    s.invoiceDate = s.postingDate = s.dueDate = iso;
+    s.invoiceNo = `${m![1]} ${m![2]}`;
+  }
+  for (const l of s.lines) if (l.lineType !== 'Comment') l.taxCode = 'OHNE MWST';
+}
+
+// VAT Product Posting Groups de la empresa (v2 taxGroups), para elegir el Grupo IVA de cada línea en la página
+export async function vatGroups(ctx: BcContext) {
+  return cached(`ocr:vatgroups:${ctx.companyName}`, 6 * HOUR, async () => {
+    const data = await bcGet(ctx, odataUrl(`${ctx.apiBase}/taxGroups`, { $select: 'code,displayName' }));
+    return ((data.value || []) as any[]).map(g => ({ code: String(g.code), name: String(g.displayName || '') }))
+      .sort((a, b) => a.code.localeCompare(b.code));
+  });
+}
+
 // Reglas de Amazon que no salen de la factura modelo (los PDFs se parecen demasiado entre sí):
 // - promociones con "Rebate" o "Flexible" → AA-00069 FLEXIBLE ASIN BASED (las demás siguen al modelo: AA-00108…)
 // - Amazon Ads (AA-00015): inversión del sujeto pasivo, 19% SERVICES con VAT Bus. Posting Group UE
@@ -644,6 +668,7 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
     }
   }
   if (suggestion && vendor) amazonRules(suggestion, text, vendor.name, warnings);
+  if (suggestion && vendor) uberRules(suggestion, text, vendor.name);
   if (suggestion?.documentType === 'credit_note') warnings.push('Parece un abono (credit note): aquí solo se crean facturas; regístralo como Credit Memo en BC.');
   if (vendor && currency && currency !== vendor.currency && !known) {
     warnings.push(`La factura está en ${currency} y el proveedor ${vendor.number} en ${vendor.currency}: ¿es otro proveedor (p. ej. la ficha en ${currency})?`);

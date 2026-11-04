@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, FileText, Paperclip, Plus, RefreshCw, ScanText, Search, Trash2, Upload, X } from 'lucide-react';
 import DocPdfLink from '@/components/DocPdfLink';
 import { useCompany } from '@/contexts/CompanyContext';
@@ -402,7 +402,7 @@ function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRem
                 <td className="p-1"><input value={l.description2} maxLength={50} onChange={e => setLine(i, 'description2', e.target.value)} disabled={l.lineType === 'Comment'} className={`${input} w-full min-w-[140px]`} /></td>
                 <td className="p-1"><input value={l.quantity} onChange={e => setLine(i, 'quantity', e.target.value)} disabled={l.lineType === 'Comment'} className={`${input} w-20 text-right tabular-nums`} /></td>
                 <td className="p-1"><input value={l.unitCost} onChange={e => setLine(i, 'unitCost', e.target.value)} disabled={l.lineType === 'Comment'} className={`${input} w-28 text-right tabular-nums`} /></td>
-                <td className="p-1"><input value={l.taxCode} onChange={e => setLine(i, 'taxCode', e.target.value)} disabled={l.lineType === 'Comment'} className={`${input} w-36`} /></td>
+                <td className="p-1"><VatSelect value={l.taxCode} onChange={v => setLine(i, 'taxCode', v)} disabled={l.lineType === 'Comment'} /></td>
                 <td className="p-2 text-right tabular-nums whitespace-nowrap">{l.lineType === 'Comment' ? '' : fmt(toNum(l.quantity) * toNum(l.unitCost))}</td>
                 <td className="p-1"><button onClick={() => removeLine(i)} title="Quitar línea" className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"><Trash2 size={14} /></button></td>
               </tr>
@@ -489,6 +489,25 @@ function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRem
 }
 
 // Proveedor: los candidatos reconocidos en el PDF o uno buscado por nº/nombre (vuelve a proponer las líneas)
+// VAT Product Posting Groups de la empresa activa (BC), una vez por empresa
+const vatGroupsBy: Record<string, Promise<{ code: string; name: string }[]>> = {};
+function VatSelect({ value, onChange, disabled }: { value: string; onChange: (v: string) => void; disabled?: boolean }) {
+  const { selectedCompany } = useCompany();
+  const [groups, setGroups] = useState<{ code: string; name: string }[]>([]);
+  useEffect(() => {
+    vatGroupsBy[selectedCompany] ??= fetch('/api/ocr/vat-groups').then(r => r.json()).then(j => j.groups || []).catch(() => []);
+    vatGroupsBy[selectedCompany].then(setGroups);
+  }, [selectedCompany]);
+  // El de la factura modelo aunque no esté en la lista (p. ej. si BC no ha respondido)
+  const list = value && !groups.some(g => g.code === value) ? [{ code: value, name: '' }, ...groups] : groups;
+  return (
+    <select value={value} onChange={e => onChange(e.target.value)} disabled={disabled} className={`${input} w-40`}>
+      <option value="">—</option>
+      {list.map(g => <option key={g.code} value={g.code} title={g.name}>{g.code}</option>)}
+    </select>
+  );
+}
+
 function VendorPicker({ d, onVendor }: { d: Doc; onVendor: (v: string) => void }) {
   const [term, setTerm] = useState('');
   const [results, setResults] = useState<{ number: string; name: string; currency: string; invoices: number }[]>([]);
