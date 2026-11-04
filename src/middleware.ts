@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { decrypt, AUTH_ENABLED } from './lib/auth';
+import { decrypt, encrypt, AUTH_ENABLED } from './lib/auth';
 
 const publicRoutes = ['/login', '/api/auth/login', '/api/auth/logout', '/api/auth/microsoft', '/api/auth/microsoft/callback', '/api/upload'];
 // Token de servicio para llamar a la API sin sesión (sincronización horaria de GitHub Actions, scripts de diagnóstico)
@@ -43,7 +43,7 @@ export async function middleware(request: NextRequest) {
 
   // If no token and not a public route, redirect to login (the API answers 401)
   if (!token) {
-    if (isApi) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+    if (isApi) return NextResponse.json({ error: 'No hay sesión (o ha caducado): recarga la página e inicia sesión de nuevo.' }, { status: 401 });
     return NextResponse.redirect(new URL('/login', request.url));
   }
 
@@ -92,14 +92,24 @@ export async function middleware(request: NextRequest) {
     requestHeaders.set('x-user-username', payload.username as string);
     requestHeaders.set('x-user-permissions', payload.permissions as string);
 
-    return NextResponse.next({
+    const response = NextResponse.next({
       request: {
         headers: requestHeaders,
       }
     });
+    // Sesión deslizante: con cada petición, si el token tiene más de 1 h se renueva por otras 24 h, para que no caduque
+    // mientras se trabaja (una página abierta, p. ej. OCR, seguía mandando el token caducado → "No autorizado")
+    if (typeof payload.iat === 'number' && Date.now() / 1000 - payload.iat > 3600) {
+      response.cookies.set({
+        name: 'auth-token',
+        value: await encrypt({ id: payload.id, username: payload.username, permissions: payload.permissions }),
+        httpOnly: true, path: '/', secure: process.env.NODE_ENV === 'production', maxAge: 60 * 60 * 24,
+      });
+    }
+    return response;
   } catch (error) {
     // Invalid token
-    const response = isApi ? NextResponse.json({ error: 'Sesión caducada' }, { status: 401 }) : NextResponse.redirect(new URL('/login', request.url));
+    const response = isApi ? NextResponse.json({ error: 'La sesión ha caducado: recarga la página e inicia sesión de nuevo.' }, { status: 401 }) : NextResponse.redirect(new URL('/login', request.url));
     response.cookies.delete('auth-token');
     return response;
   }
