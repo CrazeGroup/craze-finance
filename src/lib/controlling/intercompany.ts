@@ -82,7 +82,7 @@ export type IcRow = {
 };
 
 export async function intercompanyReport(source: string, from: string, to: string, force = false) {
-  return cached(`intercompany9:${source}:${from}:${to}`, to < today() ? 12 * HOUR : HOUR, async () => {
+  return cached(`intercompany10:${source}:${from}:${to}`, to < today() ? 12 * HOUR : HOUR, async () => {
     const ctx = await getBcContext(source);
     const sales = (await bcFetchAll(odataUrl(`${ctx.apiBase}/salesInvoices`, {
       $filter: `postingDate ge ${from} and postingDate le ${to}`,
@@ -198,6 +198,25 @@ export async function intercompanyReport(source: string, from: string, to: strin
       ? ic.find(r => r.target === target && s(r.x.number) !== no && !cancelledBy.has(s(r.x.number)) && norm(r.x.externalDocumentNumber) === norm(ext))
       : undefined;
     const fmtA = (v: number) => v.toFixed(2);
+    // Drop shipment: facturas del origen al destino con el mismo External Document No. aunque sean de fuera del periodo
+    // (un mismo pedido facturado por separado), con sus líneas
+    const outside = new Map<string, any[]>();
+    if (source === 'CRAZE') {
+      const exts = Array.from(new Set(ic.filter(r => DROP_SHIP_TARGETS.includes(r.target) && s(r.x.externalDocumentNumber)).map(r => s(r.x.externalDocumentNumber))));
+      const inIc = new Set(ic.map(r => s(r.x.number)));
+      for (const part of chunk(exts, 15)) {
+        const found = await bcFetchAll(odataUrl(`${ctx.apiBase}/salesInvoices`, {
+          $filter: part.map(e => `externalDocumentNumber eq '${q(e)}'`).join(' or '),
+          $select: 'number,externalDocumentNumber,postingDate,customerName,totalAmountExcludingTax,status',
+        }), ctx.token).catch(() => [] as any[]);
+        for (const x of found.filter((x: any) => s(x.status) !== 'Draft' && !inIc.has(s(x.number)) && groupCompanyOf(s(x.customerName)))) {
+          const k = `${groupCompanyOf(s(x.customerName))}|${norm(x.externalDocumentNumber)}`;
+          outside.set(k, [...(outside.get(k) || []), x]);
+        }
+      }
+      const extraNos = Array.from(outside.values()).flat().map((x: any) => s(x.number));
+      if (extraNos.length) for (const [k, v] of await linesOf(ctx, 'salesInvoiceLines', extraNos)) salesLines.set(k, v);
+    }
     // Suma de líneas (cantidad por artículo) de varios documentos, restando los abonos
     const netLines = (plus: (Line[] | undefined)[], minus: (Line[] | undefined)[] = []) =>
       [...plus.flatMap(l => l || []), ...minus.flatMap(l => (l || []).map(x => ({ ...x, quantity: -x.quantity, amount: -x.amount })))];
@@ -261,14 +280,22 @@ export async function intercompanyReport(source: string, from: string, to: strin
           // frente a todas las ventas finales con ese nº (menos sus abonos) cuadran en artículos y cantidades
           const group = tg.finalGroups.get(norm(ext)) || [];
           const memos = group.flatMap((g: any) => tg.finalMemos.get(s(g.number)) || []);
-          const mineAll = ic.filter(r => r.target === target && !cancelledBy.has(s(r.x.number)) && norm(r.x.externalDocumentNumber) === norm(ext));
+          const mineAll = [
+            ...ic.filter(r => r.target === target && !cancelledBy.has(s(r.x.number)) && norm(r.x.externalDocumentNumber) === norm(ext)).map(r => r.x),
+            ...(outside.get(`${target}|${norm(ext)}`) || []).filter((x: any) => !creditedBy.has(`no:${norm(x.number)}`)),
+          ];
           if (group.length > 1 || memos.length || mineAll.length > 1) {
             const net = compareLines(
-              netLines(mineAll.map(r => salesLines.get(s(r.x.number)))),
+              netLines(mineAll.map((x: any) => salesLines.get(s(x.number)))),
               netLines(group.map((g: any) => tg.finalLines.get(s(g.number))), memos.map((m: any) => tg.finalMemoLines.get(s(m.number)))),
             );
+            const others = mineAll.filter((x: any) => s(x.number) !== no).map((x: any) => s(x.number));
+            if (!net.ok) {
+              // Facturado por separado pero aún con diferencias: qué artículos no cuadran en el conjunto
+              const diff = net.rows.filter(d => Math.abs(d.a - d.b) > 0.0001).map(d => `${d.no} ${d.description} (${d.a} de ${source}, ${d.b} en las ventas finales)`);
+              issues[issues.length - 1] = `Artículos o cantidades distintos en la venta final: con todas las facturas de ${ext} (${[no, ...others].join(', ')} de ${source}; ${group.map((g: any) => s(g.number)).join(', ') || '–'}${memos.length ? ` menos ${memos.map((m: any) => s(m.number)).join(', ')}` : ''} en ${target}) no cuadra: ${diff.join(' · ')}`;
+            }
             if (net.ok) {
-              const others = mineAll.filter(r => s(r.x.number) !== no).map(r => s(r.x.number));
               corrected.push(`Venta final ${ext} corregida: ${group.map((g: any) => `${s(g.number)} (${fmtA(n(g.totalAmountExcludingTax))})`).join(', ')}${memos.length ? ` menos los abonos ${memos.map((m: any) => `${s(m.number)} (${fmtA(n(m.totalAmountExcludingTax))})`).join(', ')}` : ''}${others.length ? `, junto con ${others.join(', ')} de ${source}` : ''}: cuadran los artículos y cantidades`);
             }
           }
