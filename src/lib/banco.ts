@@ -12,6 +12,9 @@ import * as XLSX from 'xlsx';
 export type Movement = {
   idx: number; date: string; valueDate: string; text: string; purpose: string; name: string; iban: string;
   endToEnd: string; amount: number; pending: boolean; account: string;
+  // Pago colectivo (Acrevis "Belast. E-Banking (3 Transaktionen)" y debajo una fila por pago, "1. Westhive…"): el detalle
+  // lleva el idx de la fila del total
+  group?: number;
 };
 export type LedgerEntry = {
   entryNo: number; date: string; docNo: string; description: string; amount: number; balType: string; balNo: string;
@@ -135,6 +138,9 @@ function parseBankRows(rows: unknown[][]): Movement[] {
     // Sin columna de concepto, el texto puede venir en varias líneas (Acrevis: "Belastung LSV+ SALT MOBILE SA",
     // el nombre, la dirección, "Zahlungszweck: …", "Referenznummer: …"): 1ª línea = texto, 2ª = nombre, el resto = concepto
     const lines = cols.purpose < 0 ? get(row, cols.text).split(/\r?\n/).map(x => x.trim()).filter(Boolean) : [];
+    // Pago de un colectivo: "1. <nombre>", la dirección y "Zahlungszweck: …" (sin texto propio)
+    const part = lines[0]?.match(/^\d+\.\s+(.+)$/);
+    if (part) lines.splice(0, 1, '', part[1]);
     const multi = lines.length > 1;
     const amount = cols.amount >= 0 ? cellNumber(row[cols.amount]) : (cellNumber(row[cols.credit]) || 0) - Math.abs(cellNumber(row[cols.debit]) || 0);
     const purpose = [get(row, cols.purpose), ...(multi ? lines.slice(1) : []), ...extras.map(j => get(row, j))].filter(Boolean).join(' ');
@@ -145,7 +151,21 @@ function parseBankRows(rows: unknown[][]): Movement[] {
       endToEnd: get(row, cols.e2e), amount, pending: /vorgemerkt|pendiente/i.test(get(row, cols.info)),
       account: (get(row, cols.account) || ownIban || above).replace(/\s/g, '').toUpperCase(),
     };
-  }).filter(m => m.date && Number.isFinite(m.amount) && m.amount !== 0).map((m, idx) => ({ ...m, idx }));
+  }).filter(m => m.date && Number.isFinite(m.amount) && m.amount !== 0).map((m, idx) => ({ ...m, idx }))
+    .map((m, i, all) => {
+      if (m.text) return m;
+      // Detalle de un pago colectivo: el total es la fila anterior con texto "(N Transaktionen)" del mismo día
+      let j = i - 1;
+      while (j >= 0 && !all[j].text) j--;
+      return j >= 0 && /\(\d+ Transaktion(en)?\)/i.test(all[j].text) && all[j].date === m.date ? { ...m, group: all[j].idx, text: all[j].text } : m;
+    });
+}
+
+// Pagos colectivos: BC unas veces los tiene registrados por el total y otras pago a pago. Si el total cuadra con BC, se
+// quitan sus pagos; si no, se quita el total y quedan los pagos (cuadrados o para registrar cada uno a su proveedor)
+export function collapseGroups<T extends Movement>(movements: T[], matched: Map<number, unknown>): T[] {
+  const heads = new Set(movements.filter(m => m.group != null).map(m => m.group!));
+  return movements.filter(m => (m.group != null ? !matched.has(m.group) : !heads.has(m.idx) || matched.has(m.idx)));
 }
 
 export function parseBankCsv(text: string): Movement[] {

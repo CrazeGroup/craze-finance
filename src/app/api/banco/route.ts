@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import prisma from '@/lib/prisma';
 import { bcFetchAll, getBcContext, odataUrl } from '@/lib/bcClient';
 import {
-  bankLedgerEntries, batchLines, journalByCode, matchBatch, matchMovements, openEntries, parseBankFile, suggest,
+  bankLedgerEntries, batchLines, journalByCode, matchBatch, matchMovements, openEntries, parseBankFile, collapseGroups, suggest,
   type MovementResult, type Party,
 } from '@/lib/banco';
 
@@ -46,11 +46,11 @@ export async function POST(req: Request) {
     if (!(file instanceof File)) return NextResponse.json({ error: 'Sube el extracto del banco (CSV o Excel).' }, { status: 400 });
     if (!bankNo) return NextResponse.json({ error: 'Elige la cuenta de banco.' }, { status: 400 });
 
-    const movements = parseBankFile(new Uint8Array(await file.arrayBuffer()), file.name);
-    if (!movements.length) return NextResponse.json({ error: 'El fichero no tiene movimientos.' }, { status: 400 });
+    const parsed = parseBankFile(new Uint8Array(await file.arrayBuffer()), file.name);
+    if (!parsed.length) return NextResponse.json({ error: 'El fichero no tiene movimientos.' }, { status: 400 });
 
     const ctx = await getBcContext(companyId);
-    const from = new Date(Date.parse(movements.reduce((a, m) => (m.date < a ? m.date : a), movements[0].date)) - 10 * 86400000).toISOString().slice(0, 10);
+    const from = new Date(Date.parse(parsed.reduce((a, m) => (m.date < a ? m.date : a), parsed[0].date)) - 10 * 86400000).toISOString().slice(0, 10);
     const journal = journalCode ? await journalByCode(ctx, journalCode) : null;
     // Para cuadrar, desde 10 días antes del extracto; para sugerir, los últimos 12 meses (o desde el extracto si es anterior)
     const yearAgo = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
@@ -67,7 +67,8 @@ export async function POST(req: Request) {
     ];
 
     const entries = history.filter(e => !e.reversed && e.date >= from);
-    const matched = matchMovements(movements, entries);
+    const matched = matchMovements(parsed, entries);
+    const movements = collapseGroups(parsed, matched);
     const unposted = movements.filter(m => !matched.has(m.idx));
     const batched = matchBatch(unposted, inBatch);
     const suggestions = suggest(movements, matched, bankNo, open, parties, history, companyId);
