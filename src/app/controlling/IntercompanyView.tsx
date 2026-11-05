@@ -10,7 +10,7 @@ import CompanySelect, { CONSOLIDATED, REPORT_COMPANIES, useReportCompany } from 
 // Controlling · Intercompany: facturas de venta entre empresas del grupo frente a su factura de compra en la otra
 // empresa (mismo nº, importe, divisa, fecha, artículos y cantidades) y, en las ventas de CRAZE GmbH a UK / Group AG
 // (drop shipment), la factura de venta final al cliente. Datos: /api/controlling/intercompany (una petición por empresa).
-type Cmp = { no: string; description: string; a: number; b: number; equivalent?: string };
+type Cmp = { no: string; description: string; a: number; b: number; aAmount?: number; bAmount?: number; equivalent?: string };
 type Row = {
   source: string; target: string; invoiceNo: string; postingDate: string; invoiceDate: string; customer: string; currency: string; amount: number; externalDocNo: string;
   purchase: null | { no: string; vendorInvoiceNo: string; postingDate: string; invoiceDate: string; vendor: string; currency: string; amount: number };
@@ -104,31 +104,52 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
     XLSX.writeFile(wb, `Intercompany_${company}_${from}_${to}.xlsx`.replace(/\s+/g, '_'));
   };
 
+  // Líneas por artículo: unidades e importe sin IVA de la venta, la compra y (drop shipment) la venta final
   const LinesTable = ({ r }: { r: Row }) => {
     const items = Array.from(new Set([...r.lines.map(l => l.no), ...(r.final?.lines || []).map(l => l.no)])).sort();
+    const pCur = r.purchase?.currency || r.target, fCur = r.final?.currency || '';
+    const rowsData = items.map(no => {
+      const l = r.lines.find(x => x.no === no), f = r.final?.lines.find(x => x.no === no);
+      return {
+        no, l, f, eq: l?.equivalent, description: l?.description || f?.description || '',
+        sale: l?.a ?? f?.a ?? 0, saleAmt: l?.aAmount ?? f?.aAmount ?? 0, purch: l?.b ?? 0, purchAmt: l?.bAmount ?? 0, fin: f?.b ?? 0, finAmt: f?.bAmount ?? 0,
+      };
+    });
+    const sum = (k: 'saleAmt' | 'purchAmt' | 'finAmt') => rowsData.reduce((t, x) => t + x[k], 0);
+    const red = 'text-[#C0392B] font-semibold';
+    const sub = 'block text-[10px] font-normal normal-case tracking-normal text-gray-400';
     return (
       <table className="w-full text-[12px] bg-white border border-gray-200 rounded-lg">
         <thead><tr className="border-b border-gray-200 bg-gray-50">
           <th className={th}>Artículo</th><th className={th}>Descripción</th>
-          <th className={`${th} text-right`}>Venta {r.source}</th><th className={`${th} text-right`}>Compra {r.target}</th>
-          {r.final && <th className={`${th} text-right`}>Venta final {r.target}</th>}
+          <th className={`${th} text-right`}>Venta {r.source}<span className={sub}>uds.</span></th><th className={`${th} text-right`}>Venta {r.source}<span className={sub}>importe {r.currency}</span></th>
+          <th className={`${th} text-right`}>Compra {r.target}<span className={sub}>uds.</span></th><th className={`${th} text-right`}>Compra {r.target}<span className={sub}>importe {pCur}</span></th>
+          {r.final && <><th className={`${th} text-right`}>Venta final {r.target}<span className={sub}>uds.</span></th><th className={`${th} text-right`}>Venta final {r.target}<span className={sub}>importe {fCur}</span></th></>}
         </tr></thead>
         <tbody>
-          {items.map(no => {
-            const l = r.lines.find(x => x.no === no), f = r.final?.lines.find(x => x.no === no);
-            const sale = l?.a ?? f?.a ?? 0, purch = l?.b ?? 0, fin = f?.b ?? 0;
-            const eq = l?.equivalent;
-            const bad = !eq && (Math.abs(sale - purch) > 0.0001 || (r.final && r.final.found && Math.abs(sale - fin) > 0.0001));
+          {rowsData.map(x => {
+            const qtyBad = !x.eq && Math.abs(x.sale - x.purch) > 0.0001;
+            const amtBad = !x.eq && !!r.purchase && Math.abs(x.saleAmt - x.purchAmt) > 0.05;
+            const finBad = !!r.final?.found && Math.abs(x.sale - x.fin) > 0.0001;
             return (
-              <tr key={no} className={`border-b border-gray-100 ${bad ? 'bg-red-50' : ''}`}>
-                <td className={`${td} font-mono font-semibold`}>{no}</td>
-                <td className={td}>{l?.description || f?.description}{eq && <span className="ml-2 text-[11px] text-emerald-700 font-semibold">✓ {eq}</span>}</td>
-                <td className={`${td} text-right font-mono`}>{num(sale)}</td>
-                <td className={`${td} text-right font-mono ${!eq && Math.abs(sale - purch) > 0.0001 ? 'text-[#C0392B] font-semibold' : ''}`}>{r.purchase ? num(purch) : '–'}</td>
-                {r.final && <td className={`${td} text-right font-mono ${r.final.found && Math.abs(sale - fin) > 0.0001 ? 'text-[#C0392B] font-semibold' : ''}`}>{r.final.found ? num(fin) : '–'}</td>}
+              <tr key={x.no} className={`border-b border-gray-100 ${qtyBad || amtBad || finBad ? 'bg-red-50' : ''}`}>
+                <td className={`${td} font-mono font-semibold`}>{x.no}</td>
+                <td className={td}>{x.description}{x.eq && <span className="ml-2 text-[11px] text-emerald-700 font-semibold">✓ {x.eq}</span>}</td>
+                <td className={`${td} text-right font-mono`}>{num(x.sale)}</td>
+                <td className={`${td} text-right font-mono`}>{num(x.saleAmt, 2)}</td>
+                <td className={`${td} text-right font-mono ${qtyBad ? red : ''}`}>{r.purchase ? num(x.purch) : '–'}</td>
+                <td className={`${td} text-right font-mono ${amtBad ? red : ''}`}>{r.purchase ? num(x.purchAmt, 2) : '–'}</td>
+                {r.final && <td className={`${td} text-right font-mono ${finBad ? red : ''}`}>{r.final.found ? num(x.fin) : '–'}</td>}
+                {r.final && <td className={`${td} text-right font-mono`}>{r.final.found ? num(x.finAmt, 2) : '–'}</td>}
               </tr>
             );
           })}
+          <tr className="bg-gray-50 font-semibold">
+            <td className={td} colSpan={2}>Total</td>
+            <td className={td} /><td className={`${td} text-right font-mono`}>{num(sum('saleAmt'), 2)}</td>
+            <td className={td} /><td className={`${td} text-right font-mono ${r.purchase && Math.abs(sum('saleAmt') - sum('purchAmt')) > 0.05 ? red : ''}`}>{r.purchase ? num(sum('purchAmt'), 2) : '–'}</td>
+            {r.final && <><td className={td} /><td className={`${td} text-right font-mono`}>{r.final.found ? num(sum('finAmt'), 2) : '–'}</td></>}
+          </tr>
         </tbody>
       </table>
     );

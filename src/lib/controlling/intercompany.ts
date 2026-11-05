@@ -58,12 +58,13 @@ const FOILBAG = /foil\s*bag/i;
 const FOILBAG_ITEM = 'AA-00049';
 function compareLines(a: Line[] = [], b: Line[] = [], allowFoilbag = false) {
   const qa = qtyByItem(a), qb = qtyByItem(b);
+  const amt = (lines: Line[], no: string) => Math.round(lines.filter(l => l.no === no).reduce((t, l) => t + l.amount, 0) * 100) / 100;
   const items = Array.from(new Set([...qa.keys(), ...qb.keys()])).sort();
   const foilbagEquivalent = allowFoilbag && qb.has(FOILBAG_ITEM) && a.some(l => FOILBAG.test(l.description) && !qb.has(l.no));
   const rows = items.map(no => {
     const description = (a.find(l => l.no === no) || b.find(l => l.no === no))?.description || '';
     const equivalent = foilbagEquivalent && (no === FOILBAG_ITEM || (FOILBAG.test(description) && !qb.has(no)));
-    return { no, description, a: qa.get(no) || 0, b: qb.get(no) || 0, ...(equivalent ? { equivalent: `Foilbag = ${FOILBAG_ITEM}` } : {}) };
+    return { no, description, a: qa.get(no) || 0, b: qb.get(no) || 0, aAmount: amt(a, no), bAmount: amt(b, no), ...(equivalent ? { equivalent: `Foilbag = ${FOILBAG_ITEM}` } : {}) };
   });
   return { rows, ok: rows.every(r => r.equivalent || Math.abs(r.a - r.b) < 0.0001) };
 }
@@ -73,15 +74,15 @@ export type IcRow = {
   source: string; target: string; invoiceNo: string; postingDate: string; invoiceDate: string; customer: string;
   currency: string; amount: number; externalDocNo: string;
   purchase: null | { no: string; vendorInvoiceNo: string; postingDate: string; invoiceDate: string; vendor: string; currency: string; amount: number };
-  lines: { no: string; description: string; a: number; b: number; equivalent?: string }[];
-  final: null | { no: string; customer: string; postingDate: string; currency: string; amount: number; found: boolean; lines: { no: string; description: string; a: number; b: number }[] };
+  lines: { no: string; description: string; a: number; b: number; aAmount: number; bAmount: number; equivalent?: string }[];
+  final: null | { no: string; customer: string; postingDate: string; currency: string; amount: number; found: boolean; lines: { no: string; description: string; a: number; b: number; aAmount: number; bAmount: number }[] };
   issues: string[];
   // Incidencias ya subsanadas con abonos y facturas nuevas (se mantienen las incidencias como comentario)
   corrected?: string[];
 };
 
 export async function intercompanyReport(source: string, from: string, to: string, force = false) {
-  return cached(`intercompany8:${source}:${from}:${to}`, to < today() ? 12 * HOUR : HOUR, async () => {
+  return cached(`intercompany9:${source}:${from}:${to}`, to < today() ? 12 * HOUR : HOUR, async () => {
     const ctx = await getBcContext(source);
     const sales = (await bcFetchAll(odataUrl(`${ctx.apiBase}/salesInvoices`, {
       $filter: `postingDate ge ${from} and postingDate le ${to}`,
