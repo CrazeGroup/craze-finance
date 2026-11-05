@@ -16,7 +16,7 @@ type MenuItem = { href: string; label: string; module: string };
 const TEXT: Record<Lang, Record<string, string>> = {
   en: {
     menu: 'Menu', hide: 'Hide menu', show: 'Show menu', hello: 'Hi,', activeCompany: 'Active company', allCompanies: 'ALL COMPANIES', language: 'Language',
-    noSection: 'No section', dragHere: 'Drag items here', newSection: 'New section', organize: 'Organize menu', done: 'Done', rename: 'Rename',
+    noSection: 'No section', dragHere: 'Drag items here', newSection: 'New section', organize: 'Organize menu', done: 'Done', rename: 'Rename', dragSection: 'Drag to reorder the section',
     deleteSection: 'Delete section (its items go back to "No section")', logout: 'Log out',
     '/': 'Main Dashboard', '/riesgos': 'Risks', '/recobros': 'Collections', '/movimientos': 'Open Entries', '/pagos': 'Vendor Payments',
     '/inventario': 'Inventory (Closing)', '/inventory-analysis': 'Inventory Analysis', '/notas-compra': 'Purchase Notes', '/aduanas': 'Customs', '/insurances': 'Insurance', '/contracts': 'Contracts',
@@ -24,12 +24,12 @@ const TEXT: Record<Lang, Record<string, string>> = {
   },
   es: {
     menu: 'Menú', hide: 'Ocultar menú', show: 'Mostrar menú', hello: 'Hola,', activeCompany: 'Empresa activa', allCompanies: 'TODAS LAS EMPRESAS', language: 'Idioma',
-    noSection: 'Sin sección', dragHere: 'Arrastra aquí los apartados', newSection: 'Nueva sección', organize: 'Organizar menú', done: 'Terminar', rename: 'Renombrar',
+    noSection: 'Sin sección', dragHere: 'Arrastra aquí los apartados', newSection: 'Nueva sección', organize: 'Organizar menú', done: 'Terminar', rename: 'Renombrar', dragSection: 'Arrastra para cambiar el orden de la sección',
     deleteSection: 'Eliminar sección (sus apartados vuelven a «Sin sección»)', logout: 'Cerrar sesión',
   },
   de: {
     menu: 'Menü', hide: 'Menü ausblenden', show: 'Menü einblenden', hello: 'Hallo,', activeCompany: 'Aktive Firma', allCompanies: 'ALLE FIRMEN', language: 'Sprache',
-    noSection: 'Ohne Bereich', dragHere: 'Einträge hierher ziehen', newSection: 'Neuer Bereich', organize: 'Menü organisieren', done: 'Fertig', rename: 'Umbenennen',
+    noSection: 'Ohne Bereich', dragHere: 'Einträge hierher ziehen', newSection: 'Neuer Bereich', organize: 'Menü organisieren', done: 'Fertig', rename: 'Umbenennen', dragSection: 'Ziehen, um den Bereich zu verschieben',
     deleteSection: 'Bereich löschen (seine Einträge gehen zurück zu „Ohne Bereich“)', logout: 'Abmelden',
     '/': 'Haupt-Dashboard', '/riesgos': 'Risiken', '/recobros': 'Inkasso', '/movimientos': 'Offene Posten', '/pagos': 'Lieferantenzahlungen',
     '/inventario': 'Inventar (Abschluss)', '/inventory-analysis': 'Bestandsanalyse', '/notas-compra': 'Einkaufsnotizen', '/aduanas': 'Zoll', '/insurances': 'Versicherungen', '/contracts': 'Verträge',
@@ -50,6 +50,8 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
   const [editing, setEditing] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const dragged = useRef<string | null>(null);
+  // Sección que se arrastra para cambiar el orden de las secciones
+  const draggedSec = useRef<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<string[]>([]);
 
@@ -208,9 +210,20 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
             }
             save({ sections });
           };
+          // Mover una sección delante de otra (sobre los apartados sin sección: arriba del todo)
+          const moveSection = (id: string, beforeId: string | null) => {
+            if (id === beforeId) return;
+            const sec = layout.sections.find(x => x.id === id);
+            if (!sec) return;
+            const rest = layout.sections.filter(x => x.id !== id);
+            const at = beforeId ? rest.findIndex(x => x.id === beforeId) : 0;
+            rest.splice(at < 0 ? rest.length : at, 0, sec);
+            save({ sections: rest });
+          };
           const onDrop = (sectionId: string | null, beforeHref?: string) => (e: React.DragEvent) => {
             e.preventDefault(); e.stopPropagation();
             setDropTarget(null);
+            if (draggedSec.current) { const id = draggedSec.current; draggedSec.current = null; moveSection(id, sectionId); return; }
             const href = dragged.current;
             dragged.current = null;
             if (href && href !== beforeHref) moveTo(href, sectionId, beforeHref);
@@ -251,7 +264,10 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
                 const open = editing || !collapsed.includes(sec.id);
                 return (
                   <div key={sec.id} className="pt-3" onDragOver={over(`sec:${sec.id}`)} onDrop={onDrop(sec.id)}>
-                    <div className="flex items-center gap-1 px-2 mb-1">
+                    <div className={`flex items-center gap-1 px-2 mb-1 ${editing ? 'cursor-grab active:cursor-grabbing' : ''}`} draggable={editing && renaming !== sec.id}
+                      title={editing ? tx('dragSection') : undefined}
+                      onDragStart={e => { e.stopPropagation(); draggedSec.current = sec.id; }} onDragEnd={() => { draggedSec.current = null; setDropTarget(null); }}>
+                      {editing && <GripVertical size={12} className="text-gray-400 shrink-0" />}
                       {editing && renaming === sec.id ? (
                         <input autoFocus defaultValue={sec.name}
                           onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
