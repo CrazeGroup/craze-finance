@@ -101,8 +101,8 @@ const COLUMNS = {
   iban: ['kontonummer/iban', 'kontonummer', 'iban', 'iban contrapartida'],
   e2e: ['kundenreferenz (end-to-end)', 'end-to-end'],
   amount: ['betrag', 'importe', 'importe (eur)', 'importe eur', 'amount', 'cantidad', 'betrag (eur)'],
-  debit: ['cargo', 'cargos', 'debe', 'soll', 'debit', 'ausgang'],
-  credit: ['abono', 'abonos', 'haber', 'haben', 'credit', 'eingang'],
+  debit: ['cargo', 'cargos', 'debe', 'soll', 'debit', 'ausgang', 'belastung', 'lastschrift'],
+  credit: ['abono', 'abonos', 'haber', 'haben', 'credit', 'eingang', 'gutschrift'],
   info: ['info', 'estado', 'status'],
 };
 const normHead = (v: unknown) => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[:*]+$/, '').replace(/\s+/g, ' ').trim();
@@ -128,14 +128,22 @@ function parseBankRows(rows: unknown[][]): Movement[] {
   const get = (row: unknown[], i: number) => (i >= 0 ? String(row[i] ?? '').trim() : '');
   // Si la fila de cabecera tiene la cuenta encima (Sabadell: "Cuenta: ES12 …"), es la del extracto
   const above = rows.slice(0, h).flat().map(x => String(x ?? '')).join(' ').match(/\b([A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){4,7}(?:\s?[A-Z0-9]{1,3})?)\b/)?.[1] || '';
+  // Columna IBAN con el mismo valor en todas las filas (Acrevis: la cuenta del extracto, no la contrapartida)
+  const ibans = new Set(rows.slice(h + 1).map(row => get(row, cols.iban)).filter(Boolean));
+  const ownIban = cols.account < 0 && ibans.size === 1 && rows.length - h > 2 ? Array.from(ibans)[0] : '';
   return rows.slice(h + 1).map((row, idx) => {
+    // Sin columna de concepto, el texto puede venir en varias líneas (Acrevis: "Belastung LSV+ SALT MOBILE SA",
+    // el nombre, la dirección, "Zahlungszweck: …", "Referenznummer: …"): 1ª línea = texto, 2ª = nombre, el resto = concepto
+    const lines = cols.purpose < 0 ? get(row, cols.text).split(/\r?\n/).map(x => x.trim()).filter(Boolean) : [];
+    const multi = lines.length > 1;
     const amount = cols.amount >= 0 ? cellNumber(row[cols.amount]) : (cellNumber(row[cols.credit]) || 0) - Math.abs(cellNumber(row[cols.debit]) || 0);
-    const purpose = [get(row, cols.purpose), ...extras.map(j => get(row, j))].filter(Boolean).join(' ');
+    const purpose = [get(row, cols.purpose), ...(multi ? lines.slice(1) : []), ...extras.map(j => get(row, j))].filter(Boolean).join(' ');
     return {
-      idx, date: cellDate(row[cols.date]), valueDate: cellDate(row[cols.value]), text: get(row, cols.text),
-      purpose: purpose.replace(/\s+/g, ' '), name: get(row, cols.name), iban: get(row, cols.iban).replace(/\s/g, '').toUpperCase(),
+      idx, date: cellDate(row[cols.date]), valueDate: cellDate(row[cols.value]), text: multi ? lines[0] : get(row, cols.text),
+      purpose: purpose.replace(/\s+/g, ' '), name: get(row, cols.name) || (multi ? lines[1] : ''),
+      iban: ownIban ? '' : get(row, cols.iban).replace(/\s/g, '').toUpperCase(),
       endToEnd: get(row, cols.e2e), amount, pending: /vorgemerkt|pendiente/i.test(get(row, cols.info)),
-      account: (get(row, cols.account) || above).replace(/\s/g, '').toUpperCase(),
+      account: (get(row, cols.account) || ownIban || above).replace(/\s/g, '').toUpperCase(),
     };
   }).filter(m => m.date && Number.isFinite(m.amount) && m.amount !== 0).map((m, idx) => ({ ...m, idx }));
 }
