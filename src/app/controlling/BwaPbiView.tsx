@@ -66,6 +66,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
   const [toMonth, setToMonth] = useState(now.getMonth() === 0 ? 12 : now.getMonth());
   const [company, setCompany] = useState(CONSOL);
   const [pctBase, setPctBase] = useState('1020');
+  const [headH, setHeadH] = useState(0);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [reload, setReload] = useState({ n: 0, force: false });
   const [state, setState] = useState<{ data: Data | null; loading: boolean; error: string | null }>({ data: null, loading: true, error: null });
@@ -324,6 +325,9 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
 
   const select = 'block mt-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-900 bg-white normal-case tracking-normal';
   const label = 'text-[11px] font-semibold uppercase tracking-wider text-gray-500';
+  // Cabecera y primera línea (1020 - Sales Revenues) inmovilizadas al bajar, como en Excel: la tabla se desplaza dentro de su
+  // recuadro (alto de la ventana) y la primera línea se fija justo debajo de la cabecera, cuya altura se mide
+  const headRef = (el: HTMLTableRowElement | null) => { if (el && el.offsetHeight !== headH) setHeadH(el.offsetHeight); };
   const rowStyle = (l: Line) => l.highlight === 'high' ? 'bg-[#333333] text-white font-bold' : l.highlight === 'med' ? 'bg-[#E6E6E6] text-gray-900 font-bold' : 'text-gray-900';
   const expandable = d?.lines.filter(l => !l.formula && (accountsOf.get(l.code)?.length || 0) > 0) || [];
   const allOpen = expandable.length > 0 && expandable.every(l => open[l.code]);
@@ -426,36 +430,39 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
                 </label>
               </div>
             )}
-            <div className="rpt-card bg-white rounded-xl border border-gray-200 overflow-x-auto">
+            <div className="rpt-card bg-white rounded-xl border border-gray-200 overflow-auto max-h-[calc(100vh-140px)]">
               <table className="w-full text-[12.5px]">
-                <thead>
-                  <tr className="border-b border-gray-200 bg-gray-50 text-gray-500">
-                    <th className={`${th} text-left`}>
+                <thead className="sticky top-0 z-20">
+                  <tr ref={headRef} className="bg-gray-50 text-gray-500">
+                    <th className={`${th} text-left bg-gray-50 border-b border-gray-200`}>
                       <button onClick={() => setOpen(allOpen ? {} : Object.fromEntries(expandable.map(l => [l.code, true])))}
                         className="flex items-center gap-1 uppercase hover:text-gray-900" title="Desplegar o plegar todos los niveles">
                         {allOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />} BWA Group → No.
                       </button>
                     </th>
                     {columns.map(c => (
-                      <th key={c.key} className={th}>{c.label}{c.sub && <span className="block font-normal normal-case tracking-normal">{c.sub}</span>}</th>
+                      <th key={c.key} className={`${th} bg-gray-50 border-b border-gray-200`}>{c.label}{c.sub && <span className="block font-normal normal-case tracking-normal">{c.sub}</span>}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {d.lines.map(l => {
+                  {d.lines.map((l, li) => {
                     const accs = lineAccounts(l);
                     const subs = l.formula ? [] : accountsOf.get(l.code) || [];
+                    // Primera línea fija bajo la cabecera (cada celda, con el fondo de su fila)
+                    const frozen = li === 0 ? `sticky z-10 ${l.highlight ? 'bg-inherit' : 'bg-white'}` : '';
+                    const frozenTop = li === 0 ? { top: headH } : undefined;
                     return (
                       <Fragment key={l.code}>
                         <tr className={`border-b border-gray-100 ${rowStyle(l)} ${subs.length ? 'cursor-pointer' : ''}`} onClick={() => subs.length && setOpen(o => ({ ...o, [l.code]: !o[l.code] }))}>
-                          <td className="py-1.5 px-2 whitespace-nowrap">
+                          <td className={`py-1.5 px-2 whitespace-nowrap ${frozen}`} style={frozenTop}>
                             <span className="inline-flex items-center gap-1">
                               {subs.length ? (open[l.code] ? <ChevronDown size={13} className="opacity-60" /> : <ChevronRight size={13} className="opacity-60" />) : <span className="w-[13px]" />}
                               {lineName(l)}
                             </span>
                           </td>
                           {columns.map(c => (
-                            <td key={c.key} className={`${td} ${c.red?.(accs, l) ? 'bg-[#FFBABD] text-[#80292E]' : ''} ${c.kind === 'pct' && !l.highlight ? 'text-[#2B408E]' : ''}`}>{cell(c, accs, l)}</td>
+                            <td key={c.key} style={frozenTop} className={`${td} ${frozen} ${c.red?.(accs, l) ? 'bg-[#FFBABD] text-[#80292E]' : ''} ${c.kind === 'pct' && !l.highlight ? 'text-[#2B408E]' : ''}`}>{cell(c, accs, l)}</td>
                           ))}
                         </tr>
                         {showPct(l) && (
