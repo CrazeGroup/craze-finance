@@ -314,10 +314,16 @@ export async function checkTariffs(ctx: BcContext, orders: string[], positions: 
   // Asignación: 1) Artikel Nr. de la posición (nº exacto o nº base sin sufijo: 76613 → 76613W2X)
   const assigned = new Map<string, { pos: number; via: TariffItem['via']; score?: number }>();
   const extra = new Map<string, number>(); // nº de artículo del PDF que no está en la factura → posición
+  // Un artículo puede venir en el Artikel Nr. de varias posiciones (error del agente de aduanas: el 85073 en la posición 1,
+  // con otros, y en la 2, solo): se decide después, con su ficha
+  const multi = new Map<string, number[]>();
   for (const p of positions) {
     for (const a of p.articles) {
       const hits = Array.from(candidates.values()).filter(c => c.no === a || baseNo(c.no) === a);
-      for (const h of hits) if (!assigned.has(h.no)) assigned.set(h.no, { pos: p.pos, via: 'artikel' });
+      for (const h of hits) {
+        if (!assigned.has(h.no)) assigned.set(h.no, { pos: p.pos, via: 'artikel' });
+        else if (assigned.get(h.no)!.pos !== p.pos) multi.set(h.no, [...(multi.get(h.no) || [assigned.get(h.no)!.pos]), p.pos]);
+      }
       if (!hits.length && !extra.has(a)) extra.set(a, p.pos);
     }
   }
@@ -331,11 +337,28 @@ export async function checkTariffs(ctx: BcContext, orders: string[], positions: 
 
   // 2) una sola posición: todo a ella; 3) por descripción (la posición que más palabras del artículo contiene)
   const squashed = new Map(positions.map(p => [p.pos, squash(p.description)]));
+  const cardTexts = (no: string) => {
+    const card = cards.get(no) || {};
+    return [card.description, card.descriptionInGerman, card.shortDescriptionInGerman, card.shortDescriptionInEnglish].filter(Boolean);
+  };
+
+  // Artikel Nr. repetido: la posición cuyo código coincide con el Tariff No. del artículo; si no, la que mejor lo describe;
+  // si no, la que trae menos artículos
+  const posBy = new Map(positions.map(p => [p.pos, p]));
+  for (const [no, list] of multi) {
+    const bc = digits(cards.get(no)?.tariffNo);
+    const rank = (pos: number) => {
+      const p = posBy.get(pos)!;
+      return [bc && (p.tariff === bc || p.tariff.startsWith(bc) || bc.startsWith(p.tariff)) ? 1 : 0, descScore(cardTexts(no), squashed.get(pos) || ''), -p.articles.length];
+    };
+    const best = list.map(pos => ({ pos, r: rank(pos) })).sort((a, b) => b.r[0] - a.r[0] || b.r[1] - a.r[1] || b.r[2] - a.r[2])[0].pos;
+    assigned.set(no, { pos: best, via: 'artikel' });
+    warnings.push(`El artículo ${no} aparece en el Artikel Nr. de las posiciones ${list.join(' y ')} del PDF: se compara con la posición ${best}. Revisa la declaración con el agente de aduanas.`);
+  }
   for (const c of candidates.values()) {
     if (assigned.has(c.no) || !positions.length) continue;
     if (positions.length === 1) { assigned.set(c.no, { pos: positions[0].pos, via: 'unica' }); continue; }
-    const card = cards.get(c.no) || {};
-    const texts = [card.description, card.descriptionInGerman, card.shortDescriptionInGerman, card.shortDescriptionInEnglish].filter(Boolean);
+    const texts = cardTexts(c.no);
     let best = { pos: 0, score: 0 };
     for (const p of positions) {
       const score = descScore(texts, squashed.get(p.pos) || '');
