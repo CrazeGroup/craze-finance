@@ -118,7 +118,13 @@ async function rateToEur(currency: string) {
 
 // Pedidos abiertos como Sales_Lines_Excel_<empresa> del Power BI: líneas que no son de factura, con cliente, fecha =
 // Requested Delivery Date (Return Order: Posting Date de la devolución). En CRAZE, las líneas del almacén ASIA son de Asia.
-// newToday: línea de un pedido de venta con Order Date de hoy (custom salesHeaders), para la columna "Δ hoy".
+// newToday: línea de un pedido de venta con Order Date desde el día laborable anterior (ayer; el lunes, desde el viernes)
+// hasta hoy (custom salesHeaders), para la columna "Δ desde ayer" de Sales Performance.
+export function deltaFrom(day = today()): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  do d.setUTCDate(d.getUTCDate() - 1); while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+  return d.toISOString().substring(0, 10);
+}
 async function openSalesLines(ctx: BcContext, location: 'notAsia' | 'asia' | 'all') {
   const [lines, returns, todayOrders] = await Promise.all([
     bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Sales_Lines_Excel`, {
@@ -126,7 +132,7 @@ async function openSalesLines(ctx: BcContext, location: 'notAsia' | 'asia' | 'al
       $select: 'Document_Type,Document_No,Sell_to_Customer_No,No,Location_Code,Quantity,Line_Amount,AIT_Requested_Delivery_Date',
     }), ctx.token),
     bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Sales_Return_Order_Excel`, { $select: 'No,Posting_Date' }), ctx.token).catch(() => [] as any[]),
-    bcFetchAll(odataUrl(`${ctx.customApiBase}/salesHeaders`, { $filter: `documentType eq 'Order' and orderDate eq ${today()}`, $select: 'no' }), ctx.token).catch(() => [] as any[]),
+    bcFetchAll(odataUrl(`${ctx.customApiBase}/salesHeaders`, { $filter: `documentType eq 'Order' and orderDate ge ${deltaFrom()}`, $select: 'no' }), ctx.token).catch(() => [] as any[]),
   ]);
   const newOrders = new Set(todayOrders.map((h: any) => s(h.no)));
   const returnDate = new Map(returns.map((r: any) => [s(r.No), d10(r.Posting_Date)]));
@@ -224,7 +230,7 @@ export async function commercialFacts(abbr: CompanyAbbr, year: number, force = f
     return {
       company: abbr, currency: company.currency, year, cutoff: today(),
       rows: roundRows(facts),
-      // Pedidos de venta con Order Date de hoy (columna "Δ hoy" de Sales Performance)
+      // Pedidos de venta con Order Date desde el día laborable anterior (columna "Δ desde ayer" de Sales Performance)
       delta: roundRows(newRows),
       itemRoyalty,
       items: extra,

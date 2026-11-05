@@ -87,14 +87,14 @@ export function SalesPerformance({ ctx, facts, filters }: P) {
   const byMonth = groupBy(recs, r => String(r.m));
   const t = totals(recs);
   const cur = ctx.currency;
-  // Δ hoy: pedidos de venta con Order Date de hoy, por el mes de su Requested Delivery Date
-  // (solo datos calculados hoy: los guardados de un día anterior traen los pedidos de ese día)
+  // Δ desde ayer: pedidos de venta con Order Date desde el día laborable anterior (el lunes, desde el viernes), por el mes de
+  // su Requested Delivery Date (solo datos calculados hoy: los guardados de un día anterior traen los pedidos de esos días)
   const todayFacts = useMemo(() => facts.filter(f => f.cutoff === new Date().toISOString().substring(0, 10)), [facts]);
   const dRecs = useMemo(() => records(ctx, todayFacts, filters, 'full', 'noComponent', 'delta'), [ctx, todayFacts, filters]);
   const dByMonth = groupBy(dRecs, r => String(r.m));
   const dOf = (m: number) => dByMonth.get(String(m))?.cur.sIn || 0;
   const dTotal = totals(dRecs).cur.sIn;
-  const dTitle = 'Pedidos de venta con Order Date de hoy (importe de sus líneas, en el mes de su Requested Delivery Date)';
+  const dTitle = 'Pedidos de venta con Order Date de ayer y de hoy (el lunes, desde el viernes): importe de sus líneas, en el mes de su Requested Delivery Date';
   const Delta = ({ v }: { v: number }) => (Math.abs(v) < 0.5 ? <span className="text-gray-300">–</span> : <span className={v > 0 ? 'text-emerald-700' : 'text-red-600'}>{v > 0 ? '+' : ''}{fmtNum(v)}</span>);
   let acm = { prev: 0, cur: 0, bdg: 0 };
   const monthRows = months.map(m => {
@@ -106,13 +106,13 @@ export function SalesPerformance({ ctx, facts, filters }: P) {
     <div className="space-y-4">
       <div className="grid gap-4 xl:grid-cols-2">
         <Card title="Mes a mes y acumulado (año completo)" right={<ExportBtn onClick={() => exportRows('Sales Performance mensual', monthRows.map(r => ({
-          Mes: MONTHS[r.m - 1], 'Sell-in Prev. Year': r.p.prev.sIn, 'Sell-in Year': r.p.cur.sIn, 'Δ hoy': dOf(r.m), Budget: r.p.cur.bdg,
+          Mes: MONTHS[r.m - 1], 'Sell-in Prev. Year': r.p.prev.sIn, 'Sell-in Year': r.p.cur.sIn, 'Δ desde ayer': dOf(r.m), Budget: r.p.cur.bdg,
           'Acm. Sell-in Prev. Year': r.acm.prev, 'Acm. Sell-in Year': r.acm.cur, 'Acm. Budget': r.acm.bdg,
         })))} />}>
           <div className="overflow-x-auto">
             <table className="w-full text-[12px]">
               <thead><tr className="border-b border-gray-200">
-                <th className={`${th} text-left`}>Mo.</th><th className={th}>Sell-in Prev. Year</th><th className={th}>%</th><th className={th}>Sell-in Year</th><th className={th} title={dTitle}>Δ hoy</th><th className={th}>% vs Bdg</th><th className={th}>Budget</th>
+                <th className={`${th} text-left`}>Mo.</th><th className={th}>Sell-in Prev. Year</th><th className={th}>%</th><th className={th}>Sell-in Year</th><th className={th} title={dTitle}>Δ desde ayer</th><th className={th}>% vs Bdg</th><th className={th}>Budget</th>
                 <th className={th}>Acm. Prev. Year</th><th className={th}>%</th><th className={th}>Acm. Year</th><th className={th}>% vs Bdg</th><th className={th}>Acm. Budget</th>
               </tr></thead>
               <tbody>
