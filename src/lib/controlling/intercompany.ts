@@ -82,7 +82,11 @@ export type IcRow = {
 };
 
 export async function intercompanyReport(source: string, from: string, to: string, force = false) {
-  return cached(`intercompany10:${source}:${from}:${to}`, to < today() ? 12 * HOUR : HOUR, async () => {
+  // Caché en la base de datos: periodos que acaban hace más de 2 meses ya no cambian (30 días, sin renovarse cada hora;
+  // el botón de actualizar lo fuerza); los recientes se renuevan cada hora en segundo plano
+  const old = to < shift(today(), -60);
+  const maxAge = old ? 30 * 24 * HOUR : to < today() ? 12 * HOUR : HOUR;
+  return cached(`intercompany10:${source}:${from}:${to}`, maxAge, async () => {
     const ctx = await getBcContext(source);
     const sales = (await bcFetchAll(odataUrl(`${ctx.apiBase}/salesInvoices`, {
       $filter: `postingDate ge ${from} and postingDate le ${to}`,
@@ -315,5 +319,5 @@ export async function intercompanyReport(source: string, from: string, to: strin
       vendor: s(p.vendorName), currency: s(p.currencyCode) || lcyOf(t), amount: n(p.totalAmountExcludingTax),
     })));
     return { source, from, to, rows, orphanPurchases, excludedCredited: excluded, warnings };
-  }, force);
+  }, force, old ? { refreshAfterMs: maxAge } : {});
 }
