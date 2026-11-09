@@ -12,6 +12,7 @@ const MODULES = [
   { id: 'pagos', label: 'Pagos a Prov.' },
   { id: 'cashflow', label: 'Cashflow' },
   { id: 'banco', label: 'BANCO (extracto → General Journal)' },
+  { id: 'cierre', label: 'Tracking Cierre Mensual' },
   { id: 'auditoria', label: 'Auditoría (Registro de Actividad)' },
   { id: 'inventario', label: 'Inventario (Cierre)' },
   { id: 'bwa', label: 'BWA Analytics' },

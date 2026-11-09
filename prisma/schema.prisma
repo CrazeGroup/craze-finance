@@ -267,3 +267,34 @@ model BwaReport {
   data         String   @db.Text
 }
 
+// Tracking Cierre Mensual: tareas del cierre por empresa y año (companyId como en la app, o "Allike")
+model ClosingTask {
+  id          Int           @id @default(autoincrement())
+  companyId   String
+  year        Int
+  number      Int
+  sortOrder   Int           @default(0)
+  description String
+  assignee    String? // username de la web, o un nombre si no tiene usuario
+  group       String?       // subempresa: tabla aparte dentro de la empresa (p. ej. Allike en GmbH); null = tabla principal
+  notes       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  cells       ClosingCell[]
+
+  @@index([companyId, year])
+}
+
+// Un mes de una tarea: hecho (true), pendiente (false) o vacío (null, la tarea no toca ese mes), con comentario
+model ClosingCell {
+  id        Int         @id @default(autoincrement())
+  taskId    Int
+  task      ClosingTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  month     Int // 1-12
+  done      Boolean?
+  comment   String?
+  updatedBy String?
+  updatedAt DateTime    @updatedAt
+
+  @@unique([taskId, month])
+}

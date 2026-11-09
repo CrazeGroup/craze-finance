@@ -19,7 +19,7 @@ const TEXT: Record<Lang, Record<string, string>> = {
     noSection: 'No section', dragHere: 'Drag items here', newSection: 'New section', organize: 'Organize menu', done: 'Done', rename: 'Rename', dragSection: 'Drag to reorder the section',
     deleteSection: 'Delete section (its items go back to "No section")', logout: 'Log out',
     '/': 'Main Dashboard', '/riesgos': 'Risks', '/recobros': 'Collections', '/movimientos': 'Open Entries', '/pagos': 'Vendor Payments',
-    '/inventario': 'Inventory (Closing)', '/inventory-analysis': 'Inventory Analysis', '/notas-compra': 'Purchase Notes', '/aduanas': 'Customs', '/insurances': 'Insurance', '/contracts': 'Contracts',
+    '/cierre-mensual': 'Month-End Close Tracking', '/inventario': 'Inventory (Closing)', '/inventory-analysis': 'Inventory Analysis', '/notas-compra': 'Purchase Notes', '/aduanas': 'Customs', '/insurances': 'Insurance', '/contracts': 'Contracts',
     '/settings/users': 'Users', '/settings/logs': 'Audit Log', '/settings': 'Settings',
   },
   es: {
@@ -32,7 +32,7 @@ const TEXT: Record<Lang, Record<string, string>> = {
     noSection: 'Ohne Bereich', dragHere: 'Einträge hierher ziehen', newSection: 'Neuer Bereich', organize: 'Menü organisieren', done: 'Fertig', rename: 'Umbenennen', dragSection: 'Ziehen, um den Bereich zu verschieben',
     deleteSection: 'Bereich löschen (seine Einträge gehen zurück zu „Ohne Bereich“)', logout: 'Abmelden',
     '/': 'Haupt-Dashboard', '/riesgos': 'Risiken', '/recobros': 'Inkasso', '/movimientos': 'Offene Posten', '/pagos': 'Lieferantenzahlungen',
-    '/inventario': 'Inventar (Abschluss)', '/inventory-analysis': 'Bestandsanalyse', '/notas-compra': 'Einkaufsnotizen', '/aduanas': 'Zoll', '/insurances': 'Versicherungen', '/contracts': 'Verträge',
+    '/cierre-mensual': 'Monatsabschluss-Tracking', '/inventario': 'Inventar (Abschluss)', '/inventory-analysis': 'Bestandsanalyse', '/notas-compra': 'Einkaufsnotizen', '/aduanas': 'Zoll', '/insurances': 'Versicherungen', '/contracts': 'Verträge',
     '/settings/users': 'Benutzer', '/settings/logs': 'Protokoll', '/settings': 'Einstellungen',
   },
 };
@@ -102,6 +102,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
     { href: '/pagos', label: 'Pagos a Prov.', module: 'pagos' },
     { href: '/cashflow', label: 'Cashflow', module: 'cashflow' },
     { href: '/banco', label: 'BANCO', module: 'banco' },
+    { href: '/cierre-mensual', label: 'Tracking Cierre Mensual', module: 'cierre' },
     { href: '/inventario', label: 'Inventario (Cierre)', module: 'inventario' },
     { href: '/bwa', label: 'BWA Analytics', module: 'bwa' },
     { href: '/reporting', label: 'Reporting', module: 'reporting' },
