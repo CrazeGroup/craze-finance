@@ -83,14 +83,37 @@ export async function parseCustomsPdf(file: string, data: Uint8Array): Promise<C
   if (!transport.length) warnings.push('El PDF no trae contenedor ni AWB: complétalo en la descripción.');
   if (!atc) warnings.push('No se ha encontrado el nº AT/C.');
 
-  const positions = parsePositions(t);
-  if (!positions.length) warnings.push('No se han encontrado las posiciones (Warennummer) en la parte "Beleg".');
+  // Sin parte "Beleg" (algunos PDF solo traen el Bescheid): las posiciones del Bescheid, sin descripción ni Artikel Nr.
+  const fromBeleg = parsePositions(t);
+  const positions = fromBeleg.length ? fromBeleg : parseBescheidPositions(t);
+  if (!positions.length) warnings.push('No se han encontrado las posiciones (Warennummer) en el PDF.');
+  else if (!fromBeleg.length) warnings.push('El PDF no trae la parte "Beleg": posiciones leídas del Bescheid (código, Zollwert y % de Zoll; sin descripción ni Artikel Nr.).');
 
   const description = [orders.join(', '), transport.join(', ')].filter(Boolean).join(' / ');
   return {
     file, atc, registration, lrn, date, orders, transport, duties, positions,
     zoll, zollDue: zollDuties[0]?.due || '', eust, eustDue: eustDuties[0]?.due || '', total, description, warnings,
   };
+}
+
+// Posiciones del Bescheid ("Position 1 Berechnungsgrundlage Zollwert 79388,74 Warennummer** 3307 3000 000 …
+// 01 ZOLLEU 5160,27 5160,27 EUR … ZOLLEU 6,50 00"), cuando el PDF no trae la parte "Beleg"
+function parseBescheidPositions(t: string): CustomsPosition[] {
+  const parts = t.split(/Position (\d+) Berechnungsgrundlage/);
+  const out: CustomsPosition[] = [];
+  for (let i = 1; i < parts.length; i += 2) {
+    const b = parts[i + 1].split(/Position \d+ Berechnungsgrundlage|ZODIAK/)[0];
+    const tariff = b.match(/Warennummer\*\* (\d{4} ?\d{4} ?\d{0,3})/)?.[1].replace(/ /g, '') || '';
+    if (!tariff) continue;
+    const value = b.match(/Zollwert ([\d.]*\d,\d{2})/)?.[1];
+    const duty = b.match(/\d{2} ZOLLEU ([\d.]*\d,\d{2}) ([\d.]*\d,\d{2}) EUR/)?.[2];
+    const rate = b.match(/ZOLLEU ([\d.]*\d,\d+) \d{2} /)?.[1];
+    out.push({
+      pos: Number(parts[i]), tariff, description: '', articles: [], packages: null,
+      value: value ? amount(value) : null, dutyRate: rate ? amount(rate) : null, duty: duty ? amount(duty) : null,
+    });
+  }
+  return out;
 }
 
 // Posiciones de la parte "Beleg für den Beteiligten" (la primera parte, el Bescheid, solo trae Warennummer y Zollwert).
