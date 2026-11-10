@@ -52,9 +52,11 @@ export async function parseCustomsPdf(file: string, data: Uint8Array): Promise<C
   const warnings: string[] = [];
 
   const atc = t.match(/(AT\/C\/[\w/]+\/\d{4})/)?.[1] || '';
-  const registration = t.match(/Einfuhrabgabenbescheid (\d{2}[A-Z]{2}\w{14})/)?.[1] || '';
-  const lrn = t.match(/Bezugsnr\.\/LRN\*? (\S+)/)?.[1] || '';
-  const date = iso(t.match(/Erstellt am (\d\d\.\d\d\.\d{4})/)?.[1] || t.match(/CUSTAX\w+ (\d\d\.\d\d\.\d{4})/)?.[1] || '');
+  // Dos formatos: el de los agentes (Meyer's: "Erstellt am", tabla Abgaben, parte "Beleg") y el de DHL Express
+  // (Leipzig, 5604: "Datum der Erstellung:", "Art der Abgabe: …", "Position 1 von 1 … Warentarifnummer:")
+  const registration = t.match(/Einfuhrabgabenbescheid (\d{2}[A-Z]{2}\w{14})/)?.[1] || t.match(/MRN: (\d{2}[A-Z]{2}\w{14})/)?.[1] || '';
+  const lrn = t.match(/Bezugsnr\.\/LRN\*? (\S+)/)?.[1] || t.match(/Bezugsnummer \(LRN\): (\S+)/)?.[1] || '';
+  const date = iso(t.match(/Erstellt am (\d\d\.\d\d\.\d{4})/)?.[1] || t.match(/CUSTAX\w+ (\d\d\.\d\d\.\d{4})/)?.[1] || t.match(/Datum der Erstellung: (\d\d\.\d\d\.\d{4})/)?.[1] || '');
 
   // Tabla "Abgaben" (la primera): Abgabenart, Buch-Schl., Betrag in EUR, … Fällig (A-Frist)
   const abgaben = between(t, 'Abgaben Abgabenart Buch-Schl.', /Gesamtabgabensumme/);
@@ -62,7 +64,14 @@ export async function parseCustomsPdf(file: string, data: Uint8Array): Promise<C
   for (const m of abgaben.matchAll(/([A-Za-zÄÖÜäöü]+) ([A-Z]\d{4}) ([\d.]*\d,\d{2}) .*?(\d\d\.\d\d\.\d{4})/g)) {
     duties.push({ type: m[1], code: m[2], amount: amount(m[3]), due: iso(m[4]) });
   }
-  const totalMatch = t.match(/Gesamtabgabensumme in EUR ([\d.]*\d,\d{2})/);
+  // DHL: "Art der Abgabe: A0000 - Zölle (…) (ZOLLEU) Abgabenbetrag je Art der Abgabe: 5,44 EUR … Fälligkeit: 16.08.2026"
+  if (!duties.length) {
+    const head = t.split(/Positionsnummer: 1 /)[0];
+    for (const m of head.matchAll(/Art der Abgabe: ([A-Z]\d{4}) - .*?\((\w+)\) Abgabenbetrag je Art der Abgabe: ([\d.]*\d,\d{2}) EUR.*?Fälligkeit: (\d\d\.\d\d\.\d{4})/g)) {
+      duties.push({ type: m[2], code: m[1], amount: amount(m[3]), due: iso(m[4]) });
+    }
+  }
+  const totalMatch = t.match(/Gesamtabgabensumme in EUR ([\d.]*\d,\d{2})/) || t.match(/Abgabensumme \/ WKZ: ([\d.]*\d,\d{2}) \/ EUR/);
   const total = totalMatch ? amount(totalMatch[1]) : null;
   const isEust = (d: Duty) => /^eust$/i.test(d.type);
   const zollDuties = duties.filter(d => !isEust(d)), eustDuties = duties.filter(isEust);
@@ -76,24 +85,49 @@ export async function parseCustomsPdf(file: string, data: Uint8Array): Promise<C
   // Pedido (Unterlagen N380) y transporte: contenedor(es) o, en aéreo, el AWB (N740/N741). Solo están en la parte "Beleg".
   const unterlagen = between(t, 'Unterlagen** Bereich Art Nummer Datum', /Beendigung SumA|Dieses Dokument/);
   const docs = Array.from(unterlagen.matchAll(/\d ([A-Z0-9]{4}) (\S+) \d\d\.\d\d\.\d{4}/g)).map(m => ({ type: m[1], no: m[2] }));
-  const orders = Array.from(new Set(docs.filter(d => d.type === 'N380').map(d => d.no)));
+  // DHL: "Art der Unterlage: N380 - Handelsrechnung Nummer der Unterlage: NEUE RG DE20260071101 Kz. …"; el AWB es la Sendungsnummer
+  const dhlOrders = Array.from(t.matchAll(/Art der Unterlage: N380 - Handelsrechnung Nummer der Unterlage: (.+?) Kz\./g)).map(m => m[1].trim()).filter(x => !/^(ohne|siehe)/i.test(x));
+  const orders = Array.from(new Set([...docs.filter(d => d.type === 'N380').map(d => d.no), ...dhlOrders]));
   const containers = Array.from(new Set(between(t, 'Container**', /Unterlagen\*\*|Beendigung SumA/).match(/[A-Z]{4}\d{7}/g) || []));
-  const transport = containers.length ? containers : Array.from(new Set(docs.filter(d => d.type === 'N740' || d.type === 'N741').map(d => d.no)));
+  const awb = t.match(/Sendungsnummer: (\d{8,12})/)?.[1];
+  const transport = containers.length ? containers : Array.from(new Set([...docs.filter(d => d.type === 'N740' || d.type === 'N741').map(d => d.no), ...(awb ? [awb] : [])]));
   if (!orders.length) warnings.push('El PDF no trae el pedido (Unterlagen N380): escribe la descripción a mano.');
   if (!transport.length) warnings.push('El PDF no trae contenedor ni AWB: complétalo en la descripción.');
   if (!atc) warnings.push('No se ha encontrado el nº AT/C.');
 
   // Sin parte "Beleg" (algunos PDF solo traen el Bescheid): las posiciones del Bescheid, sin descripción ni Artikel Nr.
   const fromBeleg = parsePositions(t);
-  const positions = fromBeleg.length ? fromBeleg : parseBescheidPositions(t);
+  const fromDhl = fromBeleg.length ? [] : parseDhlPositions(t);
+  const positions = fromBeleg.length ? fromBeleg : fromDhl.length ? fromDhl : parseBescheidPositions(t);
   if (!positions.length) warnings.push('No se han encontrado las posiciones (Warennummer) en el PDF.');
-  else if (!fromBeleg.length) warnings.push('El PDF no trae la parte "Beleg": posiciones leídas del Bescheid (código, Zollwert y % de Zoll; sin descripción ni Artikel Nr.).');
+  else if (!fromBeleg.length && !fromDhl.length) warnings.push('El PDF no trae la parte "Beleg": posiciones leídas del Bescheid (código, Zollwert y % de Zoll; sin descripción ni Artikel Nr.).');
 
   const description = [orders.join(', '), transport.join(', ')].filter(Boolean).join(' / ');
   return {
     file, atc, registration, lrn, date, orders, transport, duties, positions,
     zoll, zollDue: zollDuties[0]?.due || '', eust, eustDue: eustDuties[0]?.due || '', total, description, warnings,
   };
+}
+
+// Posiciones del formato DHL ("Position 1 von 1 … Warentarifnummer: 33073000000 Warenbezeichnung: BADESALZ … Rechnungswert:
+// … Zollwert: 83,70 EUR 6,5% 5,44 Zölle")
+function parseDhlPositions(t: string): CustomsPosition[] {
+  const parts = t.split(/Position (\d+) von \d+ /);
+  const out: CustomsPosition[] = [];
+  for (let i = 1; i < parts.length; i += 2) {
+    const b = parts[i + 1].split(/Position \d+ von \d+ /)[0];
+    const tariff = b.match(/Warentarifnummer: (\d{8,11})/)?.[1] || '';
+    if (!tariff) continue;
+    const description = (b.match(/Warenbezeichnung: (.*?) (Rechnungswert|Ursprungsland|Beschreibung des Wertes):/)?.[1] || '').trim();
+    const z = b.match(/\(ZOLLEU\) Zollwert: ([\d.]*\d,\d{2}) EUR ([\d.]*\d(?:,\d+)?)% ([\d.]*\d,\d{2})/);
+    const articles = new Set<string>();
+    for (const m of description.replace(/ /g, '').matchAll(/Artikel-?Nr\.?:?((?:\d{3,7}[\/,;]?)+)/gi)) for (const a of m[1].split(/[\/,;]/)) if (a) articles.add(a);
+    out.push({
+      pos: Number(parts[i]), tariff, description, articles: Array.from(articles), packages: null,
+      value: z ? amount(z[1]) : null, dutyRate: z ? amount(z[2]) : null, duty: z ? amount(z[3]) : null,
+    });
+  }
+  return out;
 }
 
 // Posiciones del Bescheid ("Position 1 Berechnungsgrundlage Zollwert 79388,74 Warennummer** 3307 3000 000 …
