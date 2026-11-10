@@ -34,7 +34,11 @@ async function accessToken(mk: string) {
   if (cachedToken && cachedToken.until > Date.now()) return cachedToken.token;
   const refresh = process.env[`SP_API_VENDOR_REFRESH_TOKEN_${mk}`];
   const id = process.env.SP_API_CLIENT_ID, secret = process.env.SP_API_CLIENT_SECRET;
-  if (!refresh || !id || !secret) throw new Error('Faltan las credenciales de Amazon Vendor (SP_API_CLIENT_ID, SP_API_CLIENT_SECRET y SP_API_VENDOR_REFRESH_TOKEN_DE, _FR, _IT, _ES, _UK…) en las variables de entorno de Vercel.');
+  if (!refresh || !id || !secret) {
+    // Qué variables SP_API_ ve el servidor (solo nombre y longitud, nunca el valor)
+    const seen = Object.keys(process.env).filter(k => k.startsWith('SP_API_')).map(k => `${k} (${String(process.env[k] || '').length})`);
+    throw new Error(`Faltan las credenciales de Amazon Vendor (SP_API_CLIENT_ID, SP_API_CLIENT_SECRET y SP_API_VENDOR_REFRESH_TOKEN_DE, _FR, _IT, _ES, _UK…) en las variables de entorno de Vercel. El servidor ve: ${seen.join(', ') || 'ninguna'}.`);
+  }
   const res = await fetch('https://api.amazon.com/auth/o2/token', {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refresh, client_id: id, client_secret: secret }),
