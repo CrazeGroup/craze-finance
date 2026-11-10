@@ -13,6 +13,8 @@ export type HistoryAnalysis = {
   atc: string; file: string; date: string; orders: string[]; transport: string[];
   zoll: number; eust: number; check: TariffCheck | null; warnings: string[]; error?: string; computedAt: string;
   dhl?: boolean;
+  // Extracto mensual de la Bundeskasse (Kontoauszug ZA-120), no una declaración: no es incidencia
+  statement?: boolean;
 };
 export type HistoryEntry = HistoryAnalysis & { invoiceNo: string; postingDate: string; status: string; amount: number };
 
@@ -76,15 +78,25 @@ async function analyse(ctx: BcContext, inv: { id: string; atc: string }, manual?
     if (!pdfs.length) return { ...base, error: atts.length ? 'El adjunto no es un PDF' : 'Sin PDF adjunto en BC' };
     // Si hay varios PDF, el que trae ese AT/C (o el primero con posiciones)
     let doc: Awaited<ReturnType<typeof parseCustomsPdf>> | null = null;
+    const kinds = new Set<string>();
     for (const a of pdfs) {
       const data = new Uint8Array(await (await get(`${ctx.apiBase}/documentAttachments(${a.id})/attachmentContent`)).arrayBuffer());
-      const d = await parseCustomsPdf(a.fileName, data);
+      const d = await parseCustomsPdf(a.fileName, data).catch(() => null);
+      if (!d) continue;
+      if (d.kind) kinds.add(d.kind);
       // El AT/C o, en DHL, el Registrierkz. für NIZZA con el que se registró la factura
       // Con o sin barras (AT/C/40/000124/04/2026/5351 = ATC400001240420265351)
       if (sameAtc(d.atc, inv.atc) || (d.nizza && sameAtc(d.nizza, inv.atc))) { doc = d; break; }
       if (!doc && (d.positions.length || d.dhl)) doc = d;
     }
-    if (!doc) return { ...base, error: 'El PDF adjunto no es un Einfuhrabgabenbescheid (sin posiciones)' };
+    if (!doc) {
+      // El extracto mensual de la Bundeskasse: registrado como factura propia (S-94875_0126) no es una declaración; adjunto
+      // a una factura de un AT/C, falta el Bescheid
+      if (kinds.has('statement') && !/^ATC|^AT\/C/i.test(inv.atc)) return { ...base, statement: true, warnings: ['Extracto mensual de la Bundeskasse (Kontoauszug ZA-120, cuenta de aplazamiento): no es una declaración'] };
+      if (kinds.has('statement')) return { ...base, error: 'El adjunto es el extracto de la Bundeskasse (Kontoauszug ZA-120), no el Einfuhrabgabenbescheid: adjunta el Bescheid en BC' };
+      if (kinds.has('scanned')) return { ...base, error: 'El PDF adjunto es un escaneo sin texto: no se puede leer (adjunta el PDF original de ATLAS)' };
+      return { ...base, error: 'El PDF adjunto no es un Einfuhrabgabenbescheid (sin posiciones)' };
+    }
     // Lo indicado a mano manda sobre lo leído del PDF
     const orders = manual?.orders.length ? await resolveOrders(ctx, manual.orders) : doc.orders;
     const transport = manual?.transport.length ? manual.transport : doc.transport;

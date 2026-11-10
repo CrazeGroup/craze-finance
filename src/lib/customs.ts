@@ -40,6 +40,9 @@ export type CustomsDoc = {
   // Despacho de DHL Express (Hub Leipzig); nizza = "Registrierkz. für NIZZA" (AT/C/0040/M02Q6N/06/2026/5604), con el que a
   // veces se registra la factura Zoll en vez del AT/C
   dhl?: boolean; nizza?: string;
+  // No es un Bescheid: statement = extracto mensual de la Bundeskasse (Kontoauszug ZA-120, cuenta de aplazamiento);
+  // scanned = PDF sin texto
+  kind?: 'statement' | 'scanned';
 };
 
 const iso = (d: string) => { const m = d.match(/(\d\d)\.(\d\d)\.(\d{4})/); return m ? `${m[3]}-${m[2]}-${m[1]}` : ''; };
@@ -149,6 +152,7 @@ export async function parseCustomsPdf(file: string, data: Uint8Array): Promise<C
   const description = [orders.join(', '), transport.join(', ')].filter(Boolean).join(' / ');
   return {
     file, atc, registration, lrn, date, orders, transport, duties, positions, dhl, ...(nizza ? { nizza } : {}),
+    ...(t.trim().length < 30 ? { kind: 'scanned' as const } : /Kontoauszug \(ZA-120\)/.test(t) ? { kind: 'statement' as const } : {}),
     zoll, zollDue: zollDuties[0]?.due || '', eust, eustDue: eustDuties[0]?.due || '', total, description, warnings,
   };
 }

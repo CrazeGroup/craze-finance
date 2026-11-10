@@ -11,7 +11,7 @@ import { Check, code, Item, LineNote, nf0, nf2, noteKey, STATUS, StatusBadges, T
 // artículos importados en cada uno, o por declaración (AT/C) con el detalle de cada una.
 type Entry = {
   atc: string; file: string; date: string; orders: string[]; transport: string[]; zoll: number; eust: number;
-  check: Check | null; warnings: string[]; error?: string; computedAt: string; dhl?: boolean;
+  check: Check | null; warnings: string[]; error?: string; computedAt: string; dhl?: boolean; statement?: boolean;
   invoiceNo: string; postingDate: string; status: string; amount: number;
 };
 type Manual = { orders: string[]; transport: string[]; by?: string; at: string };
@@ -224,7 +224,7 @@ export default function HistoryView() {
       && (!s || codeHit || i.no.toLowerCase().includes(s) || i.description.toLowerCase().includes(s) || i.bcTariff.includes(sCode)));
     return { c, items, show: items.length > 0 || (!onlyIssues && (!s || codeHit)) };
   }).filter(v => v.show);
-  const entryIssue = (e: Entry) => !!e.error || (!e.check && !e.dhl) || !!e.check?.unassigned.length || !!e.check?.positions.some(p => p.items.some(i => BAD.has(i.status)));
+  const entryIssue = (e: Entry) => !!e.error || (!e.check && !e.dhl && !e.statement) || !!e.check?.unassigned.length || !!e.check?.positions.some(p => p.items.some(i => BAD.has(i.status)));
   const visibleEntries = entries.filter(e => (!onlyIssues || entryIssue(e))
     && (!s || [e.atc, e.invoiceNo, ...e.orders, ...e.transport].some(x => x.toLowerCase().includes(s))
       || !!e.check?.positions.some(p => p.tariff.includes(sCode) || p.items.some(i => i.no.toLowerCase().includes(s)))));
@@ -427,6 +427,7 @@ export default function HistoryView() {
                         {e.error ? <span className="text-xs text-red-700 flex items-center gap-1"><AlertCircle size={13} /> {e.error}</span>
                           : e.check ? <span className="flex flex-wrap gap-1"><StatusBadges data={e.check} /></span>
                           : e.dhl ? <span className="text-xs text-gray-500">Despacho DHL Express: el PDF no trae códigos arancelarios</span>
+                          : e.statement ? <span className="text-xs text-gray-500">Extracto mensual de la Bundeskasse (no es una declaración)</span>
                           : <span className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> El PDF no trae las posiciones (parte &quot;Beleg&quot;)</span>}
                       </td>
                     </tr>
