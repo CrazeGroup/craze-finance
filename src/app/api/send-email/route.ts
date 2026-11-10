@@ -80,7 +80,7 @@ export async function POST(request: Request) {
         },
         {
           filename: 'logo.png',
-          path: 'https://craze-finance.vercel.app/logo.png',
+          path: 'https://craze-finance-iota.vercel.app/logo.png',
           cid: 'crazelogo'
         }
       ]
