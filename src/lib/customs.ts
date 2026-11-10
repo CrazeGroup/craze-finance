@@ -317,6 +317,8 @@ export type TariffItem = {
   bcTariff: string; bcRate: number | null; via: 'artikel' | 'unica' | 'descripcion' | ''; score?: number;
   status: 'ok' | 'ok8' | 'distinto' | 'sin_codigo' | 'sin_ficha';
   note?: string;
+  // Diferencia aceptada automáticamente (p. ej. display declarado como packaging)
+  accepted?: string;
 };
 export type TariffPosition = CustomsPosition & { items: TariffItem[]; qty: number };
 export type TariffCheck = {
@@ -357,6 +359,12 @@ export function tariffStatus(hasCard: boolean, bcTariff: string, tariff: string,
   const fs = matchCode(fig, figure);
   if (!fs) return { status: 'distinto', note: `Figuras declaradas con ${figure}; en BC ${fig}` };
   return { status: st === 'ok' && fs === 'ok' ? 'ok' : 'ok8' };
+}
+// Display (FSDU) con su contenido en el BOM: aduanas declara los artículos de dentro y el display solo como packaging al
+// 0 %, así que su Tariff No. (genérico) no coincide. Con la posición al 0 % se da por bueno
+export const DISPLAY_PACKAGING = 'Display (FSDU): aduanas declara su contenido (BOM) por separado; la diferencia es por el packaging, declarado al 0 %';
+export function acceptDisplay(st: { status: TariffItem['status']; note?: string }, display: boolean, dutyRate: number | null | undefined) {
+  return display && st.status === 'distinto' && dutyRate === 0 ? { status: 'ok' as const, accepted: DISPLAY_PACKAGING } : st;
 }
 // Ficha de un artículo para el control de códigos (Tariff No., % arancel, descripción)
 export async function itemTariffCard(ctx: BcContext, no: string) {
@@ -500,11 +508,11 @@ export async function checkTariffs(ctx: BcContext, orders: string[], positions: 
     const card = cards.get(no);
     const a = assigned.get(no);
     const bcTariff = bcCode(card?.tariffNo);
-    const { status, note } = tariffStatus(!!card, bcTariff, tariff, pos != null ? figures.get(pos) : null);
+    const { status, note, accepted } = acceptDisplay(tariffStatus(!!card, bcTariff, tariff, pos != null ? figures.get(pos) : null), displays.has(no), pos != null ? positions.find(p => p.pos === pos)?.dutyRate : undefined) as { status: TariffItem['status']; note?: string; accepted?: string };
     return {
       no, description: card?.description || '', qty, parent, inInvoice, display: displays.has(no), bcTariff,
       bcRate: card?.tariff != null && card.tariff !== '' ? Number(card.tariff) : null, via: a?.via || '', score: a?.score, status,
-      ...(note ? { note } : {}),
+      ...(note ? { note } : {}), ...(accepted ? { accepted } : {}),
     };
   };
   const result: TariffPosition[] = positions.map(p => ({ ...p, items: [], qty: 0 }));

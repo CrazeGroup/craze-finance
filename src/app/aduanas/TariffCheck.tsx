@@ -12,7 +12,7 @@ export type Item = {
   no: string; description: string; qty: number; parent?: string; inInvoice: boolean; display: boolean;
   bcTariff: string; bcRate: number | null; via: 'artikel' | 'unica' | 'descripcion' | ''; score?: number;
   status: 'ok' | 'ok8' | 'distinto' | 'sin_codigo' | 'sin_ficha';
-  note?: string;
+  note?: string; accepted?: string;
 };
 export type Check = {
   invoices: { no: string; vendorInvoiceNo: string; vendor: string; posted: boolean }[];
@@ -160,7 +160,7 @@ export function TariffTable({ data, actions }: { data: Check; actions?: LineActi
 }
 
 function ItemRow({ i, unassigned, rate, actions, pos }: { i: Item; unassigned?: boolean; rate?: number | null; actions?: LineActions; pos?: number | null }) {
-  const rateDiff = rate != null && i.bcRate != null && Math.abs(rate - i.bcRate) > 0.001;
+  const rateDiff = !i.accepted && rate != null && i.bcRate != null && Math.abs(rate - i.bcRate) > 0.001;
   const key = actions ? noteKey(actions.atc, pos ?? null, i.no) : '';
   const note = actions?.notes[key];
   const btn = 'p-1 rounded text-gray-400 hover:text-gray-900 hover:bg-gray-100 disabled:opacity-40';
@@ -188,6 +188,7 @@ function ItemRow({ i, unassigned, rate, actions, pos }: { i: Item; unassigned?: 
         {i.display && <span className="ml-2 text-xs text-gray-500">display (contenido desglosado)</span>}
         {!i.inInvoice && <span className="ml-2 text-xs text-amber-700">no está en la factura</span>}
         {i.note && <span className="block text-xs text-red-700 mt-0.5">{i.note}</span>}
+        {i.accepted && <span className="block text-xs text-emerald-700 mt-0.5">✓ {i.accepted}</span>}
         {note?.comment && <span className="block text-xs text-indigo-700 mt-0.5" title={note.by ? `${note.by} · ${note.at.substring(0, 10)}` : note.at.substring(0, 10)}>💬 {note.comment}</span>}
       </td>
       <td className="p-2 text-right tabular-nums">{i.qty ? nf0.format(i.qty) : '—'}</td>
