@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { getBcContext } from '@/lib/bcClient';
+import { bcFetchAll, getBcContext, odataUrl } from '@/lib/bcClient';
 import { bankLedgerEntries, batchLines, journalByCode, openEntries, type MovementResult, type OpenEntry, type SuggestedLine } from '@/lib/banco';
 import { remittanceItems, vendorRemittances, type Remittance } from '@/lib/amazonVendor';
 
@@ -35,12 +35,17 @@ export async function POST(req: Request) {
     const journal = journalCode ? await journalByCode(ctx, journalCode) : null;
     // Para aprender las cuentas de cada país, los movimientos de AMAVEN desde 6 meses antes
     const histFrom = isoMinus(from, 180);
-    const [remittances, history, open, inBatch] = await Promise.all([
-      vendorRemittances(from, to),
+    const [all, history, open, inBatch, bank] = await Promise.all([
+      vendorRemittances(from, to, company),
       bankLedgerEntries(ctx, bankNo, histFrom),
       openEntries(ctx).catch(() => [] as OpenEntry[]),
       journal ? batchLines(ctx, journal.id, bankNo) : Promise.resolve([]),
+      bcFetchAll(odataUrl(`${ctx.apiBase}/bankAccounts`, { $filter: `number eq '${String(bankNo).replace(/'/g, "''")}'`, $select: 'currencyCode' }), ctx.token).catch(() => []),
     ]);
+    // Solo los pagos en la divisa de la cuenta (sin divisa = EUR); los demás (Amazon UK en GBP) se avisan
+    const bankCur = String(bank[0]?.currencyCode || '') || 'EUR';
+    const remittances = all.filter(r => (r.currency || 'EUR') === bankCur);
+    const otherCur = all.filter(r => (r.currency || 'EUR') !== bankCur);
     const paid = remittances.filter(r => /success|paid|complete/i.test(r.status));
     const held = remittances.filter(r => /progress|pending|schedul/i.test(r.status));
     const entries = history.filter(e => !e.reversed);
@@ -83,7 +88,7 @@ export async function POST(req: Request) {
 
     // Líneas sugeridas de un pago que falta, desde su detalle
     const suggestion = async (r: Remittance) => {
-      const items = await remittanceItems(r.uniquePaymentId);
+      const items = await remittanceItems(r);
       let applied = 0, byCountry = 0, empty = 0;
       const lines: SuggestedLine[] = items.map(i => {
         const amount = r2(i.netPaid);
@@ -123,7 +128,7 @@ export async function POST(req: Request) {
     const movements: MovementResult[] = [];
     for (const [idx, r] of paid.entries()) {
       const base = {
-        idx, date: r.date, valueDate: r.date, text: `Amazon Vendor · ${r.country} · ${r.method}`,
+        idx, date: r.date, valueDate: r.date, text: `Amazon Vendor · ${r.country} (${r.marketplace}) · ${r.method}`,
         purpose: `PAYMENT-NUM ${r.paymentNumber} · ID ${r.uniquePaymentId} · ${r.lineCount} ${r.lineCount === 1 ? 'factura' : 'facturas'}${r.currency && r.currency !== 'EUR' ? ` · ${r.currency}` : ''}`,
         name: 'Amazon', iban: '', endToEnd: r.uniquePaymentId, amount: r2(r.amount), pending: false, account: '',
       };
@@ -162,9 +167,10 @@ export async function POST(req: Request) {
     }
 
 
-    const currencies = Array.from(new Set(paid.map(r => r.currency).filter(c => c && c !== 'EUR')));
+    const byCur = new Map<string, number>();
+    for (const r of otherCur) byCur.set(`${r.currency} (${r.marketplace})`, (byCur.get(`${r.currency} (${r.marketplace})`) || 0) + 1);
     const warning = [
-      currencies.length ? `Hay pagos en ${currencies.join(', ')}: revisa que correspondan a esta cuenta.` : '',
+      otherCur.length ? `No se muestran ${otherCur.length} pagos en otra divisa que la de ${bankNo} (${bankCur}): ${Array.from(byCur.entries()).map(([k, n]) => `${n} en ${k}`).join(', ')}.` : '',
       pending ? `${pending} pagos sin detalle (Amazon solo deja leer ${MAX_DETAILS} por vez): vuelve a analizar un periodo más corto.` : '',
     ].filter(Boolean).join(' ');
     return NextResponse.json({
