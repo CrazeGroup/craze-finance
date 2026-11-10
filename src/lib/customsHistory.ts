@@ -145,7 +145,52 @@ export async function customsHistory(ctx: BcContext, company: string, year: numb
     ...cache.get(i.atc)!, invoiceNo: i.number, postingDate: String(i.postingDate || '').substring(0, 10), status: i.status, amount: Number(i.totalAmountExcludingTax) || 0,
   })).sort((a, b) => b.postingDate.localeCompare(a.postingDate) || b.atc.localeCompare(a.atc));
   const pending = todo.length - Math.min(next, todo.length);
+  // Índice del año (las facturas Zoll de BC con su AT/C): con él, la página pinta lo guardado sin preguntar a BC
+  const index: IndexRow[] = Array.from(byAtc.values()).map(i => ({
+    atc: i.atc, invoiceNo: i.number, postingDate: String(i.postingDate || '').substring(0, 10), status: i.status, amount: Number(i.totalAmountExcludingTax) || 0,
+  }));
+  const indexConfig = JSON.stringify({ company: ctx.companyName, vendor: cfg.zollVendor, index });
+  const ik = indexKey(company, year);
+  const prevIndex = await prisma.apiConfig.findUnique({ where: { key: ik }, select: { config: true } });
+  if (prevIndex?.config !== indexConfig) await prisma.apiConfig.upsert({ where: { key: ik }, update: { config: indexConfig }, create: { key: ik, url: '', config: indexConfig } });
   return { company: ctx.companyName, year, vendor: cfg.zollVendor, total: byAtc.size, pending, entries, notes: await historyNotes(company), manual };
+}
+
+// ---------- Carga rápida ----------
+
+type IndexRow = { atc: string; invoiceNo: string; postingDate: string; status: string; amount: number };
+// Fuera del prefijo de los análisis (customs:tariffs:<empresa>:), que se leen con startsWith
+const indexKey = (company: string, year: number) => `customs:tariffs-index:${company}:${year}`;
+
+// Lo guardado del año sin llamar a BC (índice + análisis): null si aún no hay índice (la página hace la carga completa)
+export async function customsHistoryStored(company: string, year: number, atc?: string) {
+  const row = await prisma.apiConfig.findUnique({ where: { key: indexKey(company, year) } });
+  if (!row?.config) return null;
+  const { company: companyName, vendor, index } = JSON.parse(row.config) as { company: string; vendor: string; index: IndexRow[] };
+  const wanted = atc ? index.filter(i => i.atc === atc) : index;
+  const rows = await prisma.apiConfig.findMany({ where: { key: { in: wanted.map(i => key(company, i.atc)) } } });
+  const byAtc = new Map<string, HistoryAnalysis>();
+  for (const r of rows) { try { const a = JSON.parse(r.config || ''); byAtc.set(a.atc, a); } catch { /* fila dañada */ } }
+  const entries: HistoryEntry[] = wanted.filter(i => byAtc.has(i.atc)).map(i => ({ ...byAtc.get(i.atc)!, ...i }))
+    .sort((a, b) => b.postingDate.localeCompare(a.postingDate) || b.atc.localeCompare(a.atc));
+  const pending = index.length - index.filter(i => byAtc.has(i.atc)).length;
+  return { company: companyName, year, vendor, total: index.length, pending: atc ? 0 : pending, entries, notes: atc ? {} : await historyNotes(company), manual: atc ? {} : await historyManual(company), stored: true };
+}
+
+// Respuesta resumida para la lista: sin la descripción ni el Positionsbefund de las posiciones (se piden al desplegar el
+// AT/C) y con la descripción de cada artículo una sola vez (descriptions), no repetida en cada declaración
+export function compactHistory<T extends { entries: HistoryEntry[] }>(data: T) {
+  const descriptions: Record<string, string> = {};
+  const item = (i: any) => { if (i.description) descriptions[i.no] = i.description; const { description: _d, ...rest } = i; return rest; };
+  const entries = data.entries.map(e => (!e.check ? e : {
+    ...e,
+    check: {
+      ...e.check,
+      positions: e.check.positions.map(({ description: _d, findings: _f, ...p }: any) => ({ ...p, description: '', items: p.items.map(item) })),
+      unassigned: e.check.unassigned.map(item),
+    },
+  }));
+  return { ...data, entries, descriptions, compact: true };
 }
 
 // Actualiza un artículo en todas las declaraciones guardadas de la empresa con su ficha actual de BC (Tariff No., %,

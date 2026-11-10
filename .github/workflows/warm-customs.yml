@@ -1,0 +1,36 @@
+# Aduanas · Histórico: cada hora lee los PDF de las facturas Zoll nuevas (Einfuhrabgabenbescheide) y guarda su análisis,
+# para que la página abra al momento sin esperar a leerlos. Cada llamada procesa los que caben en ~40 s y devuelve cuántos
+# quedan (pending); se repite hasta terminar. En enero también el año anterior.
+name: Aduanas - leer PDFs nuevos
+
+on:
+  schedule:
+    - cron: '41 * * * *'
+  workflow_dispatch:
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Leer PDFs nuevos
+        env:
+          APP_URL: ${{ vars.APP_URL || 'https://craze-finance.vercel.app' }}
+          INTERNAL_API_TOKEN: ${{ secrets.INTERNAL_API_TOKEN }}
+        run: |
+          fail=0
+          years="$(date -u +%Y)"
+          [ "$(date -u +%m)" = "01" ] && years="$years $(( $(date -u +%Y) - 1 ))"
+          for company in "CRAZE"; do
+            for year in $years; do
+              for i in $(seq 1 20); do
+                code=$(curl -s -o out.json -w '%{http_code}' -m 90 -H "Authorization: Bearer $INTERNAL_API_TOKEN" \
+                  -b "craze_selected_company=$company" "$APP_URL/api/customs/history?year=$year" || echo 000)
+                pending=$(jq -r '.pending // "?"' out.json 2>/dev/null || echo "?")
+                echo "$company · $year · vuelta $i → $code, pendientes $pending"
+                if [ "$code" != "200" ]; then head -c 300 out.json; echo; fail=1; break; fi
+                [ "$pending" = "0" ] && break
+              done
+            done
+          done
+          exit $fail

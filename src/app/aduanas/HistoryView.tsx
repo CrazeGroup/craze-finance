@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, ChevronDown, ChevronRight, FileDown, Pencil, RefreshCw, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import DocPdfLink from '@/components/DocPdfLink';
+import { useCompany } from '@/contexts/CompanyContext';
 import { Check, code, Item, LineNote, nf0, nf2, noteKey, STATUS, StatusBadges, TariffTable } from './TariffCheck';
 
 // Aduanas · Histórico: facturas Zoll del año (/api/customs/history), vista por código arancelario declarado con los
@@ -28,6 +29,20 @@ type CodeRow = {
 
 const dateEs = (d: string) => (d ? d.split('-').reverse().join('.') : '—');
 const VIEW_KEY = 'aduanas:historico:vista';
+// Última carga guardada en el navegador (por empresa y año), para pintar al momento al volver a la pestaña
+const cacheKey = (company: string, year: number) => `aduanas:historico:datos:${company}:${year}`;
+// La lista llega resumida: la descripción de cada artículo va una sola vez en descriptions; se vuelve a poner en cada línea
+function hydrate(json: any): Data {
+  const d: Record<string, string> = json.descriptions || {};
+  if (!json.compact) return json;
+  const fill = (i: any) => ({ ...i, description: i.description || d[i.no] || '' });
+  return {
+    ...json,
+    entries: (json.entries || []).map((e: any) => (!e.check ? e : {
+      ...e, check: { ...e.check, positions: e.check.positions.map((p: any) => ({ ...p, items: p.items.map(fill) })), unassigned: e.check.unassigned.map(fill) },
+    })),
+  };
+}
 const th = 'p-2 text-left text-xs uppercase tracking-wider text-gray-500 font-semibold whitespace-nowrap';
 
 export default function HistoryView() {
@@ -44,10 +59,26 @@ export default function HistoryView() {
   const changeView = (v: 'code' | 'atc') => { setView(v); try { localStorage.setItem(VIEW_KEY, v); } catch {} };
   const run = useRef(0);
 
-  // Va llamando a la API hasta que no quedan AT/C pendientes (cada llamada procesa los que caben en ~40 s)
-  const load = async (recompute?: string) => {
+  const { selectedCompany } = useCompany();
+  // Comprobando en BC si hay facturas Zoll nuevas, con lo guardado ya en pantalla
+  const [checking, setChecking] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  // Detalle completo de cada AT/C desplegado (descripciones y Positionsbefund de las posiciones)
+  const [details, setDetails] = useState<Record<string, Entry>>({});
+  const show = (json: any) => {
+    const d = hydrate(json);
+    setData(d);
+    try { localStorage.setItem(cacheKey(selectedCompany, year), JSON.stringify(json)); } catch { /* sin espacio o sin almacenamiento */ }
+    return d;
+  };
+
+  // Carga completa: pregunta a BC por las facturas Zoll y lee los PDF nuevos; va llamando hasta que no quedan pendientes
+  // (cada llamada procesa los que caben en ~40 s). background = con lo guardado ya en pantalla (sin bloquear la página)
+  const load = async (recompute?: string, background = false) => {
     const id = ++run.current;
-    setLoading(true); setError(null);
+    if (background) setChecking(true); else setLoading(true);
+    setError(null);
+    const before = new Set((data?.entries || []).map(e => e.atc));
     try {
       let param = recompute;
       let lastPending = Infinity;
@@ -56,18 +87,54 @@ export default function HistoryView() {
         const json = await res.json();
         if (!res.ok || json.error) throw new Error(json.error || `HTTP ${res.status}`);
         if (id !== run.current) return;
-        setData(json);
+        // Con PDF pendientes de leer, se pasa a mostrar el progreso
+        if (json.pending) { setChecking(false); setLoading(true); }
+        const d = show(json);
         param = undefined;
-        if (!json.pending || json.pending >= lastPending) break;
+        if (!json.pending || json.pending >= lastPending) {
+          const added = before.size ? d.entries.filter(e => !before.has(e.atc)).length : 0;
+          if (added) setNotice(`${added} ${added === 1 ? 'declaración nueva leída' : 'declaraciones nuevas leídas'} de BC`);
+          break;
+        }
         lastPending = json.pending;
       }
     } catch (e: any) {
       if (id === run.current) setError(e.message);
     } finally {
-      if (id === run.current) setLoading(false);
+      if (id === run.current) { setLoading(false); setChecking(false); }
     }
   };
-  useEffect(() => { setData(null); load(); }, [year]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Al abrir: 1) lo de la última vez en este navegador, 2) lo guardado en la base de datos (sin BC, al momento),
+  // 3) la comprobación con BC en segundo plano
+  useEffect(() => {
+    let cancelled = false;
+    setData(null); setDetails({}); setNotice(null);
+    try {
+      const cached = localStorage.getItem(cacheKey(selectedCompany, year));
+      if (cached) setData(hydrate(JSON.parse(cached)));
+    } catch { /* caché dañada o sin almacenamiento */ }
+    (async () => {
+      let hasStored = false;
+      try {
+        const res = await fetch(`/api/customs/history?year=${year}&stored=1`, { cache: 'no-store' });
+        const json = await res.json();
+        if (!cancelled && res.ok && json.stored) { show(json); hasStored = true; }
+      } catch { /* se sigue con la carga completa */ }
+      if (!cancelled) load(undefined, hasStored);
+    })();
+    return () => { cancelled = true; };
+  }, [year, selectedCompany]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Detalle de un AT/C al desplegarlo (y de nuevo tras volver a leer su PDF o cambiar su pedido)
+  const loadDetail = async (atc: string) => {
+    try {
+      const res = await fetch(`/api/customs/history?year=${year}&atc=${encodeURIComponent(atc)}`, { cache: 'no-store' });
+      const json = await res.json();
+      if (res.ok && json.entry) setDetails(d => ({ ...d, [atc]: json.entry }));
+    } catch { /* se queda con el resumen */ }
+  };
+  const reread = async (atc: string) => { setDetails(({ [atc]: _x, ...rest }) => rest); await load(atc); await loadDetail(atc); };
 
   const [busy, setBusy] = useState<string | null>(null);
   // Pedido / factura de China y contenedor a mano (AT/C en edición)
@@ -80,7 +147,7 @@ export default function HistoryView() {
       if (!res.ok) throw new Error(json.error || 'No se ha podido guardar');
       const atc = editing.atc;
       setEditing(null);
-      await load(atc);
+      await reread(atc);
     } catch (e: any) { setError(e.message); }
   };
   const notes = useMemo(() => data?.notes || {}, [data]);
@@ -94,6 +161,7 @@ export default function HistoryView() {
       // Solo se sustituyen las declaraciones que han cambiado (sin volver a leer todo el histórico)
       const changed: Record<string, Entry['check']> = json.checks || {};
       setData(d => (d ? { ...d, entries: d.entries.map(x => (changed[x.atc] ? { ...x, check: changed[x.atc] } : x)) } : d));
+      setDetails(ds => Object.fromEntries(Object.entries(ds).map(([a, x]) => [a, changed[a] ? { ...x, check: changed[a] } : x])));
     } catch (e: any) { setError(e.message); } finally { setBusy(null); }
   };
   const saveNote = async (key: string, note: { ignored: boolean; approved?: boolean; comment: string }) => {
@@ -166,8 +234,21 @@ export default function HistoryView() {
   const errors = entries.filter(e => e.error);
   const toggle = (k: string) => setOpen(o => ({ ...o, [k]: !o[k] }));
 
-  const exportXlsx = () => {
-    const rows = entries.flatMap(e => [
+  // Excel con el detalle completo (descripciones de las posiciones), sin las líneas descartadas
+  const exportXlsx = async () => {
+    let list = entries;
+    try {
+      const res = await fetch(`/api/customs/history?year=${year}&stored=1&full=1`, { cache: 'no-store' });
+      const json = await res.json();
+      if (res.ok && json.stored) list = (json.entries as Entry[]).map(e => (!e.check ? e : {
+        ...e, check: {
+          ...e.check,
+          positions: e.check.positions.map(p => ({ ...p, items: p.items.filter(i => !notes[noteKey(e.atc, p.pos, i.no)]?.ignored) })),
+          unassigned: e.check.unassigned.filter(i => !notes[noteKey(e.atc, null, i.no)]?.ignored),
+        },
+      }));
+    } catch { /* con el resumen */ }
+    const rows = list.flatMap(e => [
       ...(e.check?.positions || []).flatMap(p => (p.items.length ? p.items : [null]).map(i => ({
         'AT/C': e.atc, 'Factura Zoll': e.invoiceNo, 'Fecha': e.postingDate, 'Pedido (N380)': e.orders.join(', '), 'Contenedor / AWB': e.transport.join(', '),
         'Factura China': e.check?.invoices.map(x => `${x.vendorInvoiceNo} (${x.no})`).join(', ') || '', 'Posición': p.pos, 'Código declarado': p.tariff,
@@ -206,6 +287,8 @@ export default function HistoryView() {
         <label className="flex items-center gap-2 text-sm text-gray-700">
           <input type="checkbox" checked={onlyIssues} onChange={e => setOnlyIssues(e.target.checked)} /> Solo lo que hay que revisar
         </label>
+        {checking && !loading && <span className="text-xs text-gray-400 flex items-center gap-1.5"><RefreshCw size={12} className="animate-spin" /> Comprobando facturas Zoll nuevas en BC…</span>}
+        {notice && <span className="text-xs font-semibold text-emerald-700">{notice}</span>}
         {loading && (
           <span className="text-sm text-gray-500 flex items-center gap-2">
             <RefreshCw size={14} className="animate-spin" />
@@ -216,7 +299,7 @@ export default function HistoryView() {
           <button onClick={exportXlsx} disabled={!entries.length} className="inline-flex items-center gap-2 border border-gray-300 text-sm font-semibold px-3 py-1.5 rounded-lg hover:bg-gray-50 disabled:opacity-40">
             <FileDown size={14} /> Excel
           </button>
-          <button onClick={() => { if (confirm('¿Volver a leer todos los PDFs del año? Tarda unos minutos.')) load('*'); }} disabled={loading}
+          <button onClick={() => { if (confirm('¿Volver a leer todos los PDFs del año? Tarda unos minutos.')) { setDetails({}); load('*'); } }} disabled={loading}
             title="Vuelve a leer los PDFs y a comparar con las fichas de artículo actuales"
             className="inline-flex items-center gap-2 border border-gray-300 text-sm font-semibold px-3 py-1.5 rounded-lg hover:bg-gray-50 disabled:opacity-40">
             <RefreshCw size={14} /> Recalcular todo
@@ -322,7 +405,7 @@ export default function HistoryView() {
                 const tariffs = Array.from(new Set(ps.map(p => p.tariff)));
                 return (
                   <Fragment key={k}>
-                    <tr className="border-t border-gray-200 hover:bg-gray-50 cursor-pointer" onClick={() => toggle(k)}>
+                    <tr className="border-t border-gray-200 hover:bg-gray-50 cursor-pointer" onClick={() => { toggle(k); if (!open[k] && !details[e.atc]) loadDetail(e.atc); }}>
                       <td className="p-2 w-6">{open[k] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
                       <td className="p-2 whitespace-nowrap">
                         <span className="font-mono font-semibold">{e.atc}</span>
@@ -356,7 +439,7 @@ export default function HistoryView() {
                           <button onClick={() => setEditing({ atc: e.atc, orders: (data?.manual?.[e.atc]?.orders || e.orders).join(', '), transport: (data?.manual?.[e.atc]?.transport || e.transport).join(', ') })}
                             title="Indicar a mano el pedido / factura de China y el contenedor (si el PDF no los trae o están mal)"
                             className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100"><Pencil size={12} /> Pedido / contenedor</button>
-                          <button onClick={() => load(e.atc)} disabled={loading} title="Volver a leer este PDF"
+                          <button onClick={() => reread(e.atc)} disabled={loading} title="Volver a leer este PDF"
                             className="inline-flex items-center gap-1 px-2 py-1 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100 disabled:opacity-40"><RefreshCw size={12} /> Volver a leer el PDF</button>
                         </div>
                         {editing?.atc === e.atc && (
@@ -375,7 +458,7 @@ export default function HistoryView() {
                           </div>
                         )}
                         {e.warnings.map(w => <p key={w} className="px-3 pt-2 text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {w}</p>)}
-                        {e.check && <div className="border border-gray-200 rounded-lg overflow-x-auto"><TariffTable data={rawCheck(e.atc) || e.check} actions={{ atc: e.atc, notes, busy, onRefresh: refreshItem, onNote: saveNote }} /></div>}
+                        {e.check && <div className="border border-gray-200 rounded-lg overflow-x-auto"><TariffTable data={details[e.atc]?.check || rawCheck(e.atc) || e.check} actions={{ atc: e.atc, notes, busy, onRefresh: refreshItem, onNote: saveNote }} /></div>}
                       </td></tr>
                     )}
                   </Fragment>
