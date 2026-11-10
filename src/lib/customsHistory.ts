@@ -21,6 +21,7 @@ const BUDGET_MS = 40_000;
 const PARALLEL = 4;
 const q = (s: string) => s.replace(/'/g, "''");
 const normAtc = (s: string) => (s || '').trim().replace(/\.+$/, '');
+const sameAtc = (a: string, b: string) => !!a && !!b && normAtc(a).replace(/[^A-Z0-9]/gi, '').toUpperCase() === normAtc(b).replace(/[^A-Z0-9]/gi, '').toUpperCase();
 const key = (company: string, atc: string) => `${PREFIX}${company}:${atc}`;
 
 async function stored(company: string): Promise<Map<string, HistoryAnalysis>> {
@@ -79,7 +80,8 @@ async function analyse(ctx: BcContext, inv: { id: string; atc: string }, manual?
       const data = new Uint8Array(await (await get(`${ctx.apiBase}/documentAttachments(${a.id})/attachmentContent`)).arrayBuffer());
       const d = await parseCustomsPdf(a.fileName, data);
       // El AT/C o, en DHL, el Registrierkz. für NIZZA con el que se registró la factura
-      if (normAtc(d.atc) === inv.atc || (d.nizza && normAtc(d.nizza) === inv.atc)) { doc = d; break; }
+      // Con o sin barras (AT/C/40/000124/04/2026/5351 = ATC400001240420265351)
+      if (sameAtc(d.atc, inv.atc) || (d.nizza && sameAtc(d.nizza, inv.atc))) { doc = d; break; }
       if (!doc && (d.positions.length || d.dhl)) doc = d;
     }
     if (!doc) return { ...base, error: 'El PDF adjunto no es un Einfuhrabgabenbescheid (sin posiciones)' };
@@ -92,8 +94,8 @@ async function analyse(ctx: BcContext, inv: { id: string; atc: string }, manual?
     return {
       ...base, file: doc.file, date: doc.date, orders, transport, zoll: doc.zoll, eust: doc.eust, check, dhl: !!doc.dhl,
       warnings: [
-        ...(normAtc(doc.atc) !== inv.atc && !(doc.nizza && normAtc(doc.nizza) === inv.atc) ? [`El PDF adjunto es de ${doc.atc || 'otro AT/C'}`] : []),
-        ...(doc.nizza && normAtc(doc.nizza) === inv.atc ? [`Factura Zoll registrada con el Registrierkz. NIZZA; AT/C del PDF: ${doc.atc}`] : []),
+        ...(!sameAtc(doc.atc, inv.atc) && !(doc.nizza && sameAtc(doc.nizza, inv.atc)) ? [`El PDF adjunto es de ${doc.atc || 'otro AT/C'}`] : []),
+        ...(doc.nizza && sameAtc(doc.nizza, inv.atc) && !sameAtc(doc.atc, inv.atc) ? [`Factura Zoll registrada con el Registrierkz. NIZZA; AT/C del PDF: ${doc.atc}`] : []),
         ...(manual ? [`Pedido / contenedor indicados a mano${manual.by ? ` por ${manual.by}` : ''} (${manual.at.substring(0, 10)})`] : []),
         ...docWarnings,
       ],
