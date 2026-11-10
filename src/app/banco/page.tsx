@@ -36,10 +36,9 @@ export default function BancoPage() {
   const [error, setError] = useState('');
   const [sent, setSent] = useState<{ lines: number; documentNumbers: string[]; warnings: string[] } | null>(null);
   // Amazon Vendor (AMAVEN): los pagos se leen de la API de Amazon en vez de un extracto
-  const [period, setPeriod] = useState(() => {
-    const iso = (d: Date) => d.toISOString().slice(0, 10);
-    return { from: iso(new Date(Date.now() - 30 * 86400000)), to: iso(new Date()) };
-  });
+  // Vacío = desde la última revisión (los pagos ya leídos se guardan); una fecha relee la API desde ese día
+  const [amazonFrom, setAmazonFrom] = useState('');
+  const [amazonInfo, setAmazonInfo] = useState<{ readFrom: string; oldDone: number; checkedUntil: string } | null>(null);
   const isAmazon = (no: string) => /^AMAVEN$/i.test(no) || /amazon\s*vendor/i.test(banks.find(b => b.number === no)?.name || '');
   const amazon = isAmazon(bankNo);
 
@@ -62,6 +61,7 @@ export default function BancoPage() {
     setJournalCode(js.find(j => j.bankNo === no)?.code || '');
     setRows([]);
     setInfo(null);
+    setAmazonInfo(null);
     setSent(null);
     try { localStorage.setItem('crz-banco-bank', no); } catch { /* sin almacenamiento */ }
   };
@@ -92,7 +92,7 @@ export default function BancoPage() {
       if (amazon) {
         res = await fetch('/api/banco/amazon', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bankNo, journalCode, from: period.from, to: period.to }),
+          body: JSON.stringify({ bankNo, journalCode, from: amazonFrom || undefined }),
         });
       } else {
         const form = new FormData();
@@ -104,6 +104,7 @@ export default function BancoPage() {
       const d = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
       if (!res.ok) throw new Error(d.error || 'Error al analizar el extracto');
       setInfo({ warning: d.warning, entries: d.entries, from: d.from, held: d.held || [] });
+      setAmazonInfo(d.amazon || null);
       setRows(d.movements.map((m: MovementResult) => {
         const row: Row = { ...m, selected: false, documentNo: m.suggestion?.documentNo || '', lines: m.suggestion?.lines.map(l => ({ ...l })) || [] };
         row.selected = m.status === 'new' && !m.pending && !m.doubtful && linesOk(row);
@@ -163,7 +164,7 @@ export default function BancoPage() {
         <div className="w-full px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="mr-auto">
             <p className="font-bold text-gray-900 leading-tight text-lg">BANCO</p>
-            <p className="text-xs text-gray-500">{companyLabel(selectedCompany)} · {amazon ? 'pagos de Amazon Vendor (API) → General Journal' : 'extracto del banco → General Journal'}</p>
+            <p className="text-xs text-gray-500">{companyLabel(selectedCompany)} · {amazon ? 'desglose de los pagos de Amazon Vendor (API) → AMAVEN; el cobro se sube con el extracto de SPARKASSE' : 'extracto del banco → General Journal'}</p>
           </div>
           {loading && <span className="flex items-center gap-2 text-sm text-gray-500"><Loader2 size={16} className="animate-spin" /> {loading}</span>}
         </div>
@@ -185,16 +186,10 @@ export default function BancoPage() {
             </select>
           </label>
           {amazon ? (
-            <>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                Pagos de Amazon desde
-                <input type="date" value={period.from} onChange={e => setPeriod(p => ({ ...p, from: e.target.value }))} className={`${input} block mt-1 normal-case tracking-normal font-normal`} />
-              </label>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                Hasta
-                <input type="date" value={period.to} onChange={e => setPeriod(p => ({ ...p, to: e.target.value }))} className={`${input} block mt-1 normal-case tracking-normal font-normal`} />
-              </label>
-            </>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider" title="Vacío: desde la última revisión (una semana antes). Pon una fecha para volver a leer de Amazon los pagos desde ese día.">
+              Releer Amazon desde (opcional)
+              <input type="date" value={amazonFrom} onChange={e => setAmazonFrom(e.target.value)} className={`${input} block mt-1 normal-case tracking-normal font-normal`} />
+            </label>
           ) : (
           <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
             Extracto (CSV o Excel)
@@ -213,6 +208,11 @@ export default function BancoPage() {
         </section>
 
         {error && <p className="bg-white border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-center gap-2"><AlertCircle size={16} /> {error}</p>}
+        {amazon && amazonInfo && (
+          <p className="text-xs text-gray-500 px-1">
+            Pagos de Amazon leídos desde {fdate(amazonInfo.readFrom)} y guardados; {amazonInfo.oldDone} pagos anteriores ya tienen su desglose en AMAVEN y no se vuelven a comprobar.
+          </p>
+        )}
         {info?.warning && <p className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900 flex items-center gap-2"><AlertCircle size={16} /> {info.warning}</p>}
         {!!info?.held.length && (
           <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700">
