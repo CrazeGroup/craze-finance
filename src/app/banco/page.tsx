@@ -217,7 +217,9 @@ export default function BancoPage() {
         {!!info?.held.length && (
           <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700">
             <p className="font-semibold flex items-center gap-2"><AlertCircle size={16} className="text-gray-500" />
-              {info.held.length} {info.held.length === 1 ? 'movimiento vorgemerkt' : 'movimientos vorgemerkt'} (retenidos, aún no cargados en la cuenta): no se sugieren · {info.held.reduce((t, m) => t + m.amount, 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {amazon
+                ? `${info.held.length} ${info.held.length === 1 ? 'pago de Amazon en curso' : 'pagos de Amazon en curso'} (IN_PROGRESS, aún no enviados): no se sugieren ·`
+                : `${info.held.length} ${info.held.length === 1 ? 'movimiento vorgemerkt' : 'movimientos vorgemerkt'} (retenidos, aún no cargados en la cuenta): no se sugieren ·`} {info.held.reduce((t, m) => t + m.amount, 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </p>
             <ul className="mt-1 ml-6 text-xs text-gray-500 space-y-0.5">
               {info.held.map((m, i) => <li key={i}>{m.valueDate || m.date} · {m.name || '—'} · {m.purpose.slice(0, 90)} · <span className="font-mono">{m.amount.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></li>)}

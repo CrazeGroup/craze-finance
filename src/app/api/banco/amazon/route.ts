@@ -18,7 +18,9 @@ const isoMinus = (d: string, n: number) => new Date(Date.parse(d) - n * 86400000
 // BANCO con la cuenta de Amazon Vendor (AMAVEN): en vez de un extracto, los pagos de Amazon de la Finance Remittance API.
 // Un pago está registrado si AMAVEN tiene movimientos con su nº de pago (Document No.) o ya está en el lote; para los que
 // faltan, una línea por factura de la remesa: la factura abierta de cliente o proveedor con ese nº (liquidada), o si no
-// la cuenta con la que se registraron los pagos de ese país. Body: { bankNo, journalCode, from, to }
+// la cuenta con la que se registraron los pagos de ese país. Como en AMAVEN, cada pago lleva además el traspaso de su importe
+// al banco (la Bank Account más usada como contrapartida en AMAVEN, p. ej. 1820 00), con el mismo nº de documento.
+// Los pagos aún en curso (IN_PROGRESS) no se sugieren. Body: { bankNo, journalCode, from, to }
 export async function POST(req: Request) {
   try {
     const company = (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
@@ -39,7 +41,8 @@ export async function POST(req: Request) {
       openEntries(ctx).catch(() => [] as OpenEntry[]),
       journal ? batchLines(ctx, journal.id, bankNo) : Promise.resolve([]),
     ]);
-    const paid = remittances.filter(r => !/fail|cancel|void|reject/i.test(r.status));
+    const paid = remittances.filter(r => /success|paid|complete/i.test(r.status));
+    const held = remittances.filter(r => /progress|pending|schedul/i.test(r.status));
     const entries = history.filter(e => !e.reversed);
     const byDoc = new Map<string, typeof entries>();
     for (const e of entries) byDoc.set(e.docNo, [...(byDoc.get(e.docNo) || []), e]);
@@ -68,9 +71,15 @@ export async function POST(req: Request) {
       return Array.from(m.entries()).sort((a, b) => b[1] - a[1])[0][0];
     };
     const nameOf = new Map(open.map(o => [`${o.side}|${o.no}`, o.name]));
-    const custByDoc = new Map(open.filter(o => o.side === 'Customer').map(o => [o.docNo, o]));
+    // Banco al que se traspasan los pagos de Amazon
+    const banksUsed = new Map<string, number>();
+    for (const e of entries) if (e.balType === 'Bank Account') banksUsed.set(e.balNo, (banksUsed.get(e.balNo) || 0) + 1);
+    const transferBank = Array.from(banksUsed.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+    // Solo facturas y abonos (no pagos abiertos que lleven ese nº como documento externo)
+    const docs = open.filter(o => /invoice|credit/i.test(o.docType));
+    const custByDoc = new Map(docs.filter(o => o.side === 'Customer').map(o => [o.docNo, o]));
     const vendByDoc = new Map<string, OpenEntry>();
-    for (const o of open.filter(o => o.side === 'Vendor')) { if (o.extDocNo) vendByDoc.set(o.extDocNo, o); vendByDoc.set(o.docNo, o); }
+    for (const o of docs.filter(o => o.side === 'Vendor')) { if (o.extDocNo) vendByDoc.set(o.extDocNo, o); vendByDoc.set(o.docNo, o); }
 
     // Líneas sugeridas de un pago que falta, desde su detalle
     const suggestion = async (r: Remittance) => {
@@ -120,7 +129,8 @@ export async function POST(req: Request) {
       };
       const posted = byDoc.get(r.paymentNumber);
       if (posted?.length) {
-        const sum = posted.reduce((t, e) => t + e.amount, 0);
+        // Sin el traspaso al banco: clientes + proveedores = importe del pago
+        const sum = posted.filter(e => e.balType !== 'Bank Account').reduce((t, e) => t + e.amount, 0);
         movements.push({
           ...base, status: 'posted', suggestion: null, doubtful: cents(sum) !== cents(r.amount),
           matched: posted.map(e => ({ docNo: e.docNo, date: e.date, description: e.description, balType: e.balType, balNo: e.balNo, amount: e.amount })),
@@ -139,6 +149,16 @@ export async function POST(req: Request) {
       }
       details++;
       movements.push({ ...base, status: 'new', matched: [], suggestion: await suggestion(r) });
+      // Traspaso del pago al banco (mismo nº de documento)
+      if (cents(r.amount) && transferBank) {
+        movements.push({
+          ...base, idx: 100000 + idx, amount: -r2(r.amount), text: `Traspaso a ${transferBank}`, purpose: `PAYMENT-NUM ${r.paymentNumber} · traspaso del pago al banco`,
+          status: 'new', matched: [], suggestion: {
+            documentNo: r.paymentNumber, source: 'Amazon', note: `Traspaso a ${transferBank}, como los pagos ya registrados en AMAVEN`,
+            lines: [{ accountType: 'Bank Account', accountNo: transferBank, accountName: '', description: r.paymentNumber, amount: -r2(r.amount) }],
+          },
+        });
+      }
     }
 
 
@@ -147,7 +167,11 @@ export async function POST(req: Request) {
       currencies.length ? `Hay pagos en ${currencies.join(', ')}: revisa que correspondan a esta cuenta.` : '',
       pending ? `${pending} pagos sin detalle (Amazon solo deja leer ${MAX_DETAILS} por vez): vuelve a analizar un periodo más corto.` : '',
     ].filter(Boolean).join(' ');
-    return NextResponse.json({ bankNo, journalCode: journal?.code || '', from, warning, entries: entries.filter(e => e.date >= isoMinus(from, 10)).length, movements, held: [] });
+    return NextResponse.json({
+      bankNo, journalCode: journal?.code || '', from, warning, entries: entries.filter(e => e.date >= isoMinus(from, 10)).length, movements,
+      // Pagos que Amazon aún está procesando: se muestran aparte, no se registran
+      held: held.map(r => ({ date: r.date, valueDate: r.date, name: `Amazon ${r.country} · ${r.status}`, purpose: `PAYMENT-NUM ${r.paymentNumber} · ${r.lineCount} facturas`, amount: r2(r.amount) })),
+    });
   } catch (error: any) {
     console.error('BANCO Amazon:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
