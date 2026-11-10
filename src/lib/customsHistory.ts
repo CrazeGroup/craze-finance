@@ -12,6 +12,7 @@ import { checkTariffs, customsConfig, figureTariffs, itemTariffCard, parseCustom
 export type HistoryAnalysis = {
   atc: string; file: string; date: string; orders: string[]; transport: string[];
   zoll: number; eust: number; check: TariffCheck | null; warnings: string[]; error?: string; computedAt: string;
+  dhl?: boolean;
 };
 export type HistoryEntry = HistoryAnalysis & { invoiceNo: string; postingDate: string; status: string; amount: number };
 
@@ -77,8 +78,9 @@ async function analyse(ctx: BcContext, inv: { id: string; atc: string }, manual?
     for (const a of pdfs) {
       const data = new Uint8Array(await (await get(`${ctx.apiBase}/documentAttachments(${a.id})/attachmentContent`)).arrayBuffer());
       const d = await parseCustomsPdf(a.fileName, data);
-      if (normAtc(d.atc) === inv.atc) { doc = d; break; }
-      if (!doc && d.positions.length) doc = d;
+      // El AT/C o, en DHL, el Registrierkz. für NIZZA con el que se registró la factura
+      if (normAtc(d.atc) === inv.atc || (d.nizza && normAtc(d.nizza) === inv.atc)) { doc = d; break; }
+      if (!doc && (d.positions.length || d.dhl)) doc = d;
     }
     if (!doc) return { ...base, error: 'El PDF adjunto no es un Einfuhrabgabenbescheid (sin posiciones)' };
     // Lo indicado a mano manda sobre lo leído del PDF
@@ -88,9 +90,10 @@ async function analyse(ctx: BcContext, inv: { id: string; atc: string }, manual?
     // Sin posiciones en el PDF pero con la factura de China: se listan sus artículos (sin posición) con su Tariff No.
     const check = doc.positions.length || (manual?.orders.length && orders.length) ? await checkTariffs(ctx, orders, doc.positions) : null;
     return {
-      ...base, file: doc.file, date: doc.date, orders, transport, zoll: doc.zoll, eust: doc.eust, check,
+      ...base, file: doc.file, date: doc.date, orders, transport, zoll: doc.zoll, eust: doc.eust, check, dhl: !!doc.dhl,
       warnings: [
-        ...(normAtc(doc.atc) !== inv.atc ? [`El PDF adjunto es de ${doc.atc || 'otro AT/C'}`] : []),
+        ...(normAtc(doc.atc) !== inv.atc && !(doc.nizza && normAtc(doc.nizza) === inv.atc) ? [`El PDF adjunto es de ${doc.atc || 'otro AT/C'}`] : []),
+        ...(doc.nizza && normAtc(doc.nizza) === inv.atc ? [`Factura Zoll registrada con el Registrierkz. NIZZA; AT/C del PDF: ${doc.atc}`] : []),
         ...(manual ? [`Pedido / contenedor indicados a mano${manual.by ? ` por ${manual.by}` : ''} (${manual.at.substring(0, 10)})`] : []),
         ...docWarnings,
       ],

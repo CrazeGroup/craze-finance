@@ -37,6 +37,9 @@ export type CustomsDoc = {
   orders: string[]; transport: string[]; duties: Duty[]; positions: CustomsPosition[];
   zoll: number; zollDue: string; eust: number; eustDue: string; total: number | null;
   description: string; warnings: string[];
+  // Despacho de DHL Express (Hub Leipzig); nizza = "Registrierkz. für NIZZA" (AT/C/0040/M02Q6N/06/2026/5604), con el que a
+  // veces se registra la factura Zoll en vez del AT/C
+  dhl?: boolean; nizza?: string;
 };
 
 const iso = (d: string) => { const m = d.match(/(\d\d)\.(\d\d)\.(\d{4})/); return m ? `${m[3]}-${m[2]}-${m[1]}` : ''; };
@@ -125,13 +128,15 @@ export async function parseCustomsPdf(file: string, data: Uint8Array): Promise<C
     p.final = finals.has(p.pos) ? finals.get(p.pos)! : null;
     if (findings.has(p.pos)) p.findings = findings.get(p.pos);
   }
-  if (!positions.length) warnings.push('No se han encontrado las posiciones (Warennummer) en el PDF.');
+  const dhl = /DHL Hub Leipzig|DHL Express/i.test(t);
+  const nizza = t.match(/Registrierkz\. für NIZZA: (AT\/C\/\S+)/)?.[1] || '';
+  if (!positions.length) warnings.push(dhl ? 'Despacho DHL Express: el PDF no trae los códigos arancelarios de las posiciones.' : 'No se han encontrado las posiciones (Warennummer) en el PDF.');
   else if (positions.some(p => p.final === false)) warnings.push(`Posiciones no definitivas (Nicht abschließend festgesetzt): ${positions.filter(p => p.final === false).map(p => p.pos).join(', ')}.`);
   else if (!fromBeleg.length && !fromDhl.length) warnings.push('El PDF no trae la parte "Beleg": posiciones leídas del Bescheid (código, Zollwert y % de Zoll; sin descripción ni Artikel Nr.).');
 
   const description = [orders.join(', '), transport.join(', ')].filter(Boolean).join(' / ');
   return {
-    file, atc, registration, lrn, date, orders, transport, duties, positions,
+    file, atc, registration, lrn, date, orders, transport, duties, positions, dhl, ...(nizza ? { nizza } : {}),
     zoll, zollDue: zollDuties[0]?.due || '', eust, eustDue: eustDuties[0]?.due || '', total, description, warnings,
   };
 }

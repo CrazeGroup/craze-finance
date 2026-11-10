@@ -10,7 +10,7 @@ import { Check, code, Item, LineNote, nf0, nf2, noteKey, STATUS, StatusBadges, T
 // artículos importados en cada uno, o por declaración (AT/C) con el detalle de cada una.
 type Entry = {
   atc: string; file: string; date: string; orders: string[]; transport: string[]; zoll: number; eust: number;
-  check: Check | null; warnings: string[]; error?: string; computedAt: string;
+  check: Check | null; warnings: string[]; error?: string; computedAt: string; dhl?: boolean;
   invoiceNo: string; postingDate: string; status: string; amount: number;
 };
 type Manual = { orders: string[]; transport: string[]; by?: string; at: string };
@@ -156,7 +156,7 @@ export default function HistoryView() {
       && (!s || codeHit || i.no.toLowerCase().includes(s) || i.description.toLowerCase().includes(s) || i.bcTariff.includes(sCode)));
     return { c, items, show: items.length > 0 || (!onlyIssues && (!s || codeHit)) };
   }).filter(v => v.show);
-  const entryIssue = (e: Entry) => !!e.error || !e.check || !!e.check?.unassigned.length || !!e.check?.positions.some(p => p.items.some(i => BAD.has(i.status)));
+  const entryIssue = (e: Entry) => !!e.error || (!e.check && !e.dhl) || !!e.check?.unassigned.length || !!e.check?.positions.some(p => p.items.some(i => BAD.has(i.status)));
   const visibleEntries = entries.filter(e => (!onlyIssues || entryIssue(e))
     && (!s || [e.atc, e.invoiceNo, ...e.orders, ...e.transport].some(x => x.toLowerCase().includes(s))
       || !!e.check?.positions.some(p => p.tariff.includes(sCode) || p.items.some(i => i.no.toLowerCase().includes(s)))));
@@ -326,6 +326,7 @@ export default function HistoryView() {
                       <td className="p-2 w-6">{open[k] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
                       <td className="p-2 whitespace-nowrap">
                         <span className="font-mono font-semibold">{e.atc}</span>
+                        {e.dhl && <span className="ml-2 border rounded px-1.5 py-px text-[10px] font-bold bg-yellow-50 text-yellow-800 border-yellow-300" title="Despacho de DHL Express (Hub Leipzig)">DHL</span>}
                         <span className="ml-2 text-xs text-gray-500 tabular-nums">{dateEs(e.postingDate)}</span>
                       </td>
                       <td className="p-2 text-right tabular-nums whitespace-nowrap">{rates.map(r => `${nf2.format(r)} %`).join(' · ') || '—'}</td>
@@ -342,6 +343,7 @@ export default function HistoryView() {
                         })()}
                         {e.error ? <span className="text-xs text-red-700 flex items-center gap-1"><AlertCircle size={13} /> {e.error}</span>
                           : e.check ? <span className="flex flex-wrap gap-1"><StatusBadges data={e.check} /></span>
+                          : e.dhl ? <span className="text-xs text-gray-500">Despacho DHL Express: el PDF no trae códigos arancelarios</span>
                           : <span className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> El PDF no trae las posiciones (parte &quot;Beleg&quot;)</span>}
                       </td>
                     </tr>
