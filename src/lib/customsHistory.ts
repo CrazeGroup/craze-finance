@@ -83,7 +83,8 @@ async function analyse(ctx: BcContext, inv: { id: string; atc: string }, manual?
       const data = new Uint8Array(await (await get(`${ctx.apiBase}/documentAttachments(${a.id})/attachmentContent`)).arrayBuffer());
       const d = await parseCustomsPdf(a.fileName, data).catch(() => null);
       if (!d) continue;
-      if (d.kind) kinds.add(d.kind);
+      // Un extracto o un escaneo no es la declaración (el extracto cita los AT/C del mes)
+      if (d.kind) { kinds.add(d.kind); continue; }
       // El AT/C o, en DHL, el Registrierkz. für NIZZA con el que se registró la factura
       // Con o sin barras (AT/C/40/000124/04/2026/5351 = ATC400001240420265351)
       if (sameAtc(d.atc, inv.atc) || (d.nizza && sameAtc(d.nizza, inv.atc))) { doc = d; break; }
