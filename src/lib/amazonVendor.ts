@@ -20,11 +20,13 @@ export type RemittanceItem = {
   total: number; withholding: number; netPaid: number; currency: string;
 };
 
-// Marketplaces con token en las variables de entorno. Cada empresa lee los suyos: Amazon UK es de CRAZE Toys Ltd (Craze UK);
-// el resto de marketplaces, de las demás empresas (CRAZE GmbH)
+// Empresas con Amazon Vendor: CRAZE GmbH (CRAZE) lee todos los marketplaces menos UK; CRAZE Toys Ltd (Craze UK), Amazon UK.
+// El resto de empresas no vende a Amazon.
+export const amazonCompany = (company: string) => company === 'CRAZE' || company === 'Craze UK';
+// Marketplaces con token en las variables de entorno, de la empresa
 export const vendorMarketplaces = (company?: string) => Object.keys(MARKETPLACES)
   .filter(k => process.env[`SP_API_VENDOR_REFRESH_TOKEN_${k}`])
-  .filter(k => !company || (/\buk\b/i.test(company) ? k === 'UK' : k !== 'UK'));
+  .filter(k => !company || (company === 'Craze UK' ? k === 'UK' : company === 'CRAZE' && k !== 'UK'));
 
 const tokenCache = new Map<string, { token: string; until: number }>();
 async function accessToken(mk: string) {
@@ -65,7 +67,7 @@ const day = (s: any) => String(s || '').substring(0, 10);
 // Pagos con fecha de pago entre from y to (YYYY-MM-DD, ambos incluidos), de los marketplaces de la empresa
 export async function vendorRemittances(from: string, to: string, company?: string): Promise<Remittance[]> {
   const markets = vendorMarketplaces(company);
-  if (!markets.length) await accessToken(company && /\buk\b/i.test(company) ? 'UK' : 'DE');   // sin token: el error de credenciales
+  if (!markets.length) await accessToken(company === 'Craze UK' ? 'UK' : 'DE');   // sin token: el error de credenciales
   const end = new Date(Date.parse(to) + 86400000).toISOString().substring(0, 10);
   const out: Remittance[] = [];
   const seen = new Set<string>();

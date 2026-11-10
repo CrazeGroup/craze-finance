@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { bcFetchAll, getBcContext, odataUrl } from '@/lib/bcClient';
 import { bankLedgerEntries, batchLines, journalByCode, openEntries, type MovementResult, type OpenEntry, type SuggestedLine } from '@/lib/banco';
-import { remittanceItems, vendorRemittances, type Remittance } from '@/lib/amazonVendor';
+import { amazonCompany, remittanceItems, vendorRemittances, type Remittance } from '@/lib/amazonVendor';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,6 +25,7 @@ export async function POST(req: Request) {
   try {
     const company = (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
     if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
+    if (!amazonCompany(company)) return NextResponse.json({ error: 'Esta empresa no vende a Amazon: los pagos de Amazon Vendor son de CRAZE GmbH y CRAZE Toys Ltd (UK).' }, { status: 400 });
     const { bankNo, journalCode, from, to } = await req.json();
     if (!bankNo) return NextResponse.json({ error: 'Elige la cuenta de banco.' }, { status: 400 });
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from || '') || !/^\d{4}-\d{2}-\d{2}$/.test(to || '') || from > to) {
