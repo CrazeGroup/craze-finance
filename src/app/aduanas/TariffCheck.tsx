@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment, useEffect, useState } from 'react';
-import { AlertCircle, Ban, ChevronDown, ChevronRight, MessageSquare, RefreshCw, Undo2 } from 'lucide-react';
+import { AlertCircle, Ban, CheckCheck, ChevronDown, ChevronRight, MessageSquare, RefreshCw, Undo2 } from 'lucide-react';
 
 export type Position = {
   pos: number; tariff: string; description: string; articles: string[];
@@ -101,10 +101,10 @@ export function StatusBadges({ data }: { data: Check }) {
 
 // Acciones por línea en el Histórico: actualizar el artículo con su ficha de BC, descartar la línea (error de la
 // declaración) y comentarla. Las notas van por AT/C | posición ('u' = sin posición) | artículo
-export type LineNote = { ignored?: boolean; comment?: string; by?: string; at: string };
+export type LineNote = { ignored?: boolean; approved?: boolean; comment?: string; by?: string; at: string };
 export type LineActions = {
   atc: string; notes: Record<string, LineNote>; busy?: string | null;
-  onRefresh: (no: string) => void; onNote: (key: string, note: { ignored: boolean; comment: string }) => void;
+  onRefresh: (no: string) => void; onNote: (key: string, note: { ignored: boolean; approved?: boolean; comment: string }) => void;
 };
 export const noteKey = (atc: string, pos: number | null, no: string) => `${atc}|${pos ?? 'u'}|${no}`;
 
@@ -161,7 +161,12 @@ function ItemRow({ i, unassigned, rate, actions, pos }: { i: Item; unassigned?: 
   const btn = 'p-1 rounded text-gray-400 hover:text-gray-900 hover:bg-gray-100 disabled:opacity-40';
   const comment = () => {
     const c = prompt(`Comentario para ${i.no}${note?.ignored ? ' (descartada)' : ''}:`, note?.comment || '');
-    if (c != null) actions!.onNote(key, { ignored: !!note?.ignored, comment: c });
+    if (c != null) actions!.onNote(key, { ignored: !!note?.ignored, approved: !!note?.approved, comment: c });
+  };
+  const approve = () => {
+    if (note?.approved) { actions!.onNote(key, { ignored: false, approved: false, comment: note.comment || '' }); return; }
+    const c = prompt(`Dar por buena la línea ${i.no}: no cuenta como incidencia. Comentario (opcional):`, note?.comment || '');
+    if (c != null) actions!.onNote(key, { ignored: false, approved: true, comment: c });
   };
   const discard = () => {
     if (note?.ignored) { actions!.onNote(key, { ignored: false, comment: note.comment || '' }); return; }
@@ -169,7 +174,7 @@ function ItemRow({ i, unassigned, rate, actions, pos }: { i: Item; unassigned?: 
     if (c != null) actions!.onNote(key, { ignored: true, comment: c });
   };
   return (
-    <tr className={`border-t border-gray-100 ${note?.ignored ? 'opacity-50' : ''}`}>
+    <tr className={`border-t border-gray-100 ${note?.ignored ? 'opacity-50' : note?.approved ? 'bg-emerald-50/40' : ''}`}>
       <td />
       <td className={`p-2 font-mono whitespace-nowrap ${note?.ignored ? 'line-through' : ''}`}>{i.no}</td>
       <td className="p-2">
@@ -185,12 +190,16 @@ function ItemRow({ i, unassigned, rate, actions, pos }: { i: Item; unassigned?: 
       <td className="p-2 font-mono whitespace-nowrap">{code(i.bcTariff)}</td>
       <td className={`p-2 text-right tabular-nums ${rateDiff ? 'text-red-700 font-semibold' : ''}`} title={rateDiff ? 'El % de arancel de la ficha no coincide con el aplicado' : undefined}>{i.bcRate != null ? `${nf2.format(i.bcRate)} %` : '—'}</td>
       <td className="p-2">{note?.ignored ? <span className="border rounded px-2 py-0.5 text-xs font-semibold whitespace-nowrap bg-gray-100 text-gray-600 border-gray-300">Descartada</span>
+        : note?.approved ? <span className="border rounded px-2 py-0.5 text-xs font-semibold whitespace-nowrap bg-emerald-50 text-emerald-700 border-emerald-200">Dada por buena</span>
         : !unassigned && <span className={`border rounded px-2 py-0.5 text-xs font-semibold whitespace-nowrap ${STATUS[i.status].cls}`}>{STATUS[i.status].label}</span>}</td>
       <td className="p-2 text-xs text-gray-500 whitespace-nowrap">{VIA[i.via]}{i.via === 'descripcion' && i.score != null ? ` (${Math.round(i.score * 100)} %)` : ''}</td>
       {actions && (
         <td className="p-1 whitespace-nowrap text-right">
           <button onClick={() => actions.onRefresh(i.no)} disabled={!!actions.busy} title="Actualizar con la ficha actual del artículo en BC (Tariff No. y %), en todas las declaraciones" className={btn}>
             <RefreshCw size={13} className={actions.busy === i.no ? 'animate-spin' : ''} />
+          </button>
+          <button onClick={approve} title={note?.approved ? 'Quitar "dada por buena"' : 'Dar por buena la línea: no cuenta como incidencia'} className={`${btn} ${note?.approved ? 'text-emerald-600' : ''}`}>
+            <CheckCheck size={13} />
           </button>
           <button onClick={comment} title={note?.comment ? 'Editar el comentario' : 'Añadir un comentario'} className={`${btn} ${note?.comment ? 'text-indigo-600' : ''}`}><MessageSquare size={13} /></button>
           <button onClick={discard} title={note?.ignored ? 'Volver a contar la línea' : 'Descartar la línea (error de la declaración): no cuenta como incidencia'} className={btn}>

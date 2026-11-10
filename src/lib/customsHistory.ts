@@ -140,17 +140,19 @@ export async function refreshHistoryItem(ctx: BcContext, company: string, no: st
 
 // Notas por línea (AT/C | posición | artículo): descartada (error de la declaración) y/o comentario. Aparte del
 // análisis, para que no se pierdan al volver a leer los PDFs
-export type HistoryNote = { ignored?: boolean; comment?: string; by?: string; at: string };
+export type HistoryNote = { ignored?: boolean; approved?: boolean; comment?: string; by?: string; at: string };
 const notesKey = (company: string) => `customs:tariff-notes:${company}`;
 export async function historyNotes(company: string): Promise<Record<string, HistoryNote>> {
   const row = await prisma.apiConfig.findUnique({ where: { key: notesKey(company) } });
   try { return row?.config ? JSON.parse(row.config) : {}; } catch { return {}; }
 }
-export async function setHistoryNote(company: string, lineKey: string, note: { ignored?: boolean; comment?: string; by?: string }) {
+export async function setHistoryNote(company: string, lineKey: string, note: { ignored?: boolean; approved?: boolean; comment?: string; by?: string }) {
   const notes = await historyNotes(company);
   const comment = (note.comment || '').trim().slice(0, 500);
-  if (!note.ignored && !comment) delete notes[lineKey];
-  else notes[lineKey] = { ignored: !!note.ignored, comment, by: note.by, at: new Date().toISOString() };
+  // Descartada (error de la declaración) o dada por buena (p. ej. un artículo sin posición correcto): una u otra
+  const approved = !!note.approved && !note.ignored;
+  if (!note.ignored && !approved && !comment) delete notes[lineKey];
+  else notes[lineKey] = { ignored: !!note.ignored, approved, comment, by: note.by, at: new Date().toISOString() };
   const config = JSON.stringify(notes);
   await prisma.apiConfig.upsert({ where: { key: notesKey(company) }, update: { config }, create: { key: notesKey(company), url: '', config } });
   return notes;

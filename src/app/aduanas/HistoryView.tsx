@@ -80,7 +80,7 @@ export default function HistoryView() {
       await load();
     } catch (e: any) { setError(e.message); } finally { setBusy(null); }
   };
-  const saveNote = async (key: string, note: { ignored: boolean; comment: string }) => {
+  const saveNote = async (key: string, note: { ignored: boolean; approved?: boolean; comment: string }) => {
     try {
       const res = await fetch('/api/customs/history/note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, ...note }) });
       const json = await res.json();
@@ -88,13 +88,18 @@ export default function HistoryView() {
       setData(d => (d ? { ...d, notes: json.notes } : d));
     } catch (e: any) { setError(e.message); }
   };
-  // Las líneas descartadas no cuentan: fuera de los resúmenes, contadores y "solo lo que hay que revisar"
+  // Las líneas descartadas no cuentan (fuera de los resúmenes, contadores y "solo lo que hay que revisar"); las dadas por
+  // buenas cuentan como "Coincide" y, sin posición, dejan de ser incidencia
   const entries = useMemo(() => (data?.entries || []).map(e => (!e.check ? e : {
     ...e,
     check: {
       ...e.check,
-      positions: e.check.positions.map(p => ({ ...p, items: p.items.filter(i => !notes[noteKey(e.atc, p.pos, i.no)]?.ignored) })),
-      unassigned: e.check.unassigned.filter(i => !notes[noteKey(e.atc, null, i.no)]?.ignored),
+      positions: e.check.positions.map(p => ({
+        ...p,
+        items: p.items.filter(i => !notes[noteKey(e.atc, p.pos, i.no)]?.ignored)
+          .map(i => (notes[noteKey(e.atc, p.pos, i.no)]?.approved ? { ...i, status: 'ok' as const } : i)),
+      })),
+      unassigned: e.check.unassigned.filter(i => { const n = notes[noteKey(e.atc, null, i.no)]; return !n?.ignored && !n?.approved; }),
     },
   })), [data, notes]);
   const rawCheck = (atc: string) => data?.entries.find(x => x.atc === atc)?.check || null;
