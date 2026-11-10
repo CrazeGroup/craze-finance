@@ -239,6 +239,20 @@ const orderKey = (s: string) => {
   return letters && n3 && n4 ? `${letters}-${n3}-${n4}` : s.trim().toUpperCase();
 };
 const digits = (s: string) => (s || '').replace(/\D/g, '');
+// Estado de un artículo: su Tariff No. en BC frente al código declarado en la posición ('' = sin posición)
+export function tariffStatus(hasCard: boolean, bcTariff: string, tariff: string): TariffItem['status'] {
+  return !hasCard ? 'sin_ficha' : !bcTariff ? 'sin_codigo'
+    : !tariff ? 'ok' : bcTariff === tariff || (bcTariff.length < tariff.length && tariff.startsWith(bcTariff)) ? 'ok'
+    : bcTariff.slice(0, 8) === tariff.slice(0, 8) ? 'ok8' : 'distinto';
+}
+// Ficha de un artículo para el control de códigos (Tariff No., % arancel, descripción)
+export async function itemTariffCard(ctx: BcContext, no: string) {
+  const rows = await bcFetchAll(odataUrl(`${ctx.customApiBase}/items`, {
+    $filter: `no eq '${q(no)}'`, $select: 'no,description,tariffNo,tariff',
+  }), ctx.token);
+  const c = rows[0];
+  return c ? { description: String(c.description || ''), bcTariff: digits(c.tariffNo), bcRate: c.tariff != null && c.tariff !== '' ? Number(c.tariff) : null } : null;
+}
 const baseNo = (no: string) => no.match(/^\d+/)?.[0] || no;
 const inFilter = (field: string, values: string[]) => values.map(v => `${field} eq '${q(v)}'`).join(' or ');
 async function chunked<T>(values: string[], size: number, fn: (part: string[]) => Promise<T[]>): Promise<T[]> {
@@ -371,9 +385,7 @@ export async function checkTariffs(ctx: BcContext, orders: string[], positions: 
     const card = cards.get(no);
     const a = assigned.get(no);
     const bcTariff = digits(card?.tariffNo);
-    const status: TariffItem['status'] = !card ? 'sin_ficha' : !bcTariff ? 'sin_codigo'
-      : !tariff ? 'ok' : bcTariff === tariff || (bcTariff.length < tariff.length && tariff.startsWith(bcTariff)) ? 'ok'
-      : bcTariff.slice(0, 8) === tariff.slice(0, 8) ? 'ok8' : 'distinto';
+    const status = tariffStatus(!!card, bcTariff, tariff);
     return {
       no, description: card?.description || '', qty, parent, inInvoice, display: displays.has(no), bcTariff,
       bcRate: card?.tariff != null && card.tariff !== '' ? Number(card.tariff) : null, via: a?.via || '', score: a?.score, status,

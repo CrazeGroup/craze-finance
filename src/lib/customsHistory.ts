@@ -1,6 +1,6 @@
 import prisma from '@/lib/prisma';
 import { BcContext, bcFetchAll, odataUrl } from '@/lib/bcClient';
-import { checkTariffs, customsConfig, parseCustomsPdf, TariffCheck } from '@/lib/customs';
+import { checkTariffs, customsConfig, itemTariffCard, parseCustomsPdf, TariffCheck, tariffStatus } from '@/lib/customs';
 
 // Aduanas · Histórico: las facturas del proveedor Zoll (7300184, setting customsConfig) de un año, una por nº AT/C
 // (Vendor Invoice No.). De cada una se lee el Einfuhrabgabenbescheid adjunto (v2 documentAttachments), se sacan sus
@@ -104,5 +104,51 @@ export async function customsHistory(ctx: BcContext, company: string, year: numb
     ...cache.get(i.atc)!, invoiceNo: i.number, postingDate: String(i.postingDate || '').substring(0, 10), status: i.status, amount: Number(i.totalAmountExcludingTax) || 0,
   })).sort((a, b) => b.postingDate.localeCompare(a.postingDate) || b.atc.localeCompare(a.atc));
   const pending = todo.length - Math.min(next, todo.length);
-  return { company: ctx.companyName, year, vendor: cfg.zollVendor, total: byAtc.size, pending, entries };
+  return { company: ctx.companyName, year, vendor: cfg.zollVendor, total: byAtc.size, pending, entries, notes: await historyNotes(company) };
+}
+
+// Actualiza un artículo en todas las declaraciones guardadas de la empresa con su ficha actual de BC (Tariff No., %,
+// descripción y estado), sin volver a leer los PDFs
+export async function refreshHistoryItem(ctx: BcContext, company: string, no: string) {
+  const card = await itemTariffCard(ctx, no);
+  const rows = await prisma.apiConfig.findMany({ where: { key: { startsWith: `${PREFIX}${company}:` } } });
+  let updated = 0;
+  for (const row of rows) {
+    let a: HistoryAnalysis;
+    try { a = JSON.parse(row.config || ''); } catch { continue; }
+    if (!a.check) continue;
+    let changed = false;
+    const fix = (i: any, tariff: string) => {
+      if (i.no !== no) return;
+      i.bcTariff = card?.bcTariff || ''; i.bcRate = card?.bcRate ?? null;
+      if (card?.description) i.description = card.description;
+      i.status = tariffStatus(!!card, i.bcTariff, tariff);
+      changed = true;
+    };
+    for (const p of a.check.positions) for (const i of p.items) fix(i, p.tariff);
+    for (const i of a.check.unassigned) fix(i, '');
+    if (changed) {
+      await prisma.apiConfig.update({ where: { key: row.key }, data: { config: JSON.stringify(a) } });
+      updated++;
+    }
+  }
+  return { no, card, updated };
+}
+
+// Notas por línea (AT/C | posición | artículo): descartada (error de la declaración) y/o comentario. Aparte del
+// análisis, para que no se pierdan al volver a leer los PDFs
+export type HistoryNote = { ignored?: boolean; comment?: string; by?: string; at: string };
+const notesKey = (company: string) => `customs:tariff-notes:${company}`;
+export async function historyNotes(company: string): Promise<Record<string, HistoryNote>> {
+  const row = await prisma.apiConfig.findUnique({ where: { key: notesKey(company) } });
+  try { return row?.config ? JSON.parse(row.config) : {}; } catch { return {}; }
+}
+export async function setHistoryNote(company: string, lineKey: string, note: { ignored?: boolean; comment?: string; by?: string }) {
+  const notes = await historyNotes(company);
+  const comment = (note.comment || '').trim().slice(0, 500);
+  if (!note.ignored && !comment) delete notes[lineKey];
+  else notes[lineKey] = { ignored: !!note.ignored, comment, by: note.by, at: new Date().toISOString() };
+  const config = JSON.stringify(notes);
+  await prisma.apiConfig.upsert({ where: { key: notesKey(company) }, update: { config }, create: { key: notesKey(company), url: '', config } });
+  return notes;
 }

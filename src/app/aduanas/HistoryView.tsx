@@ -4,7 +4,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, ChevronDown, ChevronRight, FileDown, RefreshCw, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import DocPdfLink from '@/components/DocPdfLink';
-import { Check, code, Item, nf0, nf2, STATUS, StatusBadges, TariffTable } from './TariffCheck';
+import { Check, code, Item, LineNote, nf0, nf2, noteKey, STATUS, StatusBadges, TariffTable } from './TariffCheck';
 
 // Aduanas · Histórico: facturas Zoll del año (/api/customs/history), vista por código arancelario declarado con los
 // artículos importados en cada uno, o por declaración (AT/C) con el detalle de cada una.
@@ -13,7 +13,7 @@ type Entry = {
   check: Check | null; warnings: string[]; error?: string; computedAt: string;
   invoiceNo: string; postingDate: string; status: string; amount: number;
 };
-type Data = { company: string; year: number; vendor: string; total: number; pending: number; entries: Entry[] };
+type Data = { company: string; year: number; vendor: string; total: number; pending: number; entries: Entry[]; notes?: Record<string, LineNote> };
 
 // Orden de gravedad: el peor estado de un artículo en un código es el que se muestra
 const SEVERITY: Item['status'][] = ['ok', 'ok8', 'sin_codigo', 'sin_ficha', 'distinto'];
@@ -68,7 +68,36 @@ export default function HistoryView() {
   };
   useEffect(() => { setData(null); load(); }, [year]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const entries = useMemo(() => data?.entries || [], [data]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const notes = useMemo(() => data?.notes || {}, [data]);
+  // Actualizar un artículo con su ficha de BC (en todas las declaraciones) y notas por línea
+  const refreshItem = async (no: string) => {
+    setBusy(no);
+    try {
+      const res = await fetch('/api/customs/history/item', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ no }) });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'No se ha podido actualizar el artículo');
+      await load();
+    } catch (e: any) { setError(e.message); } finally { setBusy(null); }
+  };
+  const saveNote = async (key: string, note: { ignored: boolean; comment: string }) => {
+    try {
+      const res = await fetch('/api/customs/history/note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, ...note }) });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'No se ha podido guardar');
+      setData(d => (d ? { ...d, notes: json.notes } : d));
+    } catch (e: any) { setError(e.message); }
+  };
+  // Las líneas descartadas no cuentan: fuera de los resúmenes, contadores y "solo lo que hay que revisar"
+  const entries = useMemo(() => (data?.entries || []).map(e => (!e.check ? e : {
+    ...e,
+    check: {
+      ...e.check,
+      positions: e.check.positions.map(p => ({ ...p, items: p.items.filter(i => !notes[noteKey(e.atc, p.pos, i.no)]?.ignored) })),
+      unassigned: e.check.unassigned.filter(i => !notes[noteKey(e.atc, null, i.no)]?.ignored),
+    },
+  })), [data, notes]);
+  const rawCheck = (atc: string) => data?.entries.find(x => x.atc === atc)?.check || null;
 
   // Resumen por código declarado → artículos asignados a sus posiciones
   const codes = useMemo(() => {
@@ -300,7 +329,7 @@ export default function HistoryView() {
                             className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100 disabled:opacity-40"><RefreshCw size={12} /> Volver a leer el PDF</button>
                         </div>
                         {e.warnings.map(w => <p key={w} className="px-3 pt-2 text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {w}</p>)}
-                        {e.check && <div className="border border-gray-200 rounded-lg overflow-x-auto"><TariffTable data={e.check} /></div>}
+                        {e.check && <div className="border border-gray-200 rounded-lg overflow-x-auto"><TariffTable data={rawCheck(e.atc) || e.check} actions={{ atc: e.atc, notes, busy, onRefresh: refreshItem, onNote: saveNote }} /></div>}
                       </td></tr>
                     )}
                   </Fragment>
