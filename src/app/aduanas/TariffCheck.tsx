@@ -6,6 +6,7 @@ import { AlertCircle, Ban, CheckCheck, ChevronDown, ChevronRight, MessageSquare,
 export type Position = {
   pos: number; tariff: string; description: string; articles: string[];
   packages: number | null; value: number | null; dutyRate: number | null; duty: number | null;
+  final?: boolean | null; findings?: string;
 };
 export type Item = {
   no: string; description: string; qty: number; parent?: string; inInvoice: boolean; display: boolean;
@@ -126,9 +127,13 @@ export function TariffTable({ data, actions }: { data: Check; actions?: LineActi
           {data.positions.map(p => (
             <Fragment key={p.pos}>
               <tr className="border-t border-gray-200 bg-gray-50/60">
-                <td className="p-2 font-bold">{p.pos}</td>
+                <td className="p-2 font-bold whitespace-nowrap">{p.pos}
+                  {p.final != null && <span className={`block mt-0.5 w-fit border rounded px-1 py-px text-[10px] font-semibold ${p.final ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-800 border-amber-200'}`}
+                    title={p.final ? 'Abschließend festgesetzt' : 'Nicht abschließend festgesetzt'}>{p.final ? 'Definitiva' : 'No definitiva'}</span>}
+                </td>
                 <td className="p-2 text-gray-500 text-xs" colSpan={2} title={p.description}>
                   <span className="line-clamp-2 max-w-3xl">{p.description}</span>
+                  {p.findings && <span className="block mt-0.5 max-w-3xl text-[11px] text-indigo-800" title={p.findings}>Positionsbefund: <span className="line-clamp-2">{p.findings}</span></span>}
                 </td>
                 <td className="p-2 text-right text-xs text-gray-500 whitespace-nowrap" title="Packstücke declarados / unidades de la factura asignadas">
                   {p.packages != null ? `${nf0.format(p.packages)} PK` : '—'}{p.qty ? ` · ${nf0.format(p.qty)} uds.` : ''}

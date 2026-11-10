@@ -91,7 +91,9 @@ export default function HistoryView() {
       const res = await fetch('/api/customs/history/item', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ no }) });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'No se ha podido actualizar el artículo');
-      await load();
+      // Solo se sustituyen las declaraciones que han cambiado (sin volver a leer todo el histórico)
+      const changed: Record<string, Entry['check']> = json.checks || {};
+      setData(d => (d ? { ...d, entries: d.entries.map(x => (changed[x.atc] ? { ...x, check: changed[x.atc] } : x)) } : d));
     } catch (e: any) { setError(e.message); } finally { setBusy(null); }
   };
   const saveNote = async (key: string, note: { ignored: boolean; approved?: boolean; comment: string }) => {
@@ -333,6 +335,11 @@ export default function HistoryView() {
                       <td className="p-2 text-right tabular-nums">{e.check ? nf2.format(sum(p => p.duty)) : '—'}</td>
                       <td className="p-2 text-right tabular-nums">{e.check ? new Set(ps.flatMap(p => p.items.map(i => i.no))).size : '—'}</td>
                       <td className="p-2">
+                        {ps.some(p => p.final != null) && (() => {
+                          const def = ps.filter(p => p.final === true).length, no = ps.filter(p => p.final === false).length;
+                          return <span className={`inline-block mb-1 mr-1 border rounded px-2 py-0.5 text-xs font-semibold whitespace-nowrap ${no ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-gray-50 text-gray-600 border-gray-200'}`}
+                            title="Abschließend / nicht abschließend festgesetzt">{def} definitiva{def === 1 ? '' : 's'}{no ? ` · ${no} no definitiva${no === 1 ? '' : 's'}` : ''}</span>;
+                        })()}
                         {e.error ? <span className="text-xs text-red-700 flex items-center gap-1"><AlertCircle size={13} /> {e.error}</span>
                           : e.check ? <span className="flex flex-wrap gap-1"><StatusBadges data={e.check} /></span>
                           : <span className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> El PDF no trae las posiciones (parte &quot;Beleg&quot;)</span>}

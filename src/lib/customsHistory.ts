@@ -151,6 +151,8 @@ export async function refreshHistoryItem(ctx: BcContext, company: string, no: st
   const card = await itemTariffCard(ctx, no);
   const rows = await prisma.apiConfig.findMany({ where: { key: { startsWith: `${PREFIX}${company}:` } } });
   let updated = 0;
+  const checks: Record<string, TariffCheck> = {};
+  const writes: Promise<unknown>[] = [];
   for (const row of rows) {
     let a: HistoryAnalysis;
     try { a = JSON.parse(row.config || ''); } catch { continue; }
@@ -169,11 +171,14 @@ export async function refreshHistoryItem(ctx: BcContext, company: string, no: st
     for (const p of a.check.positions) for (const i of p.items) fix(i, p.tariff, p.pos);
     for (const i of a.check.unassigned) fix(i, '', null);
     if (changed) {
-      await prisma.apiConfig.update({ where: { key: row.key }, data: { config: JSON.stringify(a) } });
+      writes.push(prisma.apiConfig.update({ where: { key: row.key }, data: { config: JSON.stringify(a) } }));
+      checks[a.atc] = a.check;
       updated++;
     }
   }
-  return { no, card, updated };
+  // Las escrituras en paralelo; la página recibe solo las declaraciones cambiadas
+  await Promise.all(writes);
+  return { no, card, updated, checks };
 }
 
 // Notas por línea (AT/C | posición | artículo): descartada (error de la declaración) y/o comentario. Aparte del

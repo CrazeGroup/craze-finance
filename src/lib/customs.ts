@@ -27,6 +27,10 @@ export type Duty = { type: string; code: string; amount: number; due: string };
 export type CustomsPosition = {
   pos: number; tariff: string; description: string; articles: string[];
   packages: number | null; value: number | null; dutyRate: number | null; duty: number | null;
+  // Abschließend festgesetzt (X) = definitiva; Nicht abschließend festgesetzt (X) = no definitiva; null = no consta
+  final?: boolean | null;
+  // "Positionsbefund" del Bescheid (resultado de la inspección): describe lo que han visto (p. ej. "Sticky Hand")
+  findings?: string;
 };
 export type CustomsDoc = {
   file: string; atc: string; registration: string; lrn: string; date: string;
@@ -99,7 +103,30 @@ export async function parseCustomsPdf(file: string, data: Uint8Array): Promise<C
   const fromBeleg = parsePositions(t);
   const fromDhl = fromBeleg.length ? [] : parseDhlPositions(t);
   const positions = fromBeleg.length ? fromBeleg : fromDhl.length ? fromDhl : parseBescheidPositions(t);
+  // Por posición: definitiva o no ("Abschließend festgesetzt (X) Nicht abschließend festgesetzt ( ) Position 2") y el
+  // Positionsbefund del Bescheid
+  const finals = new Map<number, boolean>();
+  for (const m of t.matchAll(/Abschließend festgesetzt \((.?)\) Nicht abschließend festgesetzt \((.?)\) Position (\d+)/g)) {
+    const pos = Number(m[3]);
+    if (!finals.has(pos) && (m[1] === 'X' || m[2] === 'X')) finals.set(pos, m[1] === 'X');
+  }
+  // DHL: "Positionsnummer: 1 … Kz. Erledigung (Position): 5 - Abschließende Festsetzung …"
+  for (const m of t.matchAll(/Positionsnummer: (\d+) .{0,200}?Kz\. Erledigung \(Position\): \d+ - (\S+)/g)) {
+    if (!finals.has(Number(m[1]))) finals.set(Number(m[1]), /^abschlie/i.test(m[2]));
+  }
+  const findings = new Map<number, string>();
+  // Solo en el Bescheid (antes de la parte "Beleg", que repite el texto)
+  const blocks = t.split('Beleg für den Beteiligten')[0].split(/Position (\d+) Berechnungsgrundlage/);
+  for (let i = 1; i < blocks.length; i += 2) {
+    const f = blocks[i + 1].match(/Positionsbefund (.*?) (?:Beschau Mitteilung|Erledigung Mitteilung|Vorgelegte Unterlagen|Angewandte Begünstigung|ZODIAK)/)?.[1];
+    if (f) findings.set(Number(blocks[i]), f.trim());
+  }
+  for (const p of positions) {
+    p.final = finals.has(p.pos) ? finals.get(p.pos)! : null;
+    if (findings.has(p.pos)) p.findings = findings.get(p.pos);
+  }
   if (!positions.length) warnings.push('No se han encontrado las posiciones (Warennummer) en el PDF.');
+  else if (positions.some(p => p.final === false)) warnings.push(`Posiciones no definitivas (Nicht abschließend festgesetzt): ${positions.filter(p => p.final === false).map(p => p.pos).join(', ')}.`);
   else if (!fromBeleg.length && !fromDhl.length) warnings.push('El PDF no trae la parte "Beleg": posiciones leídas del Bescheid (código, Zollwert y % de Zoll; sin descripción ni Artikel Nr.).');
 
   const description = [orders.join(', '), transport.join(', ')].filter(Boolean).join(' / ');
@@ -431,7 +458,8 @@ export async function checkTariffs(ctx: BcContext, orders: string[], positions: 
   }), ctx.token))) cards.set(it.no, it);
 
   // 2) una sola posición: todo a ella; 3) por descripción (la posición que más palabras del artículo contiene)
-  const squashed = new Map(positions.map(p => [p.pos, squash(p.description)]));
+  // La descripción de la posición y, si la hay, lo que aduanas vio en la inspección (Positionsbefund)
+  const squashed = new Map(positions.map(p => [p.pos, squash(`${p.description} ${p.findings || ''}`)]));
   const cardTexts = (no: string) => {
     const card = cards.get(no) || {};
     return [card.description, card.descriptionInGerman, card.shortDescriptionInGerman, card.shortDescriptionInEnglish].filter(Boolean);
