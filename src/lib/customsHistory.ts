@@ -115,7 +115,8 @@ export async function customsHistory(ctx: BcContext, company: string, year: numb
   const byAtc = new Map<string, any>();
   for (const inv of invoices) {
     const atc = normAtc(inv.vendorInvoiceNumber);
-    if (!atc) continue;
+    // Las canceladas en BC (anuladas con su abono) no cuentan; si se rehízo, queda la nueva con el mismo AT/C
+    if (!atc || inv.status === 'Canceled') continue;
     const prev = byAtc.get(atc);
     if (!prev || (prev.status === 'Draft' && inv.status !== 'Draft')) byAtc.set(atc, { ...inv, atc });
   }
