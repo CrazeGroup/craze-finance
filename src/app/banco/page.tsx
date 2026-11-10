@@ -35,6 +35,13 @@ export default function BancoPage() {
   const [loading, setLoading] = useState('');
   const [error, setError] = useState('');
   const [sent, setSent] = useState<{ lines: number; documentNumbers: string[]; warnings: string[] } | null>(null);
+  // Amazon Vendor (AMAVEN): los pagos se leen de la API de Amazon en vez de un extracto
+  const [period, setPeriod] = useState(() => {
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    return { from: iso(new Date(Date.now() - 30 * 86400000)), to: iso(new Date()) };
+  });
+  const isAmazon = (no: string) => /^AMAVEN$/i.test(no) || /amazon\s*vendor/i.test(banks.find(b => b.number === no)?.name || '');
+  const amazon = isAmazon(bankNo);
 
   useEffect(() => {
     if (selectedCompany === 'ALL') return;
@@ -76,17 +83,25 @@ export default function BancoPage() {
   };
 
   const analyze = async () => {
-    if (!file || !bankNo) return;
-    setLoading('Cuadrando el extracto con BC…');
+    if ((!amazon && !file) || !bankNo) return;
+    setLoading(amazon ? 'Leyendo los pagos de Amazon y cuadrándolos con AMAVEN (Amazon deja leer un pago cada 2 s)…' : 'Cuadrando el extracto con BC…');
     setError('');
     setSent(null);
     try {
-      const form = new FormData();
-      form.append('file', file);
-      form.append('bankNo', bankNo);
-      form.append('journalCode', journalCode);
-      const res = await fetch('/api/banco', { method: 'POST', body: form });
-      const d = await res.json();
+      let res: Response;
+      if (amazon) {
+        res = await fetch('/api/banco/amazon', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bankNo, journalCode, from: period.from, to: period.to }),
+        });
+      } else {
+        const form = new FormData();
+        form.append('file', file!);
+        form.append('bankNo', bankNo);
+        form.append('journalCode', journalCode);
+        res = await fetch('/api/banco', { method: 'POST', body: form });
+      }
+      const d = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
       if (!res.ok) throw new Error(d.error || 'Error al analizar el extracto');
       setInfo({ warning: d.warning, entries: d.entries, from: d.from, held: d.held || [] });
       setRows(d.movements.map((m: MovementResult) => {
@@ -148,7 +163,7 @@ export default function BancoPage() {
         <div className="w-full px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="mr-auto">
             <p className="font-bold text-gray-900 leading-tight text-lg">BANCO</p>
-            <p className="text-xs text-gray-500">{companyLabel(selectedCompany)} · extracto del banco → General Journal</p>
+            <p className="text-xs text-gray-500">{companyLabel(selectedCompany)} · {amazon ? 'pagos de Amazon Vendor (API) → General Journal' : 'extracto del banco → General Journal'}</p>
           </div>
           {loading && <span className="flex items-center gap-2 text-sm text-gray-500"><Loader2 size={16} className="animate-spin" /> {loading}</span>}
         </div>
@@ -169,6 +184,18 @@ export default function BancoPage() {
               {journals.map(j => <option key={j.code} value={j.code}>{j.code}{j.name && j.name !== j.code ? ` · ${j.name}` : ''}{j.bankNo ? ` → ${j.bankNo}` : ''}</option>)}
             </select>
           </label>
+          {amazon ? (
+            <>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                Pagos de Amazon desde
+                <input type="date" value={period.from} onChange={e => setPeriod(p => ({ ...p, from: e.target.value }))} className={`${input} block mt-1 normal-case tracking-normal font-normal`} />
+              </label>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                Hasta
+                <input type="date" value={period.to} onChange={e => setPeriod(p => ({ ...p, to: e.target.value }))} className={`${input} block mt-1 normal-case tracking-normal font-normal`} />
+              </label>
+            </>
+          ) : (
           <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
             Extracto (CSV o Excel)
             {/* El input de fichero, oculto: el botón es la etiqueta */}
@@ -178,9 +205,10 @@ export default function BancoPage() {
               <input type="file" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={e => chooseFile(e.target.files?.[0] || null)} className="hidden" />
             </label>
           </div>
-          <button onClick={analyze} disabled={!file || !bankNo || !!loading}
+          )}
+          <button onClick={analyze} disabled={(!amazon && !file) || !bankNo || !!loading}
             className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
-            <Upload size={16} /> Analizar
+            <Upload size={16} /> {amazon ? 'Leer pagos de Amazon' : 'Analizar'}
           </button>
         </section>
 
