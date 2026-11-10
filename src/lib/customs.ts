@@ -227,6 +227,7 @@ export type TariffItem = {
   no: string; description: string; qty: number; parent?: string; inInvoice: boolean; display: boolean;
   bcTariff: string; bcRate: number | null; via: 'artikel' | 'unica' | 'descripcion' | ''; score?: number;
   status: 'ok' | 'ok8' | 'distinto' | 'sin_codigo' | 'sin_ficha';
+  note?: string;
 };
 export type TariffPosition = CustomsPosition & { items: TariffItem[]; qty: number };
 export type TariffCheck = {
@@ -239,11 +240,34 @@ const orderKey = (s: string) => {
   return letters && n3 && n4 ? `${letters}-${n3}-${n4}` : s.trim().toUpperCase();
 };
 const digits = (s: string) => (s || '').replace(/\D/g, '');
-// Estado de un artículo: su Tariff No. en BC frente al código declarado en la posición ('' = sin posición)
-export function tariffStatus(hasCard: boolean, bcTariff: string, tariff: string): TariffItem['status'] {
-  return !hasCard ? 'sin_ficha' : !bcTariff ? 'sin_codigo'
-    : !tariff ? 'ok' : bcTariff === tariff || (bcTariff.length < tariff.length && tariff.startsWith(bcTariff)) ? 'ok'
-    : bcTariff.slice(0, 8) === tariff.slice(0, 8) ? 'ok8' : 'distinto';
+// Tariff No. de la ficha: uno, o dos para los artículos con figuras dentro ("950590000/950300499": el artículo y sus
+// figuras, que aduanas declara en dos posiciones: la del artículo y la siguiente "Figur(en) zu Position N" al 0 %)
+export const bcCode = (raw: unknown) => String(raw ?? '').split('/').map(digits).filter(Boolean).join('/');
+const matchCode = (bc: string, t: string): 'ok' | 'ok8' | null =>
+  bc === t || (bc.length < t.length && t.startsWith(bc)) ? 'ok' : bc.slice(0, 8) === t.slice(0, 8) ? 'ok8' : null;
+// Posiciones "Figuren zu Position 2" / "Figur zu Positiom 2": posición principal → código declarado para sus figuras
+export function figureTariffs(positions: { pos: number; tariff: string; description: string }[]) {
+  const out = new Map<number, string>();
+  for (const p of positions) {
+    const m = p.description.match(/Figur\w*\s*zu\s*Posit\w*\s*(\d+)/i);
+    if (m) out.set(Number(m[1]), p.tariff);
+  }
+  return out;
+}
+// Estado de un artículo: su Tariff No. en BC frente al código declarado en la posición ('' = sin posición) y, si en BC
+// lleva figuras, frente al de la posición de sus figuras. Con un solo código en BC no hace falta posición de figuras;
+// con los dos, sí
+export function tariffStatus(hasCard: boolean, bcTariff: string, tariff: string, figure?: string | null): { status: TariffItem['status']; note?: string } {
+  if (!hasCard) return { status: 'sin_ficha' };
+  if (!bcTariff) return { status: 'sin_codigo' };
+  if (!tariff) return { status: 'ok' };
+  const [main, fig] = bcTariff.split('/');
+  const st = matchCode(main, tariff);
+  if (!fig || !st) return { status: st || 'distinto' };
+  if (!figure) return { status: 'distinto', note: 'En BC lleva figuras (dos códigos), pero aduanas no ha declarado la posición "Figuren zu Position" para ellas' };
+  const fs = matchCode(fig, figure);
+  if (!fs) return { status: 'distinto', note: `Figuras declaradas con ${figure}; en BC ${fig}` };
+  return { status: st === 'ok' && fs === 'ok' ? 'ok' : 'ok8' };
 }
 // Ficha de un artículo para el control de códigos (Tariff No., % arancel, descripción)
 export async function itemTariffCard(ctx: BcContext, no: string) {
@@ -251,7 +275,7 @@ export async function itemTariffCard(ctx: BcContext, no: string) {
     $filter: `no eq '${q(no)}'`, $select: 'no,description,tariffNo,tariff',
   }), ctx.token);
   const c = rows[0];
-  return c ? { description: String(c.description || ''), bcTariff: digits(c.tariffNo), bcRate: c.tariff != null && c.tariff !== '' ? Number(c.tariff) : null } : null;
+  return c ? { description: String(c.description || ''), bcTariff: bcCode(c.tariffNo), bcRate: c.tariff != null && c.tariff !== '' ? Number(c.tariff) : null } : null;
 }
 const baseNo = (no: string) => no.match(/^\d+/)?.[0] || no;
 const inFilter = (field: string, values: string[]) => values.map(v => `${field} eq '${q(v)}'`).join(' or ');
@@ -360,7 +384,7 @@ export async function checkTariffs(ctx: BcContext, orders: string[], positions: 
   // si no, la que trae menos artículos
   const posBy = new Map(positions.map(p => [p.pos, p]));
   for (const [no, list] of multi) {
-    const bc = digits(cards.get(no)?.tariffNo);
+    const bc = bcCode(cards.get(no)?.tariffNo).split('/')[0];
     const rank = (pos: number) => {
       const p = posBy.get(pos)!;
       return [bc && (p.tariff === bc || p.tariff.startsWith(bc) || bc.startsWith(p.tariff)) ? 1 : 0, descScore(cardTexts(no), squashed.get(pos) || ''), -p.articles.length];
@@ -381,14 +405,16 @@ export async function checkTariffs(ctx: BcContext, orders: string[], positions: 
     if (best.score >= 0.5) assigned.set(c.no, { pos: best.pos, via: 'descripcion', score: Math.round(best.score * 100) / 100 });
   }
 
-  const toItem = (no: string, qty: number, inInvoice: boolean, parent: string | undefined, tariff: string): TariffItem => {
+  const figures = figureTariffs(positions);
+  const toItem = (no: string, qty: number, inInvoice: boolean, parent: string | undefined, tariff: string, pos?: number): TariffItem => {
     const card = cards.get(no);
     const a = assigned.get(no);
-    const bcTariff = digits(card?.tariffNo);
-    const status = tariffStatus(!!card, bcTariff, tariff);
+    const bcTariff = bcCode(card?.tariffNo);
+    const { status, note } = tariffStatus(!!card, bcTariff, tariff, pos != null ? figures.get(pos) : null);
     return {
       no, description: card?.description || '', qty, parent, inInvoice, display: displays.has(no), bcTariff,
       bcRate: card?.tariff != null && card.tariff !== '' ? Number(card.tariff) : null, via: a?.via || '', score: a?.score, status,
+      ...(note ? { note } : {}),
     };
   };
   const result: TariffPosition[] = positions.map(p => ({ ...p, items: [], qty: 0 }));
@@ -397,13 +423,13 @@ export async function checkTariffs(ctx: BcContext, orders: string[], positions: 
   for (const c of candidates.values()) {
     const a = assigned.get(c.no);
     const p = a && byPos.get(a.pos);
-    if (p) { p.items.push(toItem(c.no, c.qty, true, c.parent, p.tariff)); p.qty += c.qty; }
+    if (p) { p.items.push(toItem(c.no, c.qty, true, c.parent, p.tariff, p.pos)); p.qty += c.qty; }
     else unassigned.push(toItem(c.no, c.qty, true, c.parent, ''));
   }
   for (const [no, pos] of extra) {
     const p = byPos.get(pos)!;
     assigned.set(no, { pos, via: 'artikel' });
-    p.items.push(toItem(no, 0, false, undefined, p.tariff));
+    p.items.push(toItem(no, 0, false, undefined, p.tariff, p.pos));
   }
   return { invoices, positions: result, unassigned, warnings };
 }

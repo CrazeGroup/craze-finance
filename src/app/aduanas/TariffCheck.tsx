@@ -11,6 +11,7 @@ export type Item = {
   no: string; description: string; qty: number; parent?: string; inInvoice: boolean; display: boolean;
   bcTariff: string; bcRate: number | null; via: 'artikel' | 'unica' | 'descripcion' | ''; score?: number;
   status: 'ok' | 'ok8' | 'distinto' | 'sin_codigo' | 'sin_ficha';
+  note?: string;
 };
 export type Check = {
   invoices: { no: string; vendorInvoiceNo: string; vendor: string; posted: boolean }[];
@@ -20,7 +21,8 @@ export type Check = {
 export const nf0 = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 });
 export const nf2 = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 // 33073000000 → 3307 3000 000 (como en la declaración)
-export const code = (c: string) => (c ? c.replace(/^(\d{4})(\d{4})?(\d+)?$/, (_, a, b, r) => [a, b, r].filter(Boolean).join(' ')) : '—');
+// Dos códigos (artículo con figuras): "9505 9000 0 / 9503 0049 9"
+export const code = (c: string) => (c ? c.split('/').map(x => x.replace(/^(\d{4})(\d{4})?(\d+)?$/, (_, a, b, r) => [a, b, r].filter(Boolean).join(' '))).join(' / ') : '—');
 export const STATUS: Record<Item['status'], { label: string; cls: string }> = {
   ok: { label: 'Coincide', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   ok8: { label: 'Mismo NC (8 díg.)', cls: 'bg-sky-50 text-sky-700 border-sky-200' },
@@ -133,7 +135,7 @@ export function TariffTable({ data, actions }: { data: Check; actions?: LineActi
                 </td>
                 <td className="p-2 font-mono font-semibold whitespace-nowrap">{code(p.tariff)}</td>
                 <td className="p-2 text-right tabular-nums">{p.dutyRate != null ? `${nf2.format(p.dutyRate)} %` : '—'}</td>
-                <td colSpan={actions ? 5 : 4} className="p-2 text-xs text-gray-400">{p.items.length ? '' : 'Ningún artículo asignado'}</td>
+                <td colSpan={actions ? 5 : 4} className="p-2 text-xs text-gray-400">{p.items.length ? '' : /Figur\w*\s*zu\s*Posit\w*\s*\d+/i.test(p.description) ? `Figuras de la posición ${p.description.match(/Posit\w*\s*(\d+)/i)?.[1]}` : 'Ningún artículo asignado'}</td>
               </tr>
               {p.items.map(i => <ItemRow key={i.no} i={i} rate={p.dutyRate} actions={actions} pos={p.pos} />)}
             </Fragment>
@@ -175,6 +177,7 @@ function ItemRow({ i, unassigned, rate, actions, pos }: { i: Item; unassigned?: 
         {i.parent && <span className="ml-2 text-xs text-gray-500">en display {i.parent}</span>}
         {i.display && <span className="ml-2 text-xs text-gray-500">display (contenido desglosado)</span>}
         {!i.inInvoice && <span className="ml-2 text-xs text-amber-700">no está en la factura</span>}
+        {i.note && <span className="block text-xs text-red-700 mt-0.5">{i.note}</span>}
         {note?.comment && <span className="block text-xs text-indigo-700 mt-0.5" title={note.by ? `${note.by} · ${note.at.substring(0, 10)}` : note.at.substring(0, 10)}>💬 {note.comment}</span>}
       </td>
       <td className="p-2 text-right tabular-nums">{i.qty ? nf0.format(i.qty) : '—'}</td>

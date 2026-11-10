@@ -1,6 +1,6 @@
 import prisma from '@/lib/prisma';
 import { BcContext, bcFetchAll, odataUrl } from '@/lib/bcClient';
-import { checkTariffs, customsConfig, itemTariffCard, parseCustomsPdf, TariffCheck, tariffStatus } from '@/lib/customs';
+import { checkTariffs, customsConfig, figureTariffs, itemTariffCard, parseCustomsPdf, TariffCheck, tariffStatus } from '@/lib/customs';
 
 // Aduanas · Histórico: las facturas del proveedor Zoll (7300184, setting customsConfig) de un año, una por nº AT/C
 // (Vendor Invoice No.). De cada una se lee el Einfuhrabgabenbescheid adjunto (v2 documentAttachments), se sacan sus
@@ -118,15 +118,18 @@ export async function refreshHistoryItem(ctx: BcContext, company: string, no: st
     try { a = JSON.parse(row.config || ''); } catch { continue; }
     if (!a.check) continue;
     let changed = false;
-    const fix = (i: any, tariff: string) => {
+    const figures = figureTariffs(a.check.positions);
+    const fix = (i: any, tariff: string, pos: number | null) => {
       if (i.no !== no) return;
       i.bcTariff = card?.bcTariff || ''; i.bcRate = card?.bcRate ?? null;
       if (card?.description) i.description = card.description;
-      i.status = tariffStatus(!!card, i.bcTariff, tariff);
+      const st = tariffStatus(!!card, i.bcTariff, tariff, pos != null ? figures.get(pos) : null);
+      i.status = st.status;
+      if (st.note) i.note = st.note; else delete i.note;
       changed = true;
     };
-    for (const p of a.check.positions) for (const i of p.items) fix(i, p.tariff);
-    for (const i of a.check.unassigned) fix(i, '');
+    for (const p of a.check.positions) for (const i of p.items) fix(i, p.tariff, p.pos);
+    for (const i of a.check.unassigned) fix(i, '', null);
     if (changed) {
       await prisma.apiConfig.update({ where: { key: row.key }, data: { config: JSON.stringify(a) } });
       updated++;
