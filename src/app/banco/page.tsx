@@ -30,7 +30,7 @@ export default function BancoPage() {
   const [journalCode, setJournalCode] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
-  const [info, setInfo] = useState<{ warning: string; entries: number; from: string } | null>(null);
+  const [info, setInfo] = useState<{ warning: string; entries: number; from: string; held: { date: string; valueDate: string; name: string; purpose: string; amount: number }[] } | null>(null);
   const [filter, setFilter] = useState<Filter>('new');
   const [loading, setLoading] = useState('');
   const [error, setError] = useState('');
@@ -88,7 +88,7 @@ export default function BancoPage() {
       const res = await fetch('/api/banco', { method: 'POST', body: form });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'Error al analizar el extracto');
-      setInfo({ warning: d.warning, entries: d.entries, from: d.from });
+      setInfo({ warning: d.warning, entries: d.entries, from: d.from, held: d.held || [] });
       setRows(d.movements.map((m: MovementResult) => {
         const row: Row = { ...m, selected: false, documentNo: m.suggestion?.documentNo || '', lines: m.suggestion?.lines.map(l => ({ ...l })) || [] };
         row.selected = m.status === 'new' && !m.pending && !m.doubtful && linesOk(row);
@@ -186,6 +186,16 @@ export default function BancoPage() {
 
         {error && <p className="bg-white border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-center gap-2"><AlertCircle size={16} /> {error}</p>}
         {info?.warning && <p className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900 flex items-center gap-2"><AlertCircle size={16} /> {info.warning}</p>}
+        {!!info?.held.length && (
+          <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700">
+            <p className="font-semibold flex items-center gap-2"><AlertCircle size={16} className="text-gray-500" />
+              {info.held.length} {info.held.length === 1 ? 'movimiento vorgemerkt' : 'movimientos vorgemerkt'} (retenidos, aún no cargados en la cuenta): no se sugieren · {info.held.reduce((t, m) => t + m.amount, 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </p>
+            <ul className="mt-1 ml-6 text-xs text-gray-500 space-y-0.5">
+              {info.held.map((m, i) => <li key={i}>{m.valueDate || m.date} · {m.name || '—'} · {m.purpose.slice(0, 90)} · <span className="font-mono">{m.amount.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></li>)}
+            </ul>
+          </div>
+        )}
         {sent && (
           <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-sm text-green-900 space-y-1">
             <p className="flex items-center gap-2 font-semibold"><CheckCircle2 size={16} /> {sent.lines} líneas creadas en el lote {journalCode} (sin registrar){sent.documentNumbers.length ? `: ${sent.documentNumbers[0]}${sent.documentNumbers.length > 1 ? ` … ${sent.documentNumbers[sent.documentNumbers.length - 1]}` : ''}` : ''}</p>

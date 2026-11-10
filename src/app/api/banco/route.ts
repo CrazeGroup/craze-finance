@@ -46,8 +46,12 @@ export async function POST(req: Request) {
     if (!(file instanceof File)) return NextResponse.json({ error: 'Sube el extracto del banco (CSV o Excel).' }, { status: 400 });
     if (!bankNo) return NextResponse.json({ error: 'Elige la cuenta de banco.' }, { status: 400 });
 
-    const parsed = parseBankFile(new Uint8Array(await file.arrayBuffer()), file.name);
-    if (!parsed.length) return NextResponse.json({ error: 'El fichero no tiene movimientos.' }, { status: 400 });
+    const all = parseBankFile(new Uint8Array(await file.arrayBuffer()), file.name);
+    // Movimientos vorgemerkt / pendientes (retenidos, aún no cargados en la cuenta): no se cuadran ni se sugieren
+    const held = all.filter(m => m.pending);
+    const parsed = all.filter(m => !m.pending);
+    if (!all.length) return NextResponse.json({ error: 'El fichero no tiene movimientos.' }, { status: 400 });
+    if (!parsed.length) return NextResponse.json({ error: `El fichero solo tiene movimientos vorgemerkt (${held.length}, retenidos y aún no cargados en la cuenta): no hay nada que registrar.` }, { status: 400 });
 
     const ctx = await getBcContext(companyId);
     const from = new Date(Date.parse(parsed.reduce((a, m) => (m.date < a ? m.date : a), parsed[0].date)) - 10 * 86400000).toISOString().slice(0, 10);
@@ -95,7 +99,10 @@ export async function POST(req: Request) {
     const fileAccount = movements[0].account;
     const warning = bankIban && fileAccount && bankIban !== fileAccount ? `El extracto es de la cuenta ${fileAccount} y la cuenta ${bankNo} de BC tiene el IBAN ${bankIban}.` : '';
 
-    return NextResponse.json({ bankNo, journalCode: journal?.code || '', from, warning, entries: entries.length, movements: results });
+    return NextResponse.json({
+      bankNo, journalCode: journal?.code || '', from, warning, entries: entries.length, movements: results,
+      held: held.map(m => ({ date: m.date, valueDate: m.valueDate, name: m.name, purpose: m.purpose, amount: m.amount })),
+    });
   } catch (error: any) {
     console.error('BANCO análisis:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
