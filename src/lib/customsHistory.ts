@@ -31,7 +31,35 @@ async function stored(company: string): Promise<Map<string, HistoryAnalysis>> {
   return out;
 }
 
-async function analyse(ctx: BcContext, inv: { id: string; atc: string }): Promise<HistoryAnalysis> {
+// Pedido / factura de China y contenedor indicados a mano para un AT/C (cuando el PDF no los trae o están mal)
+export type HistoryManual = { orders: string[]; transport: string[]; by?: string; at: string };
+const manualKey = (company: string) => `customs:tariff-manual:${company}`;
+export async function historyManual(company: string): Promise<Record<string, HistoryManual>> {
+  const row = await prisma.apiConfig.findUnique({ where: { key: manualKey(company) } });
+  try { return row?.config ? JSON.parse(row.config) : {}; } catch { return {}; }
+}
+export async function setHistoryManual(company: string, atc: string, m: { orders: string[]; transport: string[]; by?: string }) {
+  const all = await historyManual(company);
+  const clean = (l: string[]) => l.map(x => String(x).trim()).filter(Boolean).slice(0, 10);
+  const orders = clean(m.orders), transport = clean(m.transport);
+  if (!orders.length && !transport.length) delete all[atc];
+  else all[atc] = { orders, transport, by: m.by, at: new Date().toISOString() };
+  const config = JSON.stringify(all);
+  await prisma.apiConfig.upsert({ where: { key: manualKey(company) }, update: { config }, create: { key: manualKey(company), url: '', config } });
+  return all;
+}
+// Un nº de factura de BC (CRZ-PI26-04421) se traduce a su Vendor Invoice No. (el nº de pedido de China, 2365-GWM-389)
+async function resolveOrders(ctx: BcContext, orders: string[]) {
+  return Promise.all(orders.map(async o => {
+    if (!/^[A-Z]{2,4}-P[IC]\d{2}-\d+$/i.test(o) && !/^PI-\d+$/i.test(o)) return o;
+    const posted = await bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Posted_Purchase_Invoice_Excel`, { $filter: `No eq '${q(o.toUpperCase())}'`, $select: 'No,Vendor_Invoice_No' }), ctx.token).catch(() => []);
+    if (posted[0]?.Vendor_Invoice_No) return String(posted[0].Vendor_Invoice_No);
+    const open = await bcFetchAll(odataUrl(`${ctx.customApiBase}/purchaseHeaders`, { $filter: `documentType eq 'Invoice' and no eq '${q(o.toUpperCase())}'`, $select: 'no,vendorInvoiceNo' }), ctx.token).catch(() => []);
+    return String(open[0]?.vendorInvoiceNo || o);
+  }));
+}
+
+async function analyse(ctx: BcContext, inv: { id: string; atc: string }, manual?: HistoryManual): Promise<HistoryAnalysis> {
   const base = { atc: inv.atc, file: '', date: '', orders: [], transport: [], zoll: 0, eust: 0, check: null, warnings: [] as string[], computedAt: new Date().toISOString() };
   const get = async (url: string) => {
     const res = await fetch(url, { headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json' }, cache: 'no-store' });
@@ -53,10 +81,19 @@ async function analyse(ctx: BcContext, inv: { id: string; atc: string }): Promis
       if (!doc && d.positions.length) doc = d;
     }
     if (!doc) return { ...base, error: 'El PDF adjunto no es un Einfuhrabgabenbescheid (sin posiciones)' };
-    const check = doc.positions.length ? await checkTariffs(ctx, doc.orders, doc.positions) : null;
+    // Lo indicado a mano manda sobre lo leído del PDF
+    const orders = manual?.orders.length ? await resolveOrders(ctx, manual.orders) : doc.orders;
+    const transport = manual?.transport.length ? manual.transport : doc.transport;
+    const docWarnings = doc.warnings.filter(w => !(manual?.orders.length && /pedido/i.test(w)) && !(manual?.transport.length && /contenedor/i.test(w)));
+    // Sin posiciones en el PDF pero con la factura de China: se listan sus artículos (sin posición) con su Tariff No.
+    const check = doc.positions.length || (manual?.orders.length && orders.length) ? await checkTariffs(ctx, orders, doc.positions) : null;
     return {
-      ...base, file: doc.file, date: doc.date, orders: doc.orders, transport: doc.transport, zoll: doc.zoll, eust: doc.eust, check,
-      warnings: [...(normAtc(doc.atc) !== inv.atc ? [`El PDF adjunto es de ${doc.atc || 'otro AT/C'}`] : []), ...doc.warnings],
+      ...base, file: doc.file, date: doc.date, orders, transport, zoll: doc.zoll, eust: doc.eust, check,
+      warnings: [
+        ...(normAtc(doc.atc) !== inv.atc ? [`El PDF adjunto es de ${doc.atc || 'otro AT/C'}`] : []),
+        ...(manual ? [`Pedido / contenedor indicados a mano${manual.by ? ` por ${manual.by}` : ''} (${manual.at.substring(0, 10)})`] : []),
+        ...docWarnings,
+      ],
     };
   } catch (e: any) {
     return { ...base, error: String(e.message).substring(0, 300) };
@@ -81,6 +118,7 @@ export async function customsHistory(ctx: BcContext, company: string, year: numb
   }
 
   const cache = await stored(company);
+  const manual = await historyManual(company);
   // Recalcular todo = borrar lo guardado de ese año; las siguientes llamadas siguen como con AT/C nuevos
   if (recompute === '*') {
     await prisma.apiConfig.deleteMany({ where: { key: { in: Array.from(byAtc.keys()).map(atc => key(company, atc)) } } });
@@ -92,7 +130,7 @@ export async function customsHistory(ctx: BcContext, company: string, year: numb
   const worker = async () => {
     while (next < todo.length && Date.now() - started < BUDGET_MS) {
       const inv = todo[next++];
-      const a = await analyse(ctx, inv);
+      const a = await analyse(ctx, inv, manual[inv.atc]);
       const config = JSON.stringify(a);
       await prisma.apiConfig.upsert({ where: { key: key(company, inv.atc) }, update: { config }, create: { key: key(company, inv.atc), url: '', config } });
       cache.set(inv.atc, a);
@@ -104,7 +142,7 @@ export async function customsHistory(ctx: BcContext, company: string, year: numb
     ...cache.get(i.atc)!, invoiceNo: i.number, postingDate: String(i.postingDate || '').substring(0, 10), status: i.status, amount: Number(i.totalAmountExcludingTax) || 0,
   })).sort((a, b) => b.postingDate.localeCompare(a.postingDate) || b.atc.localeCompare(a.atc));
   const pending = todo.length - Math.min(next, todo.length);
-  return { company: ctx.companyName, year, vendor: cfg.zollVendor, total: byAtc.size, pending, entries, notes: await historyNotes(company) };
+  return { company: ctx.companyName, year, vendor: cfg.zollVendor, total: byAtc.size, pending, entries, notes: await historyNotes(company), manual };
 }
 
 // Actualiza un artículo en todas las declaraciones guardadas de la empresa con su ficha actual de BC (Tariff No., %,

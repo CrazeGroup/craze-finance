@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ChevronDown, ChevronRight, FileDown, RefreshCw, Search } from 'lucide-react';
+import { AlertCircle, ChevronDown, ChevronRight, FileDown, Pencil, RefreshCw, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import DocPdfLink from '@/components/DocPdfLink';
 import { Check, code, Item, LineNote, nf0, nf2, noteKey, STATUS, StatusBadges, TariffTable } from './TariffCheck';
@@ -13,7 +13,8 @@ type Entry = {
   check: Check | null; warnings: string[]; error?: string; computedAt: string;
   invoiceNo: string; postingDate: string; status: string; amount: number;
 };
-type Data = { company: string; year: number; vendor: string; total: number; pending: number; entries: Entry[]; notes?: Record<string, LineNote> };
+type Manual = { orders: string[]; transport: string[]; by?: string; at: string };
+type Data = { company: string; year: number; vendor: string; total: number; pending: number; entries: Entry[]; notes?: Record<string, LineNote>; manual?: Record<string, Manual> };
 
 // Orden de gravedad: el peor estado de un artículo en un código es el que se muestra
 const SEVERITY: Item['status'][] = ['ok', 'ok8', 'sin_codigo', 'sin_ficha', 'distinto'];
@@ -69,6 +70,19 @@ export default function HistoryView() {
   useEffect(() => { setData(null); load(); }, [year]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [busy, setBusy] = useState<string | null>(null);
+  // Pedido / factura de China y contenedor a mano (AT/C en edición)
+  const [editing, setEditing] = useState<{ atc: string; orders: string; transport: string } | null>(null);
+  const saveManual = async () => {
+    if (!editing) return;
+    try {
+      const res = await fetch('/api/customs/history/manual', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editing) });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'No se ha podido guardar');
+      const atc = editing.atc;
+      setEditing(null);
+      await load(atc);
+    } catch (e: any) { setError(e.message); }
+  };
   const notes = useMemo(() => data?.notes || {}, [data]);
   // Actualizar un artículo con su ficha de BC (en todas las declaraciones) y notas por línea
   const refreshItem = async (no: string) => {
@@ -330,9 +344,27 @@ export default function HistoryView() {
                           <span>Factura Zoll: <span className="font-mono text-gray-900">{e.invoiceNo}</span><DocPdfLink documentNo={e.invoiceNo} />{e.status === 'Draft' && <span className="ml-1 text-gray-500">(sin registrar)</span>}</span>
                           <span>Pedido / contenedor: <span className="text-gray-900">{[e.orders.join(', '), e.transport.join(', ')].filter(Boolean).join(' / ') || '—'}</span></span>
                           <span>Factura China: {e.check ? (e.check.invoices.length ? <span className="text-gray-900">{e.check.invoices.map(i => `${i.vendorInvoiceNo} (${i.no})`).join(', ')}</span> : <span className="text-amber-700">no encontrada</span>) : '—'}</span>
+                          <button onClick={() => setEditing({ atc: e.atc, orders: (data?.manual?.[e.atc]?.orders || e.orders).join(', '), transport: (data?.manual?.[e.atc]?.transport || e.transport).join(', ') })}
+                            title="Indicar a mano el pedido / factura de China y el contenedor (si el PDF no los trae o están mal)"
+                            className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100"><Pencil size={12} /> Pedido / contenedor</button>
                           <button onClick={() => load(e.atc)} disabled={loading} title="Volver a leer este PDF"
-                            className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100 disabled:opacity-40"><RefreshCw size={12} /> Volver a leer el PDF</button>
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100 disabled:opacity-40"><RefreshCw size={12} /> Volver a leer el PDF</button>
                         </div>
+                        {editing?.atc === e.atc && (
+                          <div className="mx-1 mb-2 p-3 rounded-lg border border-indigo-200 bg-indigo-50/50 flex flex-wrap items-end gap-3 text-xs">
+                            <label className="font-semibold text-gray-600">Pedido / factura de China
+                              <input autoFocus value={editing.orders} onChange={ev => setEditing({ ...editing, orders: ev.target.value })} placeholder="2365-GWM-389 o CRZ-PI26-04421"
+                                className="block mt-1 w-64 border border-gray-300 rounded px-2 py-1 text-sm font-mono bg-white" />
+                            </label>
+                            <label className="font-semibold text-gray-600">Contenedor / AWB
+                              <input value={editing.transport} onChange={ev => setEditing({ ...editing, transport: ev.target.value })} placeholder="UACU5774331"
+                                className="block mt-1 w-56 border border-gray-300 rounded px-2 py-1 text-sm font-mono bg-white" />
+                            </label>
+                            <button onClick={saveManual} disabled={loading} className="bg-indigo-600 text-white font-semibold px-3 py-1.5 rounded hover:bg-indigo-700 disabled:opacity-40">Guardar y comparar</button>
+                            <button onClick={() => setEditing(null)} className="px-2 py-1.5 text-gray-600 hover:text-gray-900">Cancelar</button>
+                            <span className="basis-full text-gray-500">Varios separados por comas. Vacíos = se usa lo que trae el PDF. Con la factura de China se comparan sus artículos aunque el PDF no traiga las posiciones.</span>
+                          </div>
+                        )}
                         {e.warnings.map(w => <p key={w} className="px-3 pt-2 text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {w}</p>)}
                         {e.check && <div className="border border-gray-200 rounded-lg overflow-x-auto"><TariffTable data={rawCheck(e.atc) || e.check} actions={{ atc: e.atc, notes, busy, onRefresh: refreshItem, onNote: saveNote }} /></div>}
                       </td></tr>
