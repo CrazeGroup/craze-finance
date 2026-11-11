@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { RefreshCcw, User, Building2, CheckCircle, ArrowUp, ArrowDown, Lightbulb, AlertCircle } from 'lucide-react';
+import { RefreshCcw, User, Building2, CheckCircle, ArrowUp, ArrowDown, Lightbulb, AlertCircle, Shuffle, Send, X } from 'lucide-react';
 import DocPdfLink, { purchasePdfKind } from '@/components/DocPdfLink';
 import { companyLabel, useCompany } from '@/contexts/CompanyContext';
 
@@ -71,12 +71,16 @@ export default function MovimientosPage() {
   // Excluir Amazon (clientes y proveedores cuyo nombre contiene "Amazon"); se recuerda en el navegador
   const [noAmazon, setNoAmazon] = useState(false);
   const [onlySuggested, setOnlySuggested] = useState(false);
+  const [onlyCross, setOnlyCross] = useState(false);
+  // Cierre cruzado: el par elegido (diálogo) y los ya enviados al lote ('Customer:<entryNo>' → texto)
+  const [clearing, setClearing] = useState<any | null>(null);
+  const [sentPairs, setSentPairs] = useState<Record<string, string>>({});
   useEffect(() => { try { setNoAmazon(localStorage.getItem('movimientos:sinAmazon') === '1'); } catch { /* sin almacenamiento */ } }, []);
   const changeNoAmazon = (v: boolean) => { setNoAmazon(v); try { localStorage.setItem('movimientos:sinAmazon', v ? '1' : '0'); } catch { /* sin almacenamiento */ } };
 
   // Orden por columna (clic en la cabecera: ascendente, descendente)
   type SortKey = 'entityNo' | 'entityName' | 'postingDate' | 'documentType' | 'documentNo' | 'externalDocumentNo' | 'currencyCode' | 'originalAmount' | 'remainingAmount' | 'description' | 'paymentMethodCode'
-    | 'salesReturnOrderNo' | 'messageToRecipient' | 'comment' | 'suggestion';
+    | 'salesReturnOrderNo' | 'messageToRecipient' | 'comment' | 'suggestion' | 'cross';
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 } | null>(null);
   const sortBy = (key: SortKey) => setSort(p => (p?.key === key ? (p.dir === 1 ? { key, dir: -1 } : null) : { key, dir: 1 }));
 
@@ -86,6 +90,7 @@ export default function MovimientosPage() {
       if (e.type !== viewMode) return false;
       if (noAmazon && /amazon/i.test(e.entityName || '')) return false;
       if (onlySuggested && !e.suggestion) return false;
+      if (onlyCross && !e.cross) return false;
       if (selectedDocTypes.length > 0 && !selectedDocTypes.includes(e.documentType)) return false;
       if (selectedPaymentMethods.length > 0 && !selectedPaymentMethods.includes(e.paymentMethodCode)) return false;
       return true;
@@ -97,11 +102,13 @@ export default function MovimientosPage() {
     const rank = (e: any) => (e.suggestion ? SUGGESTION[e.suggestion.kind as keyof typeof SUGGESTION].rank : 9);
     return [...list].sort((a, b) => {
       if (key === 'suggestion') return (rank(a) - rank(b)) * dir;
+      if (key === 'cross') return String(a.cross?.entityName || '\uffff').localeCompare(String(b.cross?.entityName || '\uffff'), 'es', { sensitivity: 'base' }) * dir;
       if (key === 'comment') return String(val(a)).localeCompare(String(val(b)), 'es', { sensitivity: 'base' }) * dir;
       if (num) return ((Number(a[key]) || 0) - (Number(b[key]) || 0)) * dir;
       return String(a[key] ?? '').localeCompare(String(b[key] ?? ''), 'es', { numeric: true, sensitivity: 'base' }) * dir;
     });
-  }, [entries, viewMode, selectedDocTypes, selectedPaymentMethods, noAmazon, onlySuggested, sort, comments]);
+  }, [entries, viewMode, selectedDocTypes, selectedPaymentMethods, noAmazon, onlySuggested, onlyCross, sort, comments]);
+  const crossCount = useMemo(() => entries.filter(e => e.type === viewMode && e.cross && (!noAmazon || !/amazon/i.test(e.entityName || ''))).length, [entries, viewMode, noAmazon]);
   const suggestedCount = useMemo(() => entries.filter(e => e.type === viewMode && e.suggestion && (!noAmazon || !/amazon/i.test(e.entityName || ''))).length, [entries, viewMode, noAmazon]);
   const amazonCount = useMemo(() => entries.filter(e => e.type === viewMode && /amazon/i.test(e.entityName || '')).length, [entries, viewMode]);
 
@@ -178,6 +185,10 @@ export default function MovimientosPage() {
                 <input type="checkbox" checked={onlySuggested} onChange={e => setOnlySuggested(e.target.checked)} />
                 Solo con sugerencia ({suggestedCount})
               </label>
+              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none pt-1">
+                <input type="checkbox" checked={onlyCross} onChange={e => setOnlyCross(e.target.checked)} />
+                Solo con importe en otro cliente / proveedor ({crossCount})
+              </label>
             </div>
             <p className="ml-auto self-end text-xs text-gray-500">{filteredEntries.length} movimientos</p>
           </section>
@@ -213,7 +224,7 @@ export default function MovimientosPage() {
                     ['entityNo', `Nº ${viewMode === 'Customer' ? 'cliente' : 'proveedor'}`], ['entityName', 'Nombre'], ['postingDate', 'Posting Date'],
                     ['documentType', 'Doc. Type'], ['documentNo', 'Document No.'], ['externalDocumentNo', 'Ext. Doc. No.'],
                     ...(viewMode === 'Customer' ? [['salesReturnOrderNo', 'Sales Return Order No.']] : []), ['currencyCode', 'Divisa'],
-                    ['originalAmount', 'Original Amt.', true], ['remainingAmount', 'Remaining Amt.', true], ['suggestion', 'Sugerencia para cerrar'], ['description', 'Description'],
+                    ['originalAmount', 'Original Amt.', true], ['remainingAmount', 'Remaining Amt.', true], ['suggestion', 'Sugerencia para cerrar'], ['cross', 'En otro cliente / proveedor'], ['description', 'Description'],
                     ...(viewMode === 'Customer' ? [['messageToRecipient', 'Message to Recipient']] : []), ['paymentMethodCode', 'Payment Method'], ['comment', 'Comentario'],
                   ] as [SortKey, string, boolean?][]).map(([key, label, right]) => (
                     <th key={key} className={`${th} ${right ? 'text-right' : 'text-left'}`}>
@@ -252,6 +263,9 @@ export default function MovimientosPage() {
                     <td className="px-3 py-2 text-right tabular-nums text-gray-600 whitespace-nowrap">{nf(entry.originalAmount)}</td>
                     <td className={`px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap ${entry.remainingAmount < 0 ? 'text-red-600' : 'text-gray-900'}`}>{nf(entry.remainingAmount)}</td>
                     <td className="px-3 py-2 min-w-[180px]"><SuggestionCell s={entry.suggestion} nf={nf} dateEs={dateEs} /></td>
+                    <td className="px-3 py-2 min-w-[220px]">
+                      <CrossCell c={entry.cross} nf={nf} dateEs={dateEs} sent={sentPairs[`${entry.type}:${entry.entryNo}`]} onClose={() => setClearing(entry)} />
+                    </td>
                     <td className="px-3 py-2 text-gray-700 max-w-[220px] truncate" title={entry.description}>{entry.description}</td>
                     {viewMode === 'Customer' && <td className="px-3 py-2 text-gray-700 max-w-[220px] truncate" title={entry.messageToRecipient}>{entry.messageToRecipient || <span className="text-gray-300">—</span>}</td>}
                     <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{entry.paymentMethodCode || '—'}</td>
@@ -266,6 +280,140 @@ export default function MovimientosPage() {
           </section>
         )}
       </main>
+      {clearing && (
+        <ClearDialog entry={clearing} nf={nf} onCancel={() => setClearing(null)}
+          onSent={(text) => {
+            setSentPairs(p => ({ ...p, [`${clearing.type}:${clearing.entryNo}`]: text, [`${clearing.cross.type}:${clearing.cross.entryNo}`]: text }));
+          }} />
+      )}
+    </div>
+  );
+}
+
+const sideLabel = (t: string) => (t === 'Customer' ? 'Cliente' : 'Proveedor');
+type Cross = {
+  type: 'Customer' | 'Vendor'; entryNo: number; entityNo: string; entityName: string; documentType: string; documentNo: string;
+  externalDocumentNo: string; postingDate: string | null; remaining: number; cited: boolean; count: number;
+};
+
+// El mismo importe (de signo contrario) abierto en otro cliente o proveedor, con el botón para cerrar ambos
+function CrossCell({ c, nf, dateEs, sent, onClose }: { c?: Cross | null; nf: (v: number) => string; dateEs: (d: string) => string; sent?: string; onClose: () => void }) {
+  if (!c) return <span className="text-gray-300">—</span>;
+  return (
+    <div className="flex items-start gap-2">
+      <span className={`inline-flex items-start gap-1 border rounded px-1.5 py-0.5 text-xs ${c.cited ? 'bg-violet-50 text-violet-800 border-violet-200' : 'bg-orange-50 text-orange-800 border-orange-200'}`}
+        title={`${sideLabel(c.type)} ${c.entityNo} · ${c.entityName}\n${c.documentType} ${c.documentNo}${c.externalDocumentNo ? ` (${c.externalDocumentNo})` : ''} · ${dateEs(c.postingDate || '')} · ${nf(c.remaining)}${c.count > 1 ? `\n${c.count} movimientos con ese importe: se muestra ${c.cited ? 'el que se cita' : 'el de fecha más cercana'}` : ''}`}>
+        <Shuffle size={12} className="mt-0.5 shrink-0" />
+        <span>
+          <span className="font-semibold">{c.entityName}</span>
+          <span className="block text-[11px] opacity-80">{sideLabel(c.type)} {c.entityNo} · {c.documentType} {c.documentNo} · {nf(c.remaining)}{c.cited ? ' · se citan' : ''}{c.count > 1 ? ` · ${c.count} posibles` : ''}</span>
+        </span>
+      </span>
+      {sent
+        ? <span className="text-[11px] font-semibold text-sky-700 whitespace-nowrap">{sent}</span>
+        : <button onClick={onClose} className="shrink-0 text-[11px] font-semibold border border-gray-300 rounded px-1.5 py-0.5 bg-white hover:bg-gray-50 whitespace-nowrap">Cerrar ambos</button>}
+    </div>
+  );
+}
+
+// Diálogo: dos líneas al lote del General Journal, misma fecha y mismo asiento, sin contrapartida (suman 0)
+function ClearDialog({ entry, nf, onCancel, onSent }: { entry: any; nf: (v: number) => string; onCancel: () => void; onSent: (text: string) => void }) {
+  const c: Cross = entry.cross;
+  const [journals, setJournals] = useState<{ code: string; name: string; bankNo: string }[]>([]);
+  const [journalCode, setJournalCode] = useState('');
+  const [date, setDate] = useState(() => new Date().toISOString().substring(0, 10));
+  const [busy, setBusy] = useState('Cargando lotes…');
+  const [error, setError] = useState('');
+  const [result, setResult] = useState<{ documentNumber: string; warnings: string[] } | null>(null);
+  const descr = `Cierre ${entry.documentNo} / ${c.documentNo}`;
+  const lines = [
+    { accountType: entry.type, accountNo: entry.entityNo, name: entry.entityName, amount: -entry.remainingAmount, description: descr, appliesToDocType: entry.documentType, appliesToDocNo: entry.documentNo, currencyCode: entry.currencyCode || '' },
+    { accountType: c.type, accountNo: c.entityNo, name: c.entityName, amount: -c.remaining, description: descr, appliesToDocType: c.documentType, appliesToDocNo: c.documentNo, currencyCode: entry.currencyCode || '' },
+  ];
+
+  // Mismo lote por defecto que BANCO: el de la cuenta de banco que se usó la última vez
+  useEffect(() => {
+    fetch('/api/banco').then(r => r.json()).then(d => {
+      if (d.error) throw new Error(d.error);
+      setJournals(d.journals || []);
+      let bank = '';
+      try { bank = localStorage.getItem('crz-banco-bank') || ''; } catch { /* sin almacenamiento */ }
+      const js = d.journals || [];
+      const banks = d.banks || [];
+      const firstBank = banks.find((b: any) => js.some((j: any) => j.bankNo === b.number))?.number;
+      setJournalCode((js.find((j: any) => j.bankNo === bank) || js.find((j: any) => j.bankNo === firstBank) || js[0])?.code || '');
+    }).catch(e => setError(e.message)).finally(() => setBusy(''));
+  }, []);
+
+  const send = async () => {
+    setBusy('Enviando al lote…'); setError('');
+    try {
+      const res = await fetch('/api/ledger-entries/clear', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ journalCode, date, lines: lines.map(({ name, ...l }) => l) }), // eslint-disable-line @typescript-eslint/no-unused-vars
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error);
+      setResult(d);
+      onSent(`En el lote ${journalCode}${d.documentNumber ? ` · ${d.documentNumber}` : ''}`);
+    } catch (e: any) { setError(e.message); } finally { setBusy(''); }
+  };
+
+  const input = 'border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm bg-white';
+  return (
+    <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4" onClick={onCancel}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl p-5 space-y-4" onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="font-bold text-gray-900">Cerrar ambos movimientos</p>
+            <p className="text-xs text-gray-500">Dos líneas en el General Journal (sin registrar), misma fecha y mismo nº de documento, sin cuenta de contrapartida.</p>
+          </div>
+          <button onClick={onCancel} className="text-gray-400 hover:text-gray-700"><X size={18} /></button>
+        </div>
+        <div className="flex flex-wrap gap-4">
+          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+            Lote del General Journal
+            <select value={journalCode} onChange={e => setJournalCode(e.target.value)} className={`${input} block mt-1 normal-case tracking-normal font-normal min-w-56`}>
+              {journals.map(j => <option key={j.code} value={j.code}>{j.code}{j.name && j.name !== j.code ? ` · ${j.name}` : ''}</option>)}
+            </select>
+          </label>
+          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+            Fecha
+            <input type="date" value={date} onChange={e => setDate(e.target.value)} className={`${input} block mt-1 normal-case tracking-normal font-normal`} />
+          </label>
+        </div>
+        <table className="w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
+          <thead className="bg-gray-50 text-[11px] uppercase tracking-wider text-gray-500">
+            <tr><th className="px-3 py-2 text-left">Cuenta</th><th className="px-3 py-2 text-left">Liquida</th><th className="px-3 py-2 text-left">Descripción</th><th className="px-3 py-2 text-right">Importe</th></tr>
+          </thead>
+          <tbody>
+            {lines.map((l, i) => (
+              <tr key={i} className="border-t border-gray-100">
+                <td className="px-3 py-2"><span className="font-semibold">{sideLabel(l.accountType)} {l.accountNo}</span><span className="block text-xs text-gray-500">{l.name}</span></td>
+                <td className="px-3 py-2 font-mono text-xs">{l.appliesToDocType} {l.appliesToDocNo}</td>
+                <td className="px-3 py-2 text-gray-700">{l.description}</td>
+                <td className="px-3 py-2 text-right tabular-nums font-semibold">{nf(l.amount)} {l.currencyCode || 'EUR'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {error && <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+        {result && (
+          <div className="text-sm bg-sky-50 border border-sky-200 text-sky-800 rounded-lg px-3 py-2">
+            <p className="font-semibold">Líneas creadas en el lote {journalCode}{result.documentNumber ? ` · ${result.documentNumber}` : ''} (sin registrar)</p>
+            {result.warnings.map((w, i) => <p key={i} className="text-amber-800">{w}</p>)}
+          </div>
+        )}
+        <div className="flex justify-end gap-2">
+          <button onClick={onCancel} className="px-3 py-1.5 text-sm font-semibold border border-gray-300 rounded-lg bg-white hover:bg-gray-50">{result ? 'Cerrar' : 'Cancelar'}</button>
+          {!result && (
+            <button onClick={send} disabled={!journalCode || !date || !!busy}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold rounded-lg bg-gray-900 text-white hover:bg-gray-800 disabled:opacity-50">
+              {busy ? <RefreshCcw size={15} className="animate-spin" /> : <Send size={15} />} {busy || `Enviar al lote ${journalCode || '…'}`}
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

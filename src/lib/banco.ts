@@ -822,3 +822,51 @@ export async function sendToBatch(ctx: BcContext, journal: { id: string; code: s
   if (created.some(c => !c.documentNumber)) warnings.push('Alguna línea ha quedado sin nº de documento: ponlo en BC antes de registrar.');
   return { lines: created.length, documentNumbers: Array.from(new Set(created.map(c => c.documentNumber).filter(Boolean))), warnings };
 }
+
+// ---------- Cierre cruzado (Open Entries) ----------
+
+// Dos (o más) movimientos abiertos de distinto cliente / proveedor que se compensan: una línea por movimiento con el
+// importe pendiente cambiado de signo y liquidándolo, misma fecha y mismo nº de documento, SIN cuenta de contrapartida
+// (las líneas suman 0). El nº de documento lo pone BC (serie del lote) en la primera línea.
+export type ClearingLine = {
+  accountType: 'Customer' | 'Vendor'; accountNo: string; amount: number; description: string;
+  appliesToDocType: string; appliesToDocNo: string; currencyCode: string;
+};
+export async function sendClearing(ctx: BcContext, journal: { id: string; code: string }, date: string, lines: ClearingLine[]) {
+  const base = `${ctx.apiBase}/journals(${journal.id})/journalLines`;
+  const created: { id: string; lineNumber: number; documentNumber: string; line: ClearingLine }[] = [];
+  let docNo = '';
+  try {
+    for (const l of lines) {
+      const r = await bcRequest('POST', base, ctx.token, {
+        accountType: l.accountType, accountNumber: l.accountNo, postingDate: date, ...(docNo ? { documentNumber: docNo } : {}),
+        amount: r2(l.amount), description: l.description.substring(0, 100),
+      });
+      docNo = docNo || String(r.documentNumber || '');
+      created.push({ id: r.id, lineNumber: r.lineNumber, documentNumber: String(r.documentNumber || ''), line: l });
+    }
+  } catch (e) {
+    for (const c of created) await bcRequest('DELETE', `${base}(${c.id})`, ctx.token).catch(() => {});
+    throw e;
+  }
+
+  const warnings: string[] = [];
+  const template = await templateName(ctx, journal.id);
+  const key = (n: number) => `${ctx.odataCompanyBase}/General_Journals_Excel(Journal_Template_Name='${encodeURIComponent(q(template))}',Journal_Batch_Name='${encodeURIComponent(q(journal.code))}',Line_No=${n})`;
+  for (const c of created) {
+    try {
+      // Sin contrapartida (el lote puede traer una por defecto) y en la divisa del movimiento; después, la liquidación
+      await bcRequest('PATCH', key(c.lineNumber), ctx.token, {
+        Bal_Account_Type: 'G/L Account', Bal_Account_No: '', ...(c.line.currencyCode ? { Currency_Code: c.line.currencyCode } : {}),
+      });
+      await bcRequest('PATCH', key(c.lineNumber), ctx.token, {
+        Applies_to_Doc_Type: c.line.appliesToDocType && c.line.appliesToDocType !== 'Empty' ? c.line.appliesToDocType.replace(/ /g, '_x0020_') : ' ',
+        Applies_to_Doc_No: c.line.appliesToDocNo,
+      });
+    } catch (e: any) {
+      warnings.push(`Línea ${c.line.accountType} ${c.line.accountNo}: no se ha podido quitar la contrapartida o poner la liquidación (${String(e?.message || e).substring(0, 160)}); revísalo en BC.`);
+    }
+  }
+  if (!docNo) warnings.push('Las líneas han quedado sin nº de documento: ponles el mismo en BC antes de registrar.');
+  return { lines: created.length, documentNumber: docNo, warnings };
+}

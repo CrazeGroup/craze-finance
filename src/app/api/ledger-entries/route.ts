@@ -93,6 +93,24 @@ function suggestFor(e: Entry, group: Entry[]): Suggestion | null {
   return null;
 }
 
+// Mismo importe pendiente (de signo contrario) en OTRO cliente o proveedor de la misma divisa: el pago se ha podido
+// registrar en la cuenta equivocada o compensa un movimiento de otro tercero. Solo cuando el propio cliente / proveedor
+// no tiene ya uno con el importe exacto. Prioridad: los que se citan; después, la fecha más cercana.
+function crossFor(e: Entry, byAmount: Map<string, Entry[]>) {
+  const c0 = cents(e.remainingAmount);
+  if (!c0) return null;
+  const cands = (byAmount.get(`${e.currencyCode}|${-c0}`) || []).filter(c => c.type !== e.type || c.entityNo !== e.entityNo);
+  if (!cands.length) return null;
+  const dist = (c: Entry) => Math.abs(Date.parse(c.postingDate || '1970-01-01') - Date.parse(e.postingDate || '1970-01-01'));
+  const isCited = (c: Entry) => cites(e, c) || cites(c, e);
+  const best = [...cands].sort((a, b) => Number(isCited(b)) - Number(isCited(a)) || dist(a) - dist(b))[0];
+  return {
+    type: best.type, entryNo: best.entryNo, entityNo: best.entityNo, entityName: best.entityName, documentType: best.documentType,
+    documentNo: best.documentNo, externalDocumentNo: best.externalDocumentNo, postingDate: best.postingDate, remaining: best.remainingAmount,
+    cited: isCited(best), count: cands.length,
+  };
+}
+
 export async function GET() {
   try {
     const cookieStore = await cookies();
@@ -119,9 +137,18 @@ export async function GET() {
       const k = `${e.type}|${e.entityNo}|${e.currencyCode}`;
       groups.set(k, [...(groups.get(k) || []), e]);
     }
+    const byAmount = new Map<string, Entry[]>();
+    for (const e of all) {
+      const k = `${e.currencyCode}|${cents(e.remainingAmount)}`;
+      byAmount.set(k, [...(byAmount.get(k) || []), e]);
+    }
     const isListed = (e: Entry) => VALID_DOCUMENT_TYPES.includes(e.documentType.toLowerCase()) || e.documentType === 'Empty';
     const entries = all.filter(isListed)
-      .map(e => ({ ...e, suggestion: suggestFor(e, groups.get(`${e.type}|${e.entityNo}|${e.currencyCode}`) || []) }))
+      .map(e => {
+        const suggestion = suggestFor(e, groups.get(`${e.type}|${e.entityNo}|${e.currencyCode}`) || []);
+        const own = suggestion && (suggestion.kind === 'exact' || suggestion.kind === 'exact_ref');
+        return { ...e, suggestion, cross: own ? null : crossFor(e, byAmount) };
+      })
       .sort((a, b) => (a.postingDate || '').localeCompare(b.postingDate || ''));
     return NextResponse.json(entries);
   } catch (error: any) {
