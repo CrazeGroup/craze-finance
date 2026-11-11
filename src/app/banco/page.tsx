@@ -354,7 +354,7 @@ function LinesEditor({ row, input, names, setLine, setDoc, addLine, removeLine }
           <input value={l.accountNo} onChange={e => setLine(i, { accountNo: e.target.value, accountName: '' })} placeholder="Buscar…"
             list={l.accountType ? listId(l.accountType) : undefined} onFocus={e => e.currentTarget.select()}
             title="Escribe el nº o parte del nombre y elige en la lista"
-            className={`${input} w-24 ${!l.accountNo.trim() ? 'border-red-300' : ''}`} />
+            className={`${input} w-32 ${!l.accountNo.trim() ? 'border-red-300' : ''}`} />
           {(() => {
             const name = names[`${l.accountType}|${l.accountNo.trim()}`] || l.accountName;
             const unknown = !name && (l.accountType === 'G/L Account' || l.accountType === 'Bank Account') && !!l.accountNo.trim() && Object.keys(names).length > 0;
