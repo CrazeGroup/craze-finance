@@ -644,7 +644,6 @@ function TaskTable({ m, taskNames, openTask, toggle, saving, exclude }: {
   // Tareas con movimientos más las del proyecto (para ver la estructura completa)
   const keys = Array.from(new Set([...Object.keys(taskNames).filter(k => /^\d{3}\.\d{3}$/.test(k) && !k.endsWith('.999')), ...Object.keys(m.tasks)])).sort();
   const groups = Array.from(new Set([...GROUPS, ...keys.map(groupOf)])).sort();
-  const isRevenue = (k: string) => groupOf(k) === '001';
   const profit = Object.values(m.tasks).reduce((a, t) => a + t.value, 0);
   const soldQty = m.tasks[TASK_SALES]?.qty || 0;
   return (
@@ -681,7 +680,7 @@ function TaskTable({ m, taskNames, openTask, toggle, saving, exclude }: {
                           </span>
                         </td>
                         <td className={`${td} text-right`}>{t ? units(t.qty) : '—'}</td>
-                        <td className={`${td} text-right ${isRevenue(k) ? neg(t?.value || 0) : ''}`}>{t ? money(isRevenue(k) ? t.value : -t.value) : '—'}</td>
+                        <td className={`${td} text-right ${neg(t?.value || 0)}`}>{t ? money(t.value) : '—'}</td>
                       </tr>
                       {openTask[ok] && (
                         <tr><td colSpan={4} className="px-3 py-2 bg-gray-50">
@@ -698,7 +697,7 @@ function TaskTable({ m, taskNames, openTask, toggle, saving, exclude }: {
                                   <td className="px-2 py-1">{e.partner}</td><td className="px-2 py-1 whitespace-nowrap">{e.no}</td>
                                   <td className="px-2 py-1">{e.description}{e.fixed && <p className="text-sky-700 flex items-center gap-1"><Wrench size={11} /> {e.fixed}</p>}{e.excluded && <p className="text-amber-700">{e.excluded}</p>}</td><td className="px-2 py-1 whitespace-nowrap">{e.location}</td>
                                   <td className="px-2 py-1 text-right tabular-nums">{units(e.qty)}</td>
-                                  <td className={`px-2 py-1 text-right tabular-nums ${e.excluded ? '' : neg(isRevenue(k) ? e.value : -e.value)}`}>{money(isRevenue(k) ? e.value : -e.value)}</td>
+                                  <td className={`px-2 py-1 text-right tabular-nums ${e.excluded ? '' : neg(e.value)}`}>{money(e.value)}</td>
                                   <td className="px-2 py-1 text-right whitespace-nowrap">
                                     {e.key && <button onClick={() => exclude(e, !e.excluded)} disabled={saving} title={e.excluded ? 'Volver a contar en el margen' : 'No contar en el margen (p. ej. una provisión que se factura y abona)'}
                                       className="underline text-gray-500 hover:text-gray-800 disabled:opacity-40">{e.excluded ? 'Incluir' : 'Excluir'}</button>}
@@ -715,7 +714,7 @@ function TaskTable({ m, taskNames, openTask, toggle, saving, exclude }: {
                 <tr className="font-semibold text-gray-800">
                   <td className={td}>{g}.999</td><td className="px-3 py-1.5">END {taskNames[g] || GROUP_LABEL[g] || g}</td>
                   <td className={`${td} text-right`}>{g === '001' ? '' : units(qty)}</td>
-                  <td className={`${td} text-right`}>{money(g === '001' ? sum : -sum)}</td>
+                  <td className={`${td} text-right ${neg(sum)}`}>{money(sum)}</td>
                 </tr>
               </Fragment>
             );
