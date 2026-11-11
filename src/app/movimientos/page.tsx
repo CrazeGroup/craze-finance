@@ -73,9 +73,7 @@ export default function MovimientosPage() {
   const [onlySuggested, setOnlySuggested] = useState(false);
   const [onlyCross, setOnlyCross] = useState(false);
   // Cierre cruzado: el par elegido (diálogo) y los ya enviados al lote ('Customer:<entryNo>' → texto)
-  // Movimientos a cerrar juntos (el primero es el de la fila), con la divisa
-  const [clearing, setClearing] = useState<{ items: ClearItem[]; currency: string } | null>(null);
-  const asItem = (e: any): ClearItem => ({ type: e.type, entryNo: e.entryNo, entityNo: e.entityNo, entityName: e.entityName, documentType: e.documentType, documentNo: e.documentNo, postingDate: e.postingDate, remaining: e.remainingAmount });
+  const [clearing, setClearing] = useState<any | null>(null);
   const [sentPairs, setSentPairs] = useState<Record<string, string>>({});
   useEffect(() => { try { setNoAmazon(localStorage.getItem('movimientos:sinAmazon') === '1'); } catch { /* sin almacenamiento */ } }, []);
   const changeNoAmazon = (v: boolean) => { setNoAmazon(v); try { localStorage.setItem('movimientos:sinAmazon', v ? '1' : '0'); } catch { /* sin almacenamiento */ } };
@@ -264,18 +262,9 @@ export default function MovimientosPage() {
                     <td className="px-3 py-2 text-gray-600">{entry.currencyCode || 'EUR'}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-gray-600 whitespace-nowrap">{nf(entry.originalAmount)}</td>
                     <td className={`px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap ${entry.remainingAmount < 0 ? 'text-red-600' : 'text-gray-900'}`}>{nf(entry.remainingAmount)}</td>
-                    <td className="px-3 py-2 min-w-[180px]">
-                      <SuggestionCell s={entry.suggestion} nf={nf} dateEs={dateEs} sent={sentPairs[`${entry.type}:${entry.entryNo}`]}
-                        onClose={() => setClearing({
-                          currency: entry.currencyCode || '',
-                          items: [asItem(entry), ...entry.suggestion.entries.map((x: any) => ({ type: entry.type, entryNo: x.entryNo, entityNo: entry.entityNo, entityName: entry.entityName, documentType: x.documentType, documentNo: x.documentNo, postingDate: x.postingDate, remaining: x.remaining }))],
-                        })} />
-                    </td>
+                    <td className="px-3 py-2 min-w-[180px]"><SuggestionCell s={entry.suggestion} nf={nf} dateEs={dateEs} /></td>
                     <td className="px-3 py-2 min-w-[220px]">
-                      <CrossCell c={entry.cross} nf={nf} dateEs={dateEs} sent={sentPairs[`${entry.type}:${entry.entryNo}`]} onClose={() => setClearing({
-                        currency: entry.currencyCode || '',
-                        items: [asItem(entry), { ...entry.cross }],
-                      })} />
+                      <CrossCell c={entry.cross} nf={nf} dateEs={dateEs} sent={sentPairs[`${entry.type}:${entry.entryNo}`]} onClose={() => setClearing(entry)} />
                     </td>
                     <td className="px-3 py-2 text-gray-700 max-w-[220px] truncate" title={entry.description}>{entry.description}</td>
                     {viewMode === 'Customer' && <td className="px-3 py-2 text-gray-700 max-w-[220px] truncate" title={entry.messageToRecipient}>{entry.messageToRecipient || <span className="text-gray-300">—</span>}</td>}
@@ -292,9 +281,9 @@ export default function MovimientosPage() {
         )}
       </main>
       {clearing && (
-        <ClearDialog items={clearing.items} currency={clearing.currency} nf={nf} onCancel={() => setClearing(null)}
+        <ClearDialog entry={clearing} nf={nf} onCancel={() => setClearing(null)}
           onSent={(text) => {
-            setSentPairs(p => ({ ...p, ...Object.fromEntries(clearing.items.map(i => [`${i.type}:${i.entryNo}`, text])) }));
+            setSentPairs(p => ({ ...p, [`${clearing.type}:${clearing.entryNo}`]: text, [`${clearing.cross.type}:${clearing.cross.entryNo}`]: text }));
           }} />
       )}
     </div>
@@ -328,22 +317,22 @@ function CrossCell({ c, nf, dateEs, sent, onClose }: { c?: Cross | null; nf: (v:
 }
 
 // Diálogo: dos líneas al lote del General Journal, misma fecha y mismo asiento, sin contrapartida (suman 0)
-type ClearItem = { type: 'Customer' | 'Vendor'; entryNo: number; entityNo: string; entityName: string; documentType: string; documentNo: string; postingDate: string | null; remaining: number };
-function ClearDialog({ items, currency, nf, onCancel, onSent }: { items: ClearItem[]; currency: string; nf: (v: number) => string; onCancel: () => void; onSent: (text: string) => void }) {
+function ClearDialog({ entry, nf, onCancel, onSent }: { entry: any; nf: (v: number) => string; onCancel: () => void; onSent: (text: string) => void }) {
+  const c: Cross = entry.cross;
   const [journals, setJournals] = useState<{ code: string; name: string; bankNo: string }[]>([]);
   const [journalCode, setJournalCode] = useState('');
   // BC no deja liquidar un movimiento posterior a la fecha del asiento: como mínimo, la del más reciente de los dos
-  const minDate = items.map(i => i.postingDate || '').filter(Boolean).sort().pop() || '';
+  const minDate = [entry.postingDate, c.postingDate].filter(Boolean).sort().pop() || '';
   const [date, setDate] = useState(() => { const t = new Date().toISOString().substring(0, 10); return t < minDate ? minDate : t; });
   const tooEarly = !!minDate && date < minDate;
   const [busy, setBusy] = useState('Cargando lotes…');
   const [error, setError] = useState('');
   const [result, setResult] = useState<{ documentNumber: string; warnings: string[] } | null>(null);
-  const descr = `Cierre ${items.map(i => i.documentNo).join(' / ')}`.substring(0, 100);
-  const lines = items.map(i => ({
-    accountType: i.type, accountNo: i.entityNo, name: i.entityName, amount: -i.remaining, description: descr,
-    appliesToDocType: i.documentType, appliesToDocNo: i.documentNo, currencyCode: currency, postingDate: i.postingDate,
-  }));
+  const descr = `Cierre ${entry.documentNo} / ${c.documentNo}`;
+  const lines = [
+    { accountType: entry.type, accountNo: entry.entityNo, name: entry.entityName, amount: -entry.remainingAmount, description: descr, appliesToDocType: entry.documentType, appliesToDocNo: entry.documentNo, currencyCode: entry.currencyCode || '', postingDate: entry.postingDate },
+    { accountType: c.type, accountNo: c.entityNo, name: c.entityName, amount: -c.remaining, description: descr, appliesToDocType: c.documentType, appliesToDocNo: c.documentNo, currencyCode: entry.currencyCode || '', postingDate: c.postingDate },
+  ];
 
   // Mismo lote por defecto que BANCO: el de la cuenta de banco que se usó la última vez
   useEffect(() => {
@@ -379,8 +368,8 @@ function ClearDialog({ items, currency, nf, onCancel, onSent }: { items: ClearIt
       <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl p-5 space-y-4" onClick={e => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="font-bold text-gray-900">Cerrar {items.length === 2 ? 'ambos movimientos' : `los ${items.length} movimientos`}</p>
-            <p className="text-xs text-gray-500">Una línea por movimiento en el General Journal (sin registrar) que lo liquida, misma fecha y mismo nº de documento, sin cuenta de contrapartida (suman 0). Al registrar el lote quedan cerrados, como con Apply Entries.</p>
+            <p className="font-bold text-gray-900">Cerrar ambos movimientos</p>
+            <p className="text-xs text-gray-500">Dos líneas en el General Journal (sin registrar), misma fecha y mismo nº de documento, sin cuenta de contrapartida.</p>
           </div>
           <button onClick={onCancel} className="text-gray-400 hover:text-gray-700"><X size={18} /></button>
         </div>
@@ -452,14 +441,11 @@ const SUGGESTION = {
   ref: { rank: 3, label: 'Se citan (otro importe)', cls: 'bg-amber-50 text-amber-800 border-amber-200' },
 } as const;
 type Sug = { kind: keyof typeof SUGGESTION; note: string; entries: { entryNo: number; documentType: string; documentNo: string; postingDate: string | null; remaining: number }[] };
-function SuggestionCell({ s, nf, dateEs, sent, onClose }: { s?: Sug | null; nf: (v: number) => string; dateEs: (d: string) => string; sent?: string; onClose: () => void }) {
+function SuggestionCell({ s, nf, dateEs }: { s?: Sug | null; nf: (v: number) => string; dateEs: (d: string) => string }) {
   if (!s) return <span className="text-gray-300">—</span>;
-  // Solo las que suman exactamente (no 'ref', que deja diferencia)
-  const closable = s.kind !== 'ref';
   const k = SUGGESTION[s.kind];
   const tip = `${s.note}\n${s.entries.map(e => `${e.documentType} ${e.documentNo} · ${dateEs(e.postingDate || '')} · ${nf(e.remaining)}`).join('\n')}`;
   return (
-    <div className="flex items-start gap-2">
     <span className={`inline-flex items-start gap-1 border rounded px-1.5 py-0.5 text-xs ${k.cls}`} title={tip}>
       <Lightbulb size={12} className="mt-0.5 shrink-0" />
       <span>
@@ -467,9 +453,5 @@ function SuggestionCell({ s, nf, dateEs, sent, onClose }: { s?: Sug | null; nf: 
         <span className="block text-[11px] opacity-80">{k.label}{s.entries.length === 1 ? ` · ${s.entries[0].documentType} ${nf(s.entries[0].remaining)}` : ''}</span>
       </span>
     </span>
-      {closable && (sent
-        ? <span className="text-[11px] font-semibold text-sky-700 whitespace-nowrap">{sent}</span>
-        : <button onClick={onClose} className="shrink-0 text-[11px] font-semibold border border-gray-300 rounded px-1.5 py-0.5 bg-white hover:bg-gray-50 whitespace-nowrap">Cerrar</button>)}
-    </div>
   );
 }
