@@ -201,6 +201,91 @@ export default function MagazineProfitabilityView() {
   const td = 'px-3 py-1.5 whitespace-nowrap tabular-nums';
   const th2 = 'px-2 py-2 font-semibold whitespace-nowrap align-bottom';
 
+  const unassignedBlock = data && (pending.length > 0 || validatedRows.length > 0) && (
+            <section className="bg-amber-50 border border-amber-200 rounded-xl">
+              <button onClick={() => setShowIssues(v => !v)} className="w-full px-4 py-2.5 flex items-center gap-2 text-sm text-amber-900 text-left">
+                <AlertTriangle size={16} />
+                <span className="font-semibold">{pending.length ? `${pending.length} líneas sin revista` : 'Ninguna línea sin revista pendiente'}</span>
+                <span className="text-amber-800">
+                  · sin Project No. en BC ni revista en el External Document No. o el PDF; no cuentan en ninguna revista
+                  {validatedRows.length > 0 && <> · {validatedRows.length} validadas</>}
+                </span>
+                {showIssues ? <ChevronDown size={16} className="ml-auto shrink-0" /> : <ChevronRight size={16} className="ml-auto shrink-0" />}
+              </button>
+              {showIssues && (
+                <div className="px-4 pb-4 overflow-x-auto">
+                  <div className="flex flex-wrap items-center gap-3 mb-1">
+                    <p className="text-xs text-amber-900 mr-auto">Rellena Project No. y Project Task No. en BC, o valida las que no son de ninguna revista para que no se avisen más. Almacenaje y handling sin proyecto no se listan. Importe: en ventas, + = ingreso; en compras, + = coste.</p>
+                    {pending.length > 0 && (
+                      <button onClick={() => validate(pending, true)} disabled={saving}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-amber-300 bg-white text-xs text-amber-900 hover:bg-amber-100 disabled:opacity-50">
+                        <CheckCircle2 size={13} /> Validar todas ({pending.length})
+                      </button>
+                    )}
+                    {validatedRows.length > 0 && (
+                      <label className="flex items-center gap-1 text-xs text-amber-900">
+                        <input type="checkbox" checked={showValidated} onChange={e => setShowValidated(e.target.checked)} /> Ver validadas ({validatedRows.length})
+                      </label>
+                    )}
+                  </div>
+                  {(pending.length > 0 || showValidated) && <table className="w-full text-xs bg-white rounded-lg border border-amber-200">
+                    <thead className="text-gray-500 bg-gray-50"><tr>
+                      {['Motivo', 'Documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Project No.', 'Task No.', 'Cantidad', 'Importe', 'Asignar a revista', ''].map((h, i) =>
+                        <th key={i} className={`${th} ${['Cantidad', 'Importe'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>)}
+                    </tr></thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {[...pending, ...(showValidated ? validatedRows : [])].map(u => {
+                        const v = data.validated?.[u.key];
+                        return (
+                          <tr key={u.key} className={v ? 'text-gray-400' : ''}>
+                            <td className="px-3 py-1.5">{u.reason}{u.pdf && <p className="text-amber-700">{u.pdf}</p>}</td>
+                            <td className={td}><span className="text-gray-400 mr-1">{DOC_TYPE[u.kind].label}</span>{u.doc} <DocPdfLink documentNo={u.doc} kind={DOC_TYPE[u.kind].pdf} company={COMPANY} /></td>
+                            <td className={td}>{dmy(u.date)}</td><td className={td}>{u.partner}</td><td className={td}>{u.no}</td>
+                            <td className="px-3 py-1.5">{u.description}</td><td className={td}>{u.project}</td><td className={td}>{u.task}</td>
+                            <td className={`${td} text-right`}>{units(u.qty)}</td><td className={`${td} text-right`}>{money(u.amount)}</td>
+                            <td className={td}>
+                              {!v && (() => {
+                                const d = draft[u.key] || { magazine: '', task: u.suggestedTask || '' };
+                                const set = (x: Partial<typeof d>) => setDraft(o => ({ ...o, [u.key]: { ...d, ...x } }));
+                                return (
+                                  <span className="inline-flex items-center gap-1">
+                                    <select value={d.magazine} onChange={e => set({ magazine: e.target.value })} className="border border-gray-300 rounded px-1 py-0.5 text-xs max-w-[9rem]">
+                                      <option value="">Revista…</option>
+                                      {magOptions.map(o => <option key={o.item} value={o.item}>{o.label} · {o.item}</option>)}
+                                    </select>
+                                    <select value={d.task} onChange={e => set({ task: e.target.value })} className="border border-gray-300 rounded px-1 py-0.5 text-xs max-w-[9rem]">
+                                      <option value="">Tarea…</option>
+                                      {taskOptions.map(([k, name]) => <option key={k} value={k}>{k} {name}</option>)}
+                                    </select>
+                                    <button onClick={() => assign(u.key, d, u)} disabled={saving || !d.magazine || !d.task}
+                                      className="px-2 py-0.5 rounded bg-gray-900 text-white disabled:opacity-40">Asignar</button>
+                                  </span>
+                                );
+                              })()}
+                            </td>
+                            <td className={`${td} text-right`}>
+                              {v ? (
+                                <span className="inline-flex items-center gap-2">
+                                  <span title={`${v.by || ''} ${new Date(v.at).toLocaleString('es-ES')}`} className="text-emerald-700 inline-flex items-center gap-1"><CheckCircle2 size={12} /> Validada</span>
+                                  <button onClick={() => validate([u], false)} disabled={saving} className="underline hover:text-gray-700">Quitar</button>
+                                </span>
+                              ) : (
+                                <button onClick={() => validate([u], true)} disabled={saving} title="No es de ninguna revista: no volver a avisar"
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-50">
+                                  <CheckCircle2 size={12} /> Validar
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>}
+                </div>
+              )}
+            </section>
+          );
+
   const fixesBlock = data && data.corrections.length > 0 && (
             <section className="bg-sky-50 border border-sky-200 rounded-xl">
               <div className="w-full px-4 py-2.5 flex items-center gap-2 text-sm text-sky-900">
@@ -312,90 +397,7 @@ export default function MagazineProfitabilityView() {
             ))}
           </section>
 
-          {(pending.length > 0 || validatedRows.length > 0) && (
-            <section className="bg-amber-50 border border-amber-200 rounded-xl">
-              <button onClick={() => setShowIssues(v => !v)} className="w-full px-4 py-2.5 flex items-center gap-2 text-sm text-amber-900 text-left">
-                <AlertTriangle size={16} />
-                <span className="font-semibold">{pending.length} líneas sin revista</span>
-                <span className="text-amber-800">
-                  · sin Project No. en BC ni revista en el External Document No. o el PDF; no cuentan en ninguna revista
-                  {validatedRows.length > 0 && <> · {validatedRows.length} validadas</>}
-                </span>
-                {showIssues ? <ChevronDown size={16} className="ml-auto shrink-0" /> : <ChevronRight size={16} className="ml-auto shrink-0" />}
-              </button>
-              {showIssues && (
-                <div className="px-4 pb-4 overflow-x-auto">
-                  <div className="flex flex-wrap items-center gap-3 mb-1">
-                    <p className="text-xs text-amber-900 mr-auto">Rellena Project No. y Project Task No. en BC, o valida las que no son de ninguna revista para que no se avisen más. Almacenaje y handling sin proyecto no se listan. Importe: en ventas, + = ingreso; en compras, + = coste.</p>
-                    {pending.length > 0 && (
-                      <button onClick={() => validate(pending, true)} disabled={saving}
-                        className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-amber-300 bg-white text-xs text-amber-900 hover:bg-amber-100 disabled:opacity-50">
-                        <CheckCircle2 size={13} /> Validar todas ({pending.length})
-                      </button>
-                    )}
-                    {validatedRows.length > 0 && (
-                      <label className="flex items-center gap-1 text-xs text-amber-900">
-                        <input type="checkbox" checked={showValidated} onChange={e => setShowValidated(e.target.checked)} /> Ver validadas ({validatedRows.length})
-                      </label>
-                    )}
-                  </div>
-                  <table className="w-full text-xs bg-white rounded-lg border border-amber-200">
-                    <thead className="text-gray-500 bg-gray-50"><tr>
-                      {['Motivo', 'Documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Project No.', 'Task No.', 'Cantidad', 'Importe', 'Asignar a revista', ''].map((h, i) =>
-                        <th key={i} className={`${th} ${['Cantidad', 'Importe'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>)}
-                    </tr></thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {[...pending, ...(showValidated ? validatedRows : [])].map(u => {
-                        const v = data.validated?.[u.key];
-                        return (
-                          <tr key={u.key} className={v ? 'text-gray-400' : ''}>
-                            <td className="px-3 py-1.5">{u.reason}{u.pdf && <p className="text-amber-700">{u.pdf}</p>}</td>
-                            <td className={td}><span className="text-gray-400 mr-1">{DOC_TYPE[u.kind].label}</span>{u.doc} <DocPdfLink documentNo={u.doc} kind={DOC_TYPE[u.kind].pdf} company={COMPANY} /></td>
-                            <td className={td}>{dmy(u.date)}</td><td className={td}>{u.partner}</td><td className={td}>{u.no}</td>
-                            <td className="px-3 py-1.5">{u.description}</td><td className={td}>{u.project}</td><td className={td}>{u.task}</td>
-                            <td className={`${td} text-right`}>{units(u.qty)}</td><td className={`${td} text-right`}>{money(u.amount)}</td>
-                            <td className={td}>
-                              {!v && (() => {
-                                const d = draft[u.key] || { magazine: '', task: u.suggestedTask || '' };
-                                const set = (x: Partial<typeof d>) => setDraft(o => ({ ...o, [u.key]: { ...d, ...x } }));
-                                return (
-                                  <span className="inline-flex items-center gap-1">
-                                    <select value={d.magazine} onChange={e => set({ magazine: e.target.value })} className="border border-gray-300 rounded px-1 py-0.5 text-xs max-w-[9rem]">
-                                      <option value="">Revista…</option>
-                                      {magOptions.map(o => <option key={o.item} value={o.item}>{o.label} · {o.item}</option>)}
-                                    </select>
-                                    <select value={d.task} onChange={e => set({ task: e.target.value })} className="border border-gray-300 rounded px-1 py-0.5 text-xs max-w-[9rem]">
-                                      <option value="">Tarea…</option>
-                                      {taskOptions.map(([k, name]) => <option key={k} value={k}>{k} {name}</option>)}
-                                    </select>
-                                    <button onClick={() => assign(u.key, d, u)} disabled={saving || !d.magazine || !d.task}
-                                      className="px-2 py-0.5 rounded bg-gray-900 text-white disabled:opacity-40">Asignar</button>
-                                  </span>
-                                );
-                              })()}
-                            </td>
-                            <td className={`${td} text-right`}>
-                              {v ? (
-                                <span className="inline-flex items-center gap-2">
-                                  <span title={`${v.by || ''} ${new Date(v.at).toLocaleString('es-ES')}`} className="text-emerald-700 inline-flex items-center gap-1"><CheckCircle2 size={12} /> Validada</span>
-                                  <button onClick={() => validate([u], false)} disabled={saving} className="underline hover:text-gray-700">Quitar</button>
-                                </span>
-                              ) : (
-                                <button onClick={() => validate([u], true)} disabled={saving} title="No es de ninguna revista: no volver a avisar"
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-50">
-                                  <CheckCircle2 size={12} /> Validar
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
-          )}
+          {pending.length > 0 && unassignedBlock}
 
           {newFixes > 0 && fixesBlock}
 
@@ -479,6 +481,8 @@ export default function MagazineProfitabilityView() {
           )}
 
           {newFixes === 0 && fixesBlock}
+
+          {pending.length === 0 && unassignedBlock}
         </>
       )}
     </div>
