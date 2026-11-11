@@ -73,7 +73,7 @@ export default function AmazonPage() {
   const years = Array.from({ length: thisYear - FIRST_YEAR + 1 }, (_, i) => thisYear - i);
   const company = selectedCompany === 'ALL' ? 'CRAZE' : selectedCompany;
   const td = 'py-1.5 px-2 text-right font-mono tabular-nums whitespace-nowrap';
-  const pctOf = (g: Agg) => (g.s ? pct((margin(g) / g.s) * 100) : '–');
+  const pctOf = (g: Agg) => (g.s > 0 ? pct((margin(g) / g.s) * 100) : '–');
 
   const cells = (g: Agg, ly?: Agg | null) => (
     <>
