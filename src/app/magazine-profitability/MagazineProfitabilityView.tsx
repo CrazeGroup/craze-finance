@@ -60,7 +60,7 @@ export function withProvision(m: Magazine, settings: ProvisionSettings | undefin
   const soldOW = m.locations.filter(inLoc).reduce((a, l) => a + l.soldQty, 0);
   // Mezcla de las devoluciones solo cuando ya son representativas (≥ la mitad de lo provisionado); antes, la de las
   // ventas (las primeras devoluciones son casi todas de Grosso y sesgarían la proporción)
-  const byReturns = retQty > 0 && retQty >= provQty / 2;
+  const byReturns = pct != null && retQty > 0 && retQty >= provQty / 2;
   const share = byReturns ? recQty / retQty : sold.qty > 0 ? soldOW / sold.qty : 0;
   const fcRecQty = fcQty * share;
   const tasks = { ...m.tasks };
@@ -263,7 +263,7 @@ export default function MagazineProfitabilityView() {
 
   const th = 'px-3 py-2 font-semibold whitespace-nowrap';
   const td = 'px-3 py-1.5 whitespace-nowrap tabular-nums';
-  const th2 = 'px-2 py-2 font-semibold whitespace-nowrap align-bottom';
+  const th2 = 'px-1.5 py-2 font-semibold whitespace-nowrap align-bottom';
 
   const unassignedBlock = data && (pending.length > 0 || validatedRows.length > 0) && (
             <section className="bg-amber-50 border border-amber-200 rounded-xl">
@@ -498,7 +498,7 @@ export default function MagazineProfitabilityView() {
                           {open[m.item] ? <ChevronDown size={14} className="text-gray-400 shrink-0 mt-0.5" /> : <ChevronRight size={14} className="text-gray-400 shrink-0 mt-0.5" />}
                           <div className="min-w-0">
                             <p className="font-medium text-gray-900 whitespace-nowrap">{m.title} {m.issue.substring(2)}/{m.issue.substring(0, 2)} <span className="text-gray-400 font-normal">{m.item}</span></p>
-                            <p className="text-xs text-gray-500 truncate max-w-[18rem]" title={m.description}>{m.description.replace(/^MAGAZINE\s*-\s*/i, '').replace(/^\S+\s+\d{2}\/\d{2}\s*/, '')}</p>
+                            <p className="text-xs text-gray-500 truncate max-w-[14rem]" title={m.description}>{m.description.replace(/^MAGAZINE\s*-\s*/i, '').replace(/^\S+\s+\d{2}\/\d{2}\s*/, '')}</p>
                           </div>
                         </div>
                       </td>
@@ -570,7 +570,7 @@ export default function MagazineProfitabilityView() {
 // Celda numérica con una segunda línea pequeña (unidades, %)
 function Two({ main, sub, className = '' }: { main: string; sub?: string; className?: string }) {
   return (
-    <td className={`px-2 py-1.5 text-right whitespace-nowrap tabular-nums ${className}`}>
+    <td className={`px-1.5 py-1.5 text-right whitespace-nowrap tabular-nums ${className}`}>
       {main}{sub != null && <p className="text-xs font-normal text-gray-500">{sub}</p>}
     </td>
   );
