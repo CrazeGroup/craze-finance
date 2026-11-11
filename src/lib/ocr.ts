@@ -672,6 +672,7 @@ function amazonRules(s: OcrSuggestion, text: string, vendorName: string, warning
     s.documentType = 'invoice';
     s.lines = [{ lineType: 'Item', ...AMZ_RETURN, description2: '', quantity: 1, unitCost: ret.total }];
     s.net = ret.total; s.vat = 0; s.total = ret.total;
+    s.comment = s.comment.replace(/\s*No se han encontrado los totales en el PDF: escribe los importes\./, '');
     s.comment += ` Amazon: devolución de distribuidor${ret.rma ? ` (RMA ${ret.rma})` : ''} → AA-00132 por el total, como CRZ-PI26-06221.`;
     return true;
   }
