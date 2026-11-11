@@ -687,6 +687,19 @@ function amazonRules(s: OcrSuggestion, text: string, vendorName: string, warning
   return false;
 }
 
+// Otros proveedores Amazon de la empresa (sucursales), primero los "Amazon EU SARL" (mismo formato de factura), sin los
+// de tarjeta, Business, Web Services ni Seller Central
+async function amazonSiblings(ctx: BcContext, exclude: string) {
+  return cached(`ocr:amazon-siblings:${ctx.companyName}`, 6 * HOUR, async () => {
+    const rows = await bcFetchAll(odataUrl(`${ctx.apiBase}/vendors`, {
+      $filter: `contains(displayName,'mazon') or contains(displayName,'MAZON')`, $select: 'number,displayName,blocked',
+    }), ctx.token);
+    return (rows as any[]).filter(v => !String(v.blocked || '').trim() && !/credit card|business|web services|seller|provisions|arvato/i.test(v.displayName))
+      .map(v => ({ number: String(v.number), name: String(v.displayName) }))
+      .sort((a, b) => Number(!/eu s\.?(?:a|à)\.? ?r/i.test(a.name)) - Number(!/eu s\.?(?:a|à)\.? ?r/i.test(b.name)));
+  }).then(list => list.filter(v => v.number !== exclude));
+}
+
 // Todo el proceso para un PDF. vendorNo: proveedor elegido a mano (si no, el mejor candidato)
 // ocrText: el texto de la imagen leído con Tesseract en la página, si el PDF no trae texto
 export async function processPdf(ctx: BcContext, file: string, data: Uint8Array, vendorNo?: string, ocrText?: string): Promise<OcrResult> {
@@ -707,7 +720,20 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
     warnings.push(`Proveedor dudoso: ${candidates[1].number} ${candidates[1].name} también encaja. Revísalo.`);
   }
 
-  const { history, examples } = vendor ? await vendorHistory(ctx, vendor.number) : { history: [], examples: [] };
+  let { history, examples } = vendor ? await vendorHistory(ctx, vendor.number) : { history: [] as HistoryInvoice[], examples: [] as { number: string; text: string }[] };
+  // Amazon sin facturas propias (una sucursal nueva: Amazon EU SARL (PL)): las de otras sucursales de Amazon como
+  // modelo, porque sus facturas y debit notes son iguales. El VAT Bus. Posting Group sigue siendo el del proveedor
+  const borrowed: string[] = [];
+  if (vendor && !history.length && /amazon/i.test(vendor.name)) {
+    const siblings = await amazonSiblings(ctx, vendor.number).catch(() => [] as { number: string; name: string }[]);
+    for (const sib of siblings) {
+      const h = await vendorHistory(ctx, sib.number).catch(() => null);
+      if (!h?.history.length) continue;
+      history = [...history, ...h.history]; examples = [...examples, ...h.examples]; borrowed.push(`${sib.number} ${sib.name}`);
+      if (borrowed.length >= 2) break;
+    }
+    if (borrowed.length) warnings.push(`${vendor.number} no tiene facturas registradas: propuesta con las de ${borrowed.join(' y ')}, que son iguales. Revisa artículo e IVA.`);
+  }
   if (vendor && !history.length) warnings.push('Este proveedor no tiene facturas registradas: completa artículo/cuenta y grupo de IVA a mano.');
 
   // Proveedor con facturas en varias divisas (Uber: AED, CHF, EUR): la del PDF
