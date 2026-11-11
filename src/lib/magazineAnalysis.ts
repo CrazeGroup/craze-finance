@@ -340,6 +340,16 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
 
   // Compras sin proyecto: la revista del PDF adjunto ("Korrektorat … des Magazins „INKEE“, Ausgabe 0225" → 05993_2502)
   const known = new Set<string>([...Array.from(mags.keys()), ...raw.projects.map((p: any) => magazineOfProject(s(p.No))).filter(Boolean)]);
+  // Antes, fuera las facturas sin proyecto anuladas por un abono sin proyecto (mismo proveedor, artículo e importe):
+  // se volvieron a registrar con proyecto, así que asignar solo la factura por su PDF contaría el coste dos veces
+  const cancelled = new Set<number>();
+  pendingPurch.forEach((p, i) => {
+    if (cancelled.has(i)) return;
+    const j = pendingPurch.findIndex((o, k) => k !== i && !cancelled.has(k) && o.u.partner === p.u.partner && o.u.no === p.u.no &&
+      Math.abs(o.u.amount + p.u.amount) < 0.01 && o.u.kind !== p.u.kind);
+    if (j >= 0) { cancelled.add(i); cancelled.add(j); }
+  });
+  pendingPurch.splice(0, pendingPurch.length, ...pendingPurch.filter((_, i) => !cancelled.has(i)));
   const pdfs = await pdfMagazines(ctx, Array.from(new Map(pendingPurch.map(p => [p.u.doc, p.u.kind])).entries()));
   for (const p of pendingPurch) {
     const found = pdfs[p.u.doc];
@@ -408,7 +418,7 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
 }
 
 export async function magazineAnalysis(force = false) {
-  return cached('magazines:analysis:v3', HOUR, async () => computeMagazineAnalysis(await getBcContext(DFORCE_COMPANY)), force);
+  return cached('magazines:analysis:v4', HOUR, async () => computeMagazineAnalysis(await getBcContext(DFORCE_COMPANY)), force);
 }
 
 // Líneas sin revista dadas por buenas (no son de ninguna revista): no se vuelven a avisar. Clave tipo|documento|línea.
