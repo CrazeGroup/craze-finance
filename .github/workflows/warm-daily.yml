@@ -62,11 +62,11 @@ jobs:
           for c, p in out: print(f'{c}|{p}')
           EOF
           fail=0
-          while IFS='|' read -r company path; do
+          while IFS='|' read -r company route; do
             enc=$(printf %s "$company" | jq -sRr @uri)
-            url="$APP_URL/api/$(printf %s "$path" | sed "s/company=$company/company=$enc/")"
+            url="$APP_URL/api/$(printf %s "$route" | sed "s/company=$company/company=$enc/")"
             code=$(curl -s -o out.json -w '%{http_code}' -m 300 -H "Authorization: Bearer $INTERNAL_API_TOKEN" -H "x-craze-company: $enc" "$url" || echo 000)
-            echo "$company · $path → $code"
+            echo "$company · $route → $code"
             if [ "$code" != "200" ]; then head -c 300 out.json; echo; fail=1; fi
           done < calls.txt
           exit $fail
