@@ -4,9 +4,9 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Download, RefreshCw, Search, Wrench } from 'lucide-react';
 import DocPdfLink from '@/components/DocPdfLink';
-import type { Correction, MagEntry, Magazine, MagazineAnalysis as Analysis, MagLocation, Unassigned, Validation } from '@/lib/magazineAnalysis';
+import type { ProvisionSettings, Correction, MagEntry, Magazine, MagazineAnalysis as Analysis, MagLocation, Unassigned, Validation } from '@/lib/magazineAnalysis';
 
-type MagazineAnalysis = Analysis & { validated?: Record<string, Validation> };
+type MagazineAnalysis = Analysis & { validated?: Record<string, Validation>; provisions?: ProvisionSettings };
 
 const nf = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const qf = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 });
@@ -26,7 +26,55 @@ const DOC_TYPE: Record<MagEntry['kind'], { label: string; pdf: 'salesInv' | 'sal
 };
 const COMPANY = 'Craze Entertainment';
 
+// ---- Provisión de devoluciones ----
+// Forecasted Returns (001.002) = % provisionado de la venta − devoluciones reales (nunca negativo; 0 con la provisión
+// cerrada). Las devoluciones de Grosso - Ost / West vuelven al almacén: recuperan el gadget a su coste unitario
+// (004.001 / uds compradas). Las previstas, en la proporción de Ost+West en las ventas, o en las devoluciones reales
+// cuando ya llegan a la mitad de lo provisionado.
+const TASK_FORECAST = '001.002';
+const GADGET_TASK = '004.001';
+const GADGET_REAL = '004.001-R', GADGET_FC = '004.001-P';
+const RECOVER_LOCATIONS = ['Grosso - Ost', 'Grosso - West'];
+const EXTRA_TASK_NAMES: Record<string, string> = {
+  [GADGET_REAL]: 'Gadget recuperado · devoluciones reales Grosso Ost/West',
+  [GADGET_FC]: 'Gadget recuperado · devoluciones previstas',
+};
+type ProvInfo = {
+  pct: number | null; own: boolean; closed: boolean; closedAt: string; provQty: number; provAmount: number; retQty: number; retAmount: number;
+  fcQty: number; fcAmount: number; unitGadget: number; share: number; byReturns: boolean; recQty: number; fcRecQty: number;
+};
+export function withProvision(m: Magazine, settings: ProvisionSettings | undefined): { m: Magazine; p: ProvInfo } {
+  const own = settings?.mags?.[m.item];
+  const pct = own?.pct ?? settings?.defaultPct ?? null;
+  const closed = !!own?.closed;
+  const sold = m.tasks[TASK_SALES] || { qty: 0, value: 0 }, ret = m.tasks[TASK_RETURNS] || { qty: 0, value: 0 };
+  const retQty = -ret.qty, retAmount = -ret.value;
+  const provQty = pct != null ? (sold.qty * pct) / 100 : 0, provAmount = pct != null ? (sold.value * pct) / 100 : 0;
+  const fcQty = closed || pct == null ? 0 : Math.max(0, provQty - retQty);
+  const fcAmount = closed || pct == null ? 0 : Math.max(0, provAmount - retAmount);
+  const gadget = m.tasks[GADGET_TASK];
+  const bought = gadget && gadget.qty > 1 ? gadget.qty : m.printRun;
+  const unitGadget = gadget && bought ? -gadget.value / bought : 0;
+  const inLoc = (l: MagLocation) => RECOVER_LOCATIONS.includes(l.location);
+  const recQty = m.locations.filter(inLoc).reduce((a, l) => a + l.retQty, 0);
+  const soldOW = m.locations.filter(inLoc).reduce((a, l) => a + l.soldQty, 0);
+  // Mezcla de las devoluciones solo cuando ya son representativas (≥ la mitad de lo provisionado); antes, la de las
+  // ventas (las primeras devoluciones son casi todas de Grosso y sesgarían la proporción)
+  const byReturns = retQty > 0 && retQty >= provQty / 2;
+  const share = byReturns ? recQty / retQty : sold.qty > 0 ? soldOW / sold.qty : 0;
+  const fcRecQty = fcQty * share;
+  const tasks = { ...m.tasks };
+  if (fcAmount > 0.005 || fcQty > 0.5) tasks[TASK_FORECAST] = { qty: -Math.round(fcQty), value: -Math.round(fcAmount * 100) / 100 };
+  if (unitGadget && recQty > 0) tasks[GADGET_REAL] = { qty: recQty, value: Math.round(recQty * unitGadget * 100) / 100 };
+  if (unitGadget && fcRecQty > 0.5) tasks[GADGET_FC] = { qty: Math.round(fcRecQty), value: Math.round(fcRecQty * unitGadget * 100) / 100 };
+  return {
+    m: { ...m, tasks },
+    p: { pct, own: own?.pct != null, closed, closedAt: own?.closedAt || '', provQty, provAmount, retQty, retAmount, fcQty, fcAmount, unitGadget, share, byReturns, recQty, fcRecQty },
+  };
+}
+
 type Summary = {
+  forecastQty: number; forecast: number;
   soldQty: number; sold: number; retQty: number; returned: number; netSales: number; ads: number; otherRevenue: number;
   revenue: number; distribution: number; marketing: number; magazine: number; otherCost: number; costs: number; profit: number;
 };
@@ -35,7 +83,7 @@ function summarize(m: Pick<Magazine, 'tasks'>): Summary {
   const t = (k: string) => m.tasks[k] || { qty: 0, value: 0 };
   let otherRevenue = 0, distribution = 0, marketing = 0, magazine = 0, otherCost = 0;
   for (const [k, v] of Object.entries(m.tasks)) {
-    if (k === TASK_SALES || k === TASK_RETURNS || k === TASK_ADS) continue;
+    if (k === TASK_SALES || k === TASK_RETURNS || k === TASK_ADS || k === TASK_FORECAST) continue;
     const g = groupOf(k);
     if (g === '001') otherRevenue += v.value;
     else if (g === '002') distribution -= v.value;
@@ -43,11 +91,12 @@ function summarize(m: Pick<Magazine, 'tasks'>): Summary {
     else if (g === '004') magazine -= v.value;
     else otherCost -= v.value;
   }
-  const sold = t(TASK_SALES).value, returned = -t(TASK_RETURNS).value, ads = t(TASK_ADS).value;
-  const netSales = sold - returned;
+  const sold = t(TASK_SALES).value, returned = -t(TASK_RETURNS).value, ads = t(TASK_ADS).value, forecast = -t(TASK_FORECAST).value;
+  const netSales = sold - returned - forecast;
   const revenue = netSales + ads + otherRevenue;
   const costs = distribution + marketing + magazine + otherCost;
   return {
+    forecastQty: -t(TASK_FORECAST).qty, forecast,
     soldQty: t(TASK_SALES).qty, sold, retQty: -t(TASK_RETURNS).qty, returned, netSales, ads, otherRevenue, revenue,
     distribution, marketing, magazine, otherCost, costs, profit: revenue - costs,
   };
@@ -136,6 +185,21 @@ export default function MagazineProfitabilityView() {
     }
   };
 
+  const saveProvision = async (body: Record<string, unknown>) => {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/magazines/analysis/provision', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      setData(d => (d ? { ...d, provisions: json.provisions } : d));
+    } catch (e: any) {
+      alert(`No se ha podido guardar: ${e.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const parsePct = (v: string) => { const x = v.trim().replace(',', '.'); return x === '' ? null : Math.min(100, Math.max(0, parseFloat(x))); };
+
   const load = async (force = false) => {
     setLoading(true); setError(null);
     try {
@@ -159,18 +223,18 @@ export default function MagazineProfitabilityView() {
       (!title || m.title === title) && (!year || `20${m.issue.substring(0, 2)}` === year) &&
       (!onlyActive || m.entries.length > 0) &&
       (!needle || `${m.item} ${m.project} ${m.description}`.toLowerCase().includes(needle)),
-    ).map(m => ({ m, s: summarize(m) }));
+    ).map(raw => { const { m, p } = withProvision(raw, data?.provisions); return { m, p, s: summarize(m) }; });
   }, [data, title, year, q, onlyActive]);
   const total = useMemo(() => summarize(addTasks(rows.map(r => r.m))), [rows]);
   const totalLocations = useMemo(() => addLocations(rows.map(r => r.m)), [rows]);
 
   const exportExcel = () => {
     if (!data) return;
-    const head = ['Revista', 'Descripción', 'Proyecto', 'On Sale', 'Tirada', 'Uds vendidas', 'Venta', 'Uds devueltas', 'Devoluciones', '% devol. uds',
+    const head = ['Revista', 'Descripción', 'Proyecto', 'On Sale', 'Tirada', 'Uds vendidas', 'Venta', 'Uds devueltas', 'Devoluciones', '% devol. uds', 'Uds devol. previstas', 'Devol. previstas',
       'Venta neta', 'Magazine Ads', 'Otros ingresos', 'Distribución', 'Marketing', 'Costes revista', 'Otros costes', 'Beneficio', 'Margen %'];
     const summaryRow = (m: { item: string; description: string; project: string; onSaleDate: string; printRun: number } | null, x: Summary) => [
       m?.item || 'TOTAL', m?.description || '', m?.project || '', m?.onSaleDate ? new Date(m.onSaleDate) : '', m?.printRun || '',
-      x.soldQty, x.sold, x.retQty, x.returned, x.soldQty ? x.retQty / x.soldQty : '', x.netSales, x.ads, x.otherRevenue,
+      x.soldQty, x.sold, x.retQty, x.returned, x.soldQty ? x.retQty / x.soldQty : '', x.forecastQty, x.forecast, x.netSales, x.ads, x.otherRevenue,
       x.distribution, x.marketing, x.magazine, x.otherCost, x.profit, x.revenue ? x.profit / x.revenue : '',
     ];
     const ws1 = XLSX.utils.aoa_to_sheet([head, ...rows.map(r => summaryRow(r.m, r.s)), summaryRow(null, total)], { cellDates: true });
@@ -363,6 +427,13 @@ export default function MagazineProfitabilityView() {
           <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar revista…" className="border border-gray-300 rounded-lg pl-7 pr-2 py-1.5 text-sm w-48" />
         </label>
+        <label className="flex items-center gap-1.5 text-sm text-gray-700" title="Forecasted Returns: % de la venta que se espera devuelto (para todas las revistas sin % propio)">
+          Provisión devoluciones
+          <input key={`def-${data?.provisions?.defaultPct ?? ''}`} defaultValue={data?.provisions?.defaultPct ?? ''} placeholder="—" disabled={!data || saving}
+            onBlur={e => { const v = parsePct(e.target.value); if (v !== (data?.provisions?.defaultPct ?? null) && (v === null || !isNaN(v))) void saveProvision({ defaultPct: v }); }}
+            onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+            className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm w-16 text-right" /> %
+        </label>
         <label className="flex items-center gap-1.5 text-sm text-gray-600">
           <input type="checkbox" checked={onlyActive} onChange={e => setOnlyActive(e.target.checked)} /> Solo con movimientos
         </label>
@@ -382,8 +453,8 @@ export default function MagazineProfitabilityView() {
         <>
           <section className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
             {[
-              { label: 'Venta neta', value: money(total.netSales), sub: `${units(total.soldQty - total.retQty)} uds netas` },
-              { label: 'Devoluciones', value: money(total.returned), sub: `${pct(total.soldQty ? total.retQty / total.soldQty : null)} de las uds vendidas` },
+              { label: 'Venta neta', value: money(total.netSales), sub: `${units(total.soldQty - total.retQty - total.forecastQty)} uds netas${total.forecast ? ' (con previstas)' : ''}` },
+              { label: 'Devoluciones', value: money(total.returned + total.forecast), sub: `${money(total.returned)} reales + ${money(total.forecast)} previstas · ${pct(total.soldQty ? (total.retQty + total.forecastQty) / total.soldQty : null)} uds` },
               { label: 'Magazine Ads', value: money(total.ads), sub: total.otherRevenue ? `+ ${money(total.otherRevenue)} otros ingresos` : 'Facturado a CRAZE GmbH' },
               { label: 'Distribución', value: money(total.distribution), sub: 'D-FORCE: envíos, KVM, comisiones' },
               { label: 'Costes revista + marketing', value: money(total.magazine + total.marketing + total.otherCost), sub: 'Gadget, foilbag, diseño, imprenta…' },
@@ -409,6 +480,7 @@ export default function MagazineProfitabilityView() {
                   <th className={`${th2} text-left`}>Proyecto<br /><span className="font-normal">On Sale · Tirada</span></th>
                   <th className={`${th2} text-right`}>Venta<br /><span className="font-normal">uds</span></th>
                   <th className={`${th2} text-right`}>Devoluciones<br /><span className="font-normal">uds · %</span></th>
+                  <th className={`${th2} text-right`}>Devol. previstas<br /><span className="font-normal">provisión</span></th>
                   <th className={`${th2} text-right bg-gray-100`}>Venta neta<br /><span className="font-normal">uds netas</span></th>
                   <th className={`${th2} text-right`}>Magazine Ads</th>
                   <th className={`${th2} text-right`}>Distribución</th>
@@ -418,7 +490,7 @@ export default function MagazineProfitabilityView() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {rows.map(({ m, s }) => (
+                {rows.map(({ m, s, p }) => (
                   <Fragment key={m.item}>
                     <tr className="hover:bg-gray-50 cursor-pointer align-top" onClick={() => setOpen(o => ({ ...o, [m.item]: !o[m.item] }))}>
                       <td className="px-2 py-1.5">
@@ -436,7 +508,9 @@ export default function MagazineProfitabilityView() {
                       </td>
                       <Two main={money(s.sold)} sub={units(s.soldQty)} />
                       <Two main={money(s.returned)} sub={`${units(s.retQty)} · ${pct(s.soldQty ? s.retQty / s.soldQty : null)}`} />
-                      <Two main={money(s.netSales)} sub={units(s.soldQty - s.retQty)} className={`font-medium bg-gray-50 ${neg(s.netSales)}`} />
+                      <Two main={p.closed ? 'cerrada' : money(s.forecast)} className={p.closed ? 'text-gray-500' : ''}
+                        sub={p.pct == null ? 'sin %' : `${units(s.forecastQty)} · ${qf.format(p.pct)} %${p.own ? '' : ' (gral.)'}`} />
+                      <Two main={money(s.netSales)} sub={units(s.soldQty - s.retQty - s.forecastQty)} className={`font-medium bg-gray-50 ${neg(s.netSales)}`} />
                       <Two main={money(s.ads + s.otherRevenue)} />
                       <Two main={money(s.distribution)} />
                       <Two main={money(s.marketing)} />
@@ -445,9 +519,12 @@ export default function MagazineProfitabilityView() {
                     </tr>
                     {open[m.item] && (
                       <tr>
-                        <td colSpan={10} className="bg-gray-50/60 px-3 md:px-6 py-4">
+                        <td colSpan={11} className="bg-gray-50/60 px-3 md:px-6 py-4">
                           <div className="grid grid-cols-1 min-[1900px]:grid-cols-[3fr_2fr] gap-4 items-start">
-                            <TaskTable m={m} taskNames={data.taskNames} openTask={openTask} toggle={k => setOpenTask(o => ({ ...o, [k]: !o[k] }))} />
+                            <div className="space-y-4 min-[1900px]:col-span-2">
+                              <ProvisionPanel m={m} p={p} saving={saving} parsePct={parsePct} save={saveProvision} defaultPct={data.provisions?.defaultPct ?? null} />
+                            </div>
+                            <TaskTable m={m} taskNames={{ ...data.taskNames, ...EXTRA_TASK_NAMES }} openTask={openTask} toggle={k => setOpenTask(o => ({ ...o, [k]: !o[k] }))} />
                             <LocationTable title="Ventas y devoluciones por localización (Description 2)" locations={m.locations} />
                           </div>
                         </td>
@@ -455,7 +532,7 @@ export default function MagazineProfitabilityView() {
                     )}
                   </Fragment>
                 ))}
-                {!rows.length && <tr><td colSpan={10} className="px-3 py-6 text-center text-gray-500">Ninguna revista con estos filtros.</td></tr>}
+                {!rows.length && <tr><td colSpan={11} className="px-3 py-6 text-center text-gray-500">Ninguna revista con estos filtros.</td></tr>}
               </tbody>
               {rows.length > 0 && (
                 <tfoot className="border-t-2 border-gray-300 font-semibold bg-gray-50">
@@ -464,7 +541,8 @@ export default function MagazineProfitabilityView() {
                     <td />
                     <Two main={money(total.sold)} sub={units(total.soldQty)} />
                     <Two main={money(total.returned)} sub={`${units(total.retQty)} · ${pct(total.soldQty ? total.retQty / total.soldQty : null)}`} />
-                    <Two main={money(total.netSales)} sub={units(total.soldQty - total.retQty)} className="bg-gray-100" />
+                    <Two main={money(total.forecast)} sub={units(total.forecastQty)} />
+                    <Two main={money(total.netSales)} sub={units(total.soldQty - total.retQty - total.forecastQty)} className="bg-gray-100" />
                     <Two main={money(total.ads + total.otherRevenue)} />
                     <Two main={money(total.distribution)} />
                     <Two main={money(total.marketing)} />
@@ -495,6 +573,47 @@ function Two({ main, sub, className = '' }: { main: string; sub?: string; classN
     <td className={`px-2 py-1.5 text-right whitespace-nowrap tabular-nums ${className}`}>
       {main}{sub != null && <p className="text-xs font-normal text-gray-500">{sub}</p>}
     </td>
+  );
+}
+
+// Provisión de devoluciones de una revista: % propio (o el general), lo provisionado frente a lo devuelto y cierre
+function ProvisionPanel({ m, p, saving, parsePct, save, defaultPct }: {
+  m: Magazine; p: ProvInfo; saving: boolean; parsePct: (v: string) => number | null; save: (b: Record<string, unknown>) => Promise<void>; defaultPct: number | null;
+}) {
+  const diffAmount = p.provAmount - p.retAmount, diffQty = p.provQty - p.retQty;
+  const fmtDate = (d: string) => (d ? d.substring(0, 10).split('-').reverse().join('/') : '');
+  return (
+    <section className="bg-white rounded-xl border border-gray-200 px-4 py-3 text-sm">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+        <p className="font-semibold text-gray-800">Provisión de devoluciones</p>
+        <label className="flex items-center gap-1.5 text-gray-700">
+          % de la venta
+          <input key={`${m.item}-${p.own ? p.pct : ''}`} defaultValue={p.own && p.pct != null ? String(p.pct) : ''} placeholder={defaultPct != null ? String(defaultPct) : '—'}
+            disabled={saving || p.closed}
+            onBlur={e => { const v = parsePct(e.target.value); if ((v ?? null) !== (p.own ? p.pct : null) && (v === null || !isNaN(v))) void save({ item: m.item, pct: v }); }}
+            onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+            className="border border-gray-300 rounded px-2 py-1 w-16 text-right disabled:bg-gray-50" /> %
+          <span className="text-xs text-gray-400">{p.own ? 'propio' : defaultPct != null ? `general (${qf.format(defaultPct)} %)` : 'sin % general'}</span>
+        </label>
+        <span className="text-gray-600">Provisionado: <b className="tabular-nums">{money(p.provAmount)}</b> <span className="text-xs text-gray-400">{units(p.provQty)} uds</span></span>
+        <span className="text-gray-600">Devuelto real: <b className="tabular-nums">{money(p.retAmount)}</b> <span className="text-xs text-gray-400">{units(p.retQty)} uds</span></span>
+        {p.closed ? (
+          <span className={diffAmount >= 0 ? 'text-amber-700' : 'text-red-600'}>
+            Cerrada el {fmtDate(p.closedAt)}: {diffAmount >= 0 ? 'provisionado de más' : 'provisionado de menos'} <b className="tabular-nums">{money(Math.abs(diffAmount))}</b> ({units(Math.abs(diffQty))} uds)
+          </span>
+        ) : (
+          <span className="text-gray-600">Previsto pendiente: <b className="tabular-nums">{money(p.fcAmount)}</b> <span className="text-xs text-gray-400">{units(p.fcQty)} uds</span></span>
+        )}
+        <button onClick={() => save({ item: m.item, closed: !p.closed })} disabled={saving || (!p.closed && p.pct == null)}
+          className={`ml-auto px-3 py-1 rounded-md text-xs font-semibold disabled:opacity-40 ${p.closed ? 'border border-gray-300 hover:bg-gray-50' : 'bg-gray-900 text-white hover:bg-black'}`}>
+          {p.closed ? 'Reabrir provisión' : 'Cerrar provisión'}
+        </button>
+      </div>
+      <p className="text-xs text-gray-500 mt-1.5">
+        Gadget a {nf.format(p.unitGadget)} €/ud: devoluciones reales en Grosso Ost/West {units(p.recQty)} uds; de las previstas se recupera el {pct(p.share)} ({units(p.fcRecQty)} uds),
+        la proporción de Ost+West en {p.byReturns ? 'las devoluciones reales' : 'las ventas (hasta que las devoluciones reales lleguen a la mitad de lo provisionado)'}. El resto de devoluciones no vuelve al almacén.
+      </p>
+    </section>
   );
 }
 

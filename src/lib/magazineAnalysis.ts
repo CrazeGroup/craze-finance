@@ -477,3 +477,26 @@ export function applyManual(data: MagazineAnalysis, manual: Record<string, Manua
   out.magazines.sort((a, b) => b.issue.localeCompare(a.issue) || a.item.localeCompare(b.item));
   return out;
 }
+
+// Provisión de devoluciones (Forecasted Returns, tarea 001.002): % de la venta que se espera devuelto, por defecto para
+// todas las revistas y, opcionalmente, por revista; una revista con la provisión cerrada ya no prevé nada. El cálculo
+// se hace en la página (ver provisionView en MagazineProfitabilityView) para que el % se vea al momento.
+export type ProvisionSettings = {
+  defaultPct: number | null;
+  mags: Record<string, { pct?: number | null; closed?: boolean; closedAt?: string; by?: string }>;
+};
+const PROVISION_KEY = 'magazines:provisions';
+export const provisionSettings = () => readSetting<ProvisionSettings>(PROVISION_KEY, { defaultPct: null, mags: {} });
+export async function setProvision(change: { defaultPct?: number | null; item?: string; pct?: number | null; closed?: boolean }, by: string) {
+  const all = await provisionSettings();
+  if ('defaultPct' in change) all.defaultPct = change.defaultPct ?? null;
+  if (change.item) {
+    const m = { ...(all.mags[change.item] || {}) };
+    if ('pct' in change) m.pct = change.pct ?? null;
+    if ('closed' in change) { m.closed = !!change.closed; m.closedAt = change.closed ? new Date().toISOString() : undefined; }
+    m.by = by;
+    all.mags[change.item] = m;
+  }
+  await writeSetting(PROVISION_KEY, all);
+  return all;
+}
