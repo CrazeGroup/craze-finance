@@ -42,7 +42,8 @@ function mapEntry(type: 'Customer' | 'Vendor', r: any) {
 //  1) uno con el importe pendiente exacto que además se cita (su nº de documento o Ext. Doc. No. aparece en la
 //     descripción / Ext. Doc. No. del otro, o al revés)
 //  2) uno con el importe exacto (si hay varios, el de fecha más cercana, avisando de cuántos)
-//  3) una combinación de 2 a 4 movimientos que suma exactamente (entre los 25 de fecha más cercana)
+//  3) una combinación de 2 o 3 movimientos que suma exactamente, solo entre los de ±120 días (más lejos, una suma
+//     exacta suele ser casualidad)
 //  4) uno que se cita pero con otro importe (cierre parcial: queda la diferencia)
 type Entry = ReturnType<typeof mapEntry>;
 type Suggestion = { kind: 'exact_ref' | 'exact' | 'combo' | 'ref'; entries: { entryNo: number; documentType: string; documentNo: string; postingDate: string | null; remaining: number }[]; note: string };
@@ -69,13 +70,13 @@ function suggestFor(e: Entry, group: Entry[]): Suggestion | null {
     return { kind: 'exact', entries: pack([best]), note: exact.length > 1 ? `Mismo importe (${exact.length} posibles: el de fecha más cercana)` : 'Mismo importe' };
   }
   // Combinaciones de 2 a 4 entre los más cercanos en fecha
-  const near = [...cands].sort((a, b) => dist(a) - dist(b)).slice(0, 25);
+  const near = [...cands].filter(c => dist(c) <= 120 * 86400000).sort((a, b) => dist(a) - dist(b)).slice(0, 25);
   const vals = near.map(c => cents(c.remainingAmount));
   let combo: number[] | null = null;
   const search = (start: number, left: number, picked: number[]) => {
     if (combo) return;
     if (left === 0 && picked.length >= 2) { combo = [...picked]; return; }
-    if (picked.length === 4) return;
+    if (picked.length === 3) return;
     for (let i = start; i < near.length && !combo; i++) {
       // mismo signo que el objetivo: no se puede pasar de largo
       if (Math.abs(vals[i]) > Math.abs(left)) continue;
