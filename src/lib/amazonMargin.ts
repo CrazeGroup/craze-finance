@@ -3,7 +3,7 @@ import { cached, HOUR } from '@/lib/reporting/cache';
 import { InvAttrs, itemCatalog } from '@/lib/reporting/inventoryAnalysis';
 
 // Amazon (/amazon): margen de cada cliente Amazon por año, línea a línea de las facturas y abonos de venta registrados.
-//   Margen = venta − coste (cantidad × Unit Cost (LCY) de la línea) − coste logístico − Amazon Ads.
+//   Margen = venta − coste (cantidad × Unit Cost (LCY) de la línea) − coste logístico − Amazon Ads − deducciones Amazon.
 // - Clientes Amazon = clientes cuyo nombre contiene "Amazon"; el cliente es el Sell-to de la línea y su país el de la
 //   ficha del cliente.
 // - Venta: custom salesInvoiceLines / salesCrMemoLines (abonos en negativo), en divisa local con el factor
@@ -16,6 +16,9 @@ import { InvAttrs, itemCatalog } from '@/lib/reporting/inventoryAnalysis';
 //   nombre contiene "Amazon"; país = el de la ficha del proveedor. Cada mes, lo de un país se reparte entre las líneas
 //   de factura de los clientes Amazon de ese país en ese mes, en proporción a la venta. Lo que no tiene ventas en su
 //   país y mes queda como "sin asignar".
+// - Deducciones Amazon: líneas (sin IVA) de las facturas y abonos de compra de los proveedores "Amazon EU …" (acuerdos,
+//   co-op, damage allowance, rebates, chargebacks, Amazon Promotions…), sin la de Ads (AA-00015) ni las de gastos
+//   generales ("OPERATING …"); país = el del proveedor y se reparten como los Ads.
 
 export const ADS_ITEM = 'AA-00015';
 export const FIRST_YEAR = 2025;
@@ -28,17 +31,20 @@ const isAmazon = (name: string) => /amazon/i.test(name);
 const isExcludedCustomer = (name: string) => /regulari/i.test(name);
 // Ads de países sin cliente Amazon propio: van con las ventas de otro país (Polonia se vende desde Amazon DE)
 const ADS_COUNTRY: Record<string, string> = { PL: 'DE' };
+const isDeductionVendor = (name: string) => /amazon eu\b/i.test(name);
+const isDeductionLine = (l: any) => s(l.no) !== ADS_ITEM && !/^operating\b/i.test(s(l.description));
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400000).toISOString().substring(0, 10);
 
 export type AmazonCustomer = { no: string; name: string; country: string };
 // docs: [nº, 0 factura | 1 abono, fecha, índice de cliente, nº de pedido]
-// lines: [índice de documento, índice de artículo, cantidad, venta, coste, logística, ads]
+// lines: [índice de documento, índice de artículo, cantidad, venta, coste, logística, ads, deducciones]
 export type AmazonYear = {
   year: number; from: string; to: string; computedAt: string;
   customers: AmazonCustomer[]; items: InvAttrs[]; rawDesc: Record<string, string>;
   docs: [string, number, string, number, string][];
   lines: number[][];
   ads: { country: string; month: string; amount: number; assigned: number }[];
+  ded: { country: string; month: string; amount: number; assigned: number }[];
   logistic: { assigned: number; unassigned: number; unassignedRows: number };
 };
 
@@ -61,7 +67,7 @@ async function byMonths(ctx: BcContext, base: string, dateField: string, from: s
 export async function amazonYear(ctx: BcContext, company: string, year: number, force = false): Promise<AmazonYear> {
   const today = new Date().toISOString().substring(0, 10);
   const closed = `${year}-12-31` < today;
-  return cached(`amazonMargin2:${company}:${year}`, closed ? 7 * 24 * HOUR : HOUR, () => compute(ctx, year, today), force,
+  return cached(`amazonMargin3:${company}:${year}`, closed ? 7 * 24 * HOUR : HOUR, () => compute(ctx, year, today), force,
     { refreshAfterMs: closed ? 7 * 24 * HOUR : HOUR });
 }
 
@@ -94,6 +100,15 @@ async function compute(ctx: BcContext, year: number, today: string): Promise<Ama
     }), ctx.token, 120_000).catch(() => [] as any[]),
     itemCatalog(false),
   ]);
+
+  // Deducciones: líneas de compra de los proveedores "Amazon EU …" (filtro por proveedor: Buy-from Vendor No. con or)
+  const dedVendors = vendorRows.filter((v: any) => isDeductionVendor(s(v.displayName))).map((v: any) => s(v.number));
+  const dedFilter = dedVendors.length ? `(${dedVendors.map((v: string) => `buyFromVendorNo eq '${v.replace(/'/g, "''")}'`).join(' or ')})` : '';
+  const DED = 'buyFromVendorNo,no,description,amount,postingDate';
+  const [dedInv, dedCr] = dedFilter ? await Promise.all([
+    byMonths(ctx, `${ctx.customApiBase}/purchInvLines`, 'postingDate', from, to, DED, dedFilter),
+    byMonths(ctx, `${ctx.customApiBase}/purchCrMemoLines`, 'postingDate', from, to, DED, dedFilter).catch(() => [] as any[]),
+  ]) : [[], []];
 
   // Clientes Amazon (Sell-to)
   const custInfo = new Map<string, AmazonCustomer>();
@@ -152,7 +167,7 @@ async function compute(ctx: BcContext, year: number, today: string): Promise<Ama
     const f = factor.get(doc) ?? 1;
     const sign = kind === 0 ? 1 : -1;
     const li = lines.length;
-    lines.push([di, itemOf(l), sign * (Number(l.quantity) || 0), sign * sales * Math.abs(f), sign * cost, 0, 0]);
+    lines.push([di, itemOf(l), sign * (Number(l.quantity) || 0), sign * sales * Math.abs(f), sign * cost, 0, 0, 0]);
     linesByDoc.set(doc, [...(linesByDoc.get(doc) || []), li]);
   };
   for (const l of invLines) addLine(l, 0);
@@ -201,18 +216,21 @@ async function compute(ctx: BcContext, year: number, today: string): Promise<Ama
     }
   }
 
-  // Amazon Ads por país y mes
+  // Amazon Ads y deducciones por país (del proveedor) y mes
   const vendorCountry = new Map<string, string>();
   for (const v of vendorRows) if (isAmazon(s(v.displayName))) vendorCountry.set(s(v.number), ADS_COUNTRY[s(v.country)] || s(v.country));
-  const adsBy = new Map<string, number>();
-  const addAds = (l: any, sign: number) => {
-    const country = vendorCountry.get(s(l.buyFromVendorNo));
-    if (country === undefined) return;
-    const k = `${country}|${s(l.postingDate).substring(0, 7)}`;
-    adsBy.set(k, (adsBy.get(k) || 0) + sign * (Number(l.amount) || 0));
+  const byCountryMonth = (inv: any[], cr: any[], keep: (l: any) => boolean = () => true) => {
+    const by = new Map<string, number>();
+    const add = (l: any, sign: number) => {
+      const country = vendorCountry.get(s(l.buyFromVendorNo));
+      if (country === undefined || !keep(l)) return;
+      const k = `${country}|${s(l.postingDate).substring(0, 7)}`;
+      by.set(k, (by.get(k) || 0) + sign * (Number(l.amount) || 0));
+    };
+    for (const l of inv) add(l, 1);
+    for (const l of cr) add(l, -1);
+    return by;
   };
-  for (const l of adsInv) addAds(l, 1);
-  for (const l of adsCr) addAds(l, -1);
   const salesLines = new Map<string, number[]>();
   lines.forEach((l, i) => {
     const d = docs[l[0]];
@@ -221,18 +239,23 @@ async function compute(ctx: BcContext, year: number, today: string): Promise<Ama
     if (!salesLines.has(k)) salesLines.set(k, []);
     salesLines.get(k)!.push(i);
   });
-  const ads: AmazonYear['ads'] = [];
-  for (const [k, amount] of adsBy) {
-    const [country, month] = k.split('|');
-    const ok = spread(salesLines.get(k) || [], amount, 6);
-    ads.push({ country, month, amount: r2(amount), assigned: ok ? r2(amount) : 0 });
-  }
-  ads.sort((a, b) => a.month.localeCompare(b.month) || a.country.localeCompare(b.country));
+  const allocate = (by: Map<string, number>, col: number) => {
+    const out: AmazonYear['ads'] = [];
+    for (const [k, amount] of by) {
+      if (!amount) continue;
+      const [country, month] = k.split('|');
+      const ok = spread(salesLines.get(k) || [], amount, col);
+      out.push({ country, month, amount: r2(amount), assigned: ok ? r2(amount) : 0 });
+    }
+    return out.sort((a, b) => a.month.localeCompare(b.month) || a.country.localeCompare(b.country));
+  };
+  const ads = allocate(byCountryMonth(adsInv, adsCr), 6);
+  const ded = allocate(byCountryMonth(dedInv, dedCr, isDeductionLine), 7);
 
-  for (const l of lines) for (let c = 2; c < 7; c++) l[c] = r2(l[c]);
+  for (const l of lines) for (let c = 2; c < 8; c++) l[c] = r2(l[c]);
   return {
     year, from, to, computedAt: new Date().toISOString(),
-    customers, items, rawDesc: catalog.rawDescs(items), docs, lines, ads,
+    customers, items, rawDesc: catalog.rawDescs(items), docs, lines, ads, ded,
     logistic: { assigned: r2(logistic.assigned), unassigned: r2(logistic.unassigned), unassignedRows: logistic.unassignedRows },
   };
 }
