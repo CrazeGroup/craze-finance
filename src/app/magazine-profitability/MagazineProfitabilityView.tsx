@@ -4,7 +4,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Download, RefreshCw, Search, Wrench } from 'lucide-react';
 import DocPdfLink from '@/components/DocPdfLink';
-import type { MagEntry, Magazine, MagazineAnalysis as Analysis, MagLocation, Unassigned, Validation } from '@/lib/magazineAnalysis';
+import type { Correction, MagEntry, Magazine, MagazineAnalysis as Analysis, MagLocation, Unassigned, Validation } from '@/lib/magazineAnalysis';
 
 type MagazineAnalysis = Analysis & { validated?: Record<string, Validation> };
 
@@ -82,6 +82,39 @@ export default function MagazineProfitabilityView() {
   const [showIssues, setShowIssues] = useState(false);
   const [showFixes, setShowFixes] = useState(false);
   const [showValidated, setShowValidated] = useState(false);
+  // Correcciones ya vistas (OK): en este navegador; vuelven arriba solo si aparecen nuevas
+  const fixSig = (c: Correction) => `${c.kind}|${c.doc}|${c.no}|${c.magazine}|${c.task}|${c.amount}`;
+  const [fixesOk, setFixesOk] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    try { setFixesOk(new Set(JSON.parse(localStorage.getItem('crz-magprof-fixes-ok') || '[]'))); } catch { /* sin almacenamiento */ }
+  }, []);
+  const newFixes = (data?.corrections || []).filter(c => !fixesOk.has(fixSig(c))).length;
+  const ackFixes = () => {
+    const all = new Set((data?.corrections || []).map(fixSig));
+    setFixesOk(all); setShowFixes(false);
+    try { localStorage.setItem('crz-magprof-fixes-ok', JSON.stringify(Array.from(all))); } catch { /* sin almacenamiento */ }
+  };
+  // Asignación a mano de una línea sin revista (revista + tarea)
+  const [draft, setDraft] = useState<Record<string, { magazine: string; task: string }>>({});
+  const magOptions = useMemo(() => (data?.magazines || []).map(m => ({ item: m.item, label: `${m.title} ${m.issue.substring(2)}/${m.issue.substring(0, 2)}` })), [data]);
+  const taskOptions = useMemo(() => Object.entries(data?.taskNames || {})
+    .filter(([k]) => /^\d{3}\.\d{3}$/.test(k) && !k.endsWith('.999') && ![TASK_SALES, TASK_RETURNS, '001.002'].includes(k)).sort(), [data]);
+  const assign = async (key: string, value: { magazine: string; task: string } | null, u?: Unassigned) => {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/magazines/analysis/assign', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(value ? { key, ...value, doc: u?.doc, description: u ? `${u.partner} · ${u.description}` : '' } : { key, remove: true }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      await load();
+    } catch (e: any) {
+      alert(`No se ha podido guardar: ${e.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
   const [saving, setSaving] = useState(false);
   const pending = useMemo(() => (data?.unassigned || []).filter(u => !data?.validated?.[u.key]), [data]);
   const validatedRows = useMemo(() => (data?.unassigned || []).filter(u => data?.validated?.[u.key]), [data]);
@@ -167,6 +200,60 @@ export default function MagazineProfitabilityView() {
   const th = 'px-3 py-2 font-semibold whitespace-nowrap';
   const td = 'px-3 py-1.5 whitespace-nowrap tabular-nums';
   const th2 = 'px-2 py-2 font-semibold whitespace-nowrap align-bottom';
+
+  const fixesBlock = data && data.corrections.length > 0 && (
+            <section className="bg-sky-50 border border-sky-200 rounded-xl">
+              <div className="w-full px-4 py-2.5 flex items-center gap-2 text-sm text-sky-900">
+                <button onClick={() => setShowFixes(v => !v)} className="flex items-center gap-2 text-left min-w-0 flex-1">
+                  <Wrench size={16} className="shrink-0" />
+                  <span>
+                    <span className="font-semibold">{data.corrections.length} líneas corregidas en la app</span>
+                    {newFixes > 0 && fixesOk.size > 0 && <span className="ml-1 px-1.5 rounded bg-sky-600 text-white text-xs">{newFixes} nuevas</span>}
+                    <span className="text-sky-800">
+                      {' '}· {data.corrections.filter(c => c.bcProject).length} con el proyecto de otra revista, {data.corrections.filter(c => !c.bcProject).length} sin proyecto.
+                      Ya cuentan en la revista correcta; conviene corregir el Project No. en BC para que el Project Card coincida
+                    </span>
+                  </span>
+                  {showFixes ? <ChevronDown size={16} className="ml-auto shrink-0" /> : <ChevronRight size={16} className="ml-auto shrink-0" />}
+                </button>
+                {newFixes > 0 && (
+                  <button onClick={ackFixes} title="Visto: mover al final de la página hasta que haya correcciones nuevas"
+                    className="shrink-0 px-3 py-1 rounded-md bg-sky-600 text-white text-xs font-semibold hover:bg-sky-700">OK</button>
+                )}
+              </div>
+              {showFixes && (
+                <div className="px-4 pb-4 overflow-x-auto">
+                  <p className="text-xs text-sky-900 mb-1">Ventas y devoluciones de D-FORCE: manda el artículo (su descripción dice la misma revista). Magazine Ads: manda la revista del External Document No. o, si no la dice, la fecha On Sale de la revista.</p>
+                  <table className="w-full text-xs bg-white rounded-lg border border-sky-200">
+                    <thead className="text-gray-500 bg-gray-50"><tr>
+                      {['Motivo', 'Documento', 'Fecha', 'Nº', 'Descripción', 'Localización', 'Project No. en BC', 'Revista correcta', 'Tarea', 'Cantidad', 'Importe', ''].map((h, i) =>
+                        <th key={i} className={`${th} ${['Cantidad', 'Importe'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>)}
+                    </tr></thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {data.corrections.map((c, i) => {
+                        const right = data.magazines.find(m => m.item === c.magazine);
+                        return (
+                          <tr key={i}>
+                            <td className="px-3 py-1.5">{c.reason}</td>
+                            <td className={td}><span className="text-gray-400 mr-1">{DOC_TYPE[c.kind].label}</span>{c.doc} <DocPdfLink documentNo={c.doc} kind={DOC_TYPE[c.kind].pdf} company={COMPANY} /></td>
+                            <td className={td}>{dmy(c.date)}</td><td className={td}>{c.no}</td>
+                            <td className="px-3 py-1.5">{c.description}</td><td className={td}>{c.location}</td>
+                            <td className={`${td} text-red-600 line-through`}>{c.bcProject || '(vacío)'}</td>
+                            <td className={`${td} text-emerald-700 font-medium`}>{right?.project || c.magazine} <span className="text-gray-400 font-normal">{c.magazine}</span></td>
+                            <td className={td}>{c.task}</td>
+                            <td className={`${td} text-right`}>{units(c.qty)}</td><td className={`${td} text-right`}>{money(c.amount)}</td>
+                            <td className={`${td} text-right`}>
+                              {c.manual && c.key && <button onClick={() => assign(c.key!, null)} disabled={saving} className="underline text-gray-500 hover:text-gray-800">Quitar</button>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+  );
 
   return (
     <div className="space-y-4">
@@ -254,7 +341,7 @@ export default function MagazineProfitabilityView() {
                   </div>
                   <table className="w-full text-xs bg-white rounded-lg border border-amber-200">
                     <thead className="text-gray-500 bg-gray-50"><tr>
-                      {['Motivo', 'Documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Project No.', 'Task No.', 'Cantidad', 'Importe', ''].map((h, i) =>
+                      {['Motivo', 'Documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Project No.', 'Task No.', 'Cantidad', 'Importe', 'Asignar a revista', ''].map((h, i) =>
                         <th key={i} className={`${th} ${['Cantidad', 'Importe'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>)}
                     </tr></thead>
                     <tbody className="divide-y divide-gray-100">
@@ -267,6 +354,26 @@ export default function MagazineProfitabilityView() {
                             <td className={td}>{dmy(u.date)}</td><td className={td}>{u.partner}</td><td className={td}>{u.no}</td>
                             <td className="px-3 py-1.5">{u.description}</td><td className={td}>{u.project}</td><td className={td}>{u.task}</td>
                             <td className={`${td} text-right`}>{units(u.qty)}</td><td className={`${td} text-right`}>{money(u.amount)}</td>
+                            <td className={td}>
+                              {!v && (() => {
+                                const d = draft[u.key] || { magazine: '', task: u.suggestedTask || '' };
+                                const set = (x: Partial<typeof d>) => setDraft(o => ({ ...o, [u.key]: { ...d, ...x } }));
+                                return (
+                                  <span className="inline-flex items-center gap-1">
+                                    <select value={d.magazine} onChange={e => set({ magazine: e.target.value })} className="border border-gray-300 rounded px-1 py-0.5 text-xs max-w-[9rem]">
+                                      <option value="">Revista…</option>
+                                      {magOptions.map(o => <option key={o.item} value={o.item}>{o.label} · {o.item}</option>)}
+                                    </select>
+                                    <select value={d.task} onChange={e => set({ task: e.target.value })} className="border border-gray-300 rounded px-1 py-0.5 text-xs max-w-[9rem]">
+                                      <option value="">Tarea…</option>
+                                      {taskOptions.map(([k, name]) => <option key={k} value={k}>{k} {name}</option>)}
+                                    </select>
+                                    <button onClick={() => assign(u.key, d, u)} disabled={saving || !d.magazine || !d.task}
+                                      className="px-2 py-0.5 rounded bg-gray-900 text-white disabled:opacity-40">Asignar</button>
+                                  </span>
+                                );
+                              })()}
+                            </td>
                             <td className={`${td} text-right`}>
                               {v ? (
                                 <span className="inline-flex items-center gap-2">
@@ -290,47 +397,7 @@ export default function MagazineProfitabilityView() {
             </section>
           )}
 
-          {data.corrections.length > 0 && (
-            <section className="bg-sky-50 border border-sky-200 rounded-xl">
-              <button onClick={() => setShowFixes(v => !v)} className="w-full px-4 py-2.5 flex items-center gap-2 text-sm text-sky-900 text-left">
-                <Wrench size={16} />
-                <span className="font-semibold">{data.corrections.length} líneas corregidas en la app</span>
-                <span className="text-sky-800">
-                  · {data.corrections.filter(c => c.bcProject).length} con el proyecto de otra revista, {data.corrections.filter(c => !c.bcProject).length} sin proyecto.
-                  Ya cuentan en la revista correcta; conviene corregir el Project No. en BC para que el Project Card coincida
-                </span>
-                {showFixes ? <ChevronDown size={16} className="ml-auto shrink-0" /> : <ChevronRight size={16} className="ml-auto shrink-0" />}
-              </button>
-              {showFixes && (
-                <div className="px-4 pb-4 overflow-x-auto">
-                  <p className="text-xs text-sky-900 mb-1">Ventas y devoluciones de D-FORCE: manda el artículo (su descripción dice la misma revista). Magazine Ads: manda la revista del External Document No. o, si no la dice, la fecha On Sale de la revista.</p>
-                  <table className="w-full text-xs bg-white rounded-lg border border-sky-200">
-                    <thead className="text-gray-500 bg-gray-50"><tr>
-                      {['Motivo', 'Documento', 'Fecha', 'Nº', 'Descripción', 'Localización', 'Project No. en BC', 'Revista correcta', 'Tarea', 'Cantidad', 'Importe'].map(h =>
-                        <th key={h} className={`${th} ${['Cantidad', 'Importe'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>)}
-                    </tr></thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {data.corrections.map((c, i) => {
-                        const right = data.magazines.find(m => m.item === c.magazine);
-                        return (
-                          <tr key={i}>
-                            <td className="px-3 py-1.5">{c.reason}</td>
-                            <td className={td}><span className="text-gray-400 mr-1">{DOC_TYPE[c.kind].label}</span>{c.doc} <DocPdfLink documentNo={c.doc} kind={DOC_TYPE[c.kind].pdf} company={COMPANY} /></td>
-                            <td className={td}>{dmy(c.date)}</td><td className={td}>{c.no}</td>
-                            <td className="px-3 py-1.5">{c.description}</td><td className={td}>{c.location}</td>
-                            <td className={`${td} text-red-600 line-through`}>{c.bcProject || '(vacío)'}</td>
-                            <td className={`${td} text-emerald-700 font-medium`}>{right?.project || c.magazine} <span className="text-gray-400 font-normal">{c.magazine}</span></td>
-                            <td className={td}>{c.task}</td>
-                            <td className={`${td} text-right`}>{units(c.qty)}</td><td className={`${td} text-right`}>{money(c.amount)}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
-          )}
+          {newFixes > 0 && fixesBlock}
 
           <section className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
             <table className="w-full text-[13px]">
@@ -410,6 +477,8 @@ export default function MagazineProfitabilityView() {
           {totalLocations.length > 0 && (
             <LocationTable title={`Ventas y devoluciones por localización · ${rows.length} revistas`} locations={totalLocations} />
           )}
+
+          {newFixes === 0 && fixesBlock}
         </>
       )}
     </div>

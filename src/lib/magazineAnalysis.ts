@@ -32,6 +32,7 @@ export type MagEntry = {
 export type Correction = {
   reason: string; kind: MagEntry['kind']; doc: string; date: string; partner: string; no: string; description: string;
   location: string; qty: number; amount: number; bcProject: string; bcTask: string; magazine: string; task: string;
+  key?: string; manual?: boolean;   // asignada a mano en la app (se puede quitar)
 };
 export type MagLocation = { location: string; soldQty: number; soldAmount: number; retQty: number; retAmount: number };
 export type Magazine = {
@@ -41,7 +42,7 @@ export type Magazine = {
   locations: MagLocation[];
   entries: MagEntry[];
 };
-export type Unassigned = { key: string; pdf?: string; reason: string; kind: MagEntry['kind']; doc: string; date: string; partner: string; no: string; description: string; project: string; task: string; qty: number; amount: number };
+export type Unassigned = { key: string; pdf?: string; suggestedTask?: string; reason: string; kind: MagEntry['kind']; doc: string; date: string; partner: string; no: string; description: string; project: string; task: string; qty: number; amount: number };
 export type MagazineAnalysis = {
   magazines: Magazine[];
   taskNames: Record<string, string>;
@@ -282,7 +283,7 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
       .filter(([item, date]) => item.startsWith(prefix) && prefix && a.base.date && days(date, a.base.date) <= 21)
       .sort((x, y) => Number(hasAds(x[0])) - Number(hasAds(y[0])) || days(x[1], a.base.date) - days(y[1], a.base.date))[0];
     if (!best) {
-      unassigned.push({ key: a.key, reason: 'Magazine Ads sin revista (ni proyecto ni External Document No.)', ...a.base, project: a.project, task: a.task, qty: a.qty, amount: a.amount });
+      unassigned.push({ key: a.key, suggestedTask: TASK_ADS, reason: 'Magazine Ads sin revista (ni proyecto ni External Document No.)', ...a.base, project: a.project, task: a.task, qty: a.qty, amount: a.amount });
       continue;
     }
     const reason = `Sin revista en BC: On Sale ${best[1].split('-').reverse().join('/')} (External Document No. ${raw.extDoc.get(a.base.doc) || '—'})`;
@@ -366,7 +367,7 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
       : list.length > 1 ? `El PDF menciona varias revistas: ${list.join(', ')}`
       : list.length === 1 ? `El PDF dice ${list[0]}, pero no se sabe la tarea del artículo ${p.u.no}`
       : 'El PDF no dice la revista';
-    unassigned.push({ ...p.u, pdf });
+    unassigned.push({ ...p.u, pdf, suggestedTask: p.u.task || usualTask(p.u.no) });
   }
 
   // Proyectos de revista sin movimientos también aparecen (p. ej. números aún sin vender)
@@ -418,7 +419,7 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
 }
 
 export async function magazineAnalysis(force = false) {
-  return cached('magazines:analysis:v4', HOUR, async () => computeMagazineAnalysis(await getBcContext(DFORCE_COMPANY)), force);
+  return cached('magazines:analysis:v5', HOUR, async () => computeMagazineAnalysis(await getBcContext(DFORCE_COMPANY)), force);
 }
 
 // Líneas sin revista dadas por buenas (no son de ninguna revista): no se vuelven a avisar. Clave tipo|documento|línea.
@@ -433,4 +434,46 @@ export async function setValidated(lines: { key: string; doc: string; descriptio
   }
   await writeSetting(VALIDATED_KEY, all);
   return all;
+}
+
+// Asignación a mano de una línea sin revista (selector en la página): revista + tarea, guardada en la app
+// (ajuste magazines:manual) y aplicada al servir los datos, sin esperar a que se renueve la caché.
+export type Manual = { magazine: string; task: string; by: string; at: string };
+const MANUAL_KEY = 'magazines:manual';
+export const manualLines = () => readSetting<Record<string, Manual>>(MANUAL_KEY, {});
+export async function setManual(key: string, value: { magazine: string; task: string } | null, by: string) {
+  const all = await manualLines();
+  if (value) all[key] = { ...value, by, at: new Date().toISOString() };
+  else delete all[key];
+  await writeSetting(MANUAL_KEY, all);
+  return all;
+}
+
+export function applyManual(data: MagazineAnalysis, manual: Record<string, Manual>): MagazineAnalysis {
+  if (!Object.keys(manual).length) return data;
+  const out: MagazineAnalysis = JSON.parse(JSON.stringify(data));
+  const rest: Unassigned[] = [];
+  for (const u of out.unassigned) {
+    const a = manual[u.key];
+    let m = a && out.magazines.find(x => x.item === a.magazine);
+    if (!a || !a.task) { rest.push(u); continue; }
+    if (!m) {
+      m = { item: a.magazine, project: '', projects: [], title: TITLES[a.magazine.substring(0, 5)] || a.magazine.substring(0, 5), issue: a.magazine.substring(6),
+        description: '', onSaleDate: '', printRun: 0, status: '', tasks: {}, locations: [], entries: [] };
+      out.magazines.push(m);
+    }
+    // Importe del aviso: ventas en signo de ingreso; compras en positivo = coste
+    const purchase = u.kind === 'purchInv' || u.kind === 'purchCrMemo';
+    const value = purchase ? -u.amount : u.amount;
+    const qty = purchase ? (u.kind === 'purchInv' ? u.qty : -u.qty) : u.qty;
+    const reason = `Asignada a mano en la app (${a.by || 'usuario'}, ${a.at.substring(0, 10).split('-').reverse().join('/')})`;
+    m.entries.push({ task: a.task, qty, value, kind: u.kind, doc: u.doc, date: u.date, partner: u.partner, no: u.no, description: u.description, location: '', fixed: reason });
+    const t = (m.tasks[a.task] ||= { qty: 0, value: 0 });
+    t.qty += qty; t.value += value;
+    out.corrections.unshift({ reason, kind: u.kind, doc: u.doc, date: u.date, partner: u.partner, no: u.no, description: u.description, location: '',
+      qty: u.qty, amount: u.amount, bcProject: u.project, bcTask: u.task, magazine: a.magazine, task: a.task, key: u.key, manual: true });
+  }
+  out.unassigned = rest;
+  out.magazines.sort((a, b) => b.issue.localeCompare(a.issue) || a.item.localeCompare(b.item));
+  return out;
 }
