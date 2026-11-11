@@ -198,6 +198,24 @@ export default function MagazineProfitabilityView() {
       setSaving(false);
     }
   };
+  // Excluir del margen (provisiones de D-FORCE que facturan y abonan): la línea se queda tachada en el detalle
+  const exclude = async (m: Magazine, e: MagEntry, excluded: boolean) => {
+    if (!e.key) return;
+    setSaving(true);
+    try {
+      const res = await fetch('/api/magazines/analysis/exclude', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ excluded, lines: [{ key: e.key, doc: e.doc, description: `${m.item} · ${e.partner} · ${e.description} · ${e.value}` }] }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      await load();
+    } catch (err: any) {
+      alert(`No se ha podido guardar: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
   const parsePct = (v: string) => { const x = v.trim().replace(',', '.'); return x === '' ? null : Math.min(100, Math.max(0, parseFloat(x))); };
 
   const load = async (force = false) => {
@@ -243,9 +261,9 @@ export default function MagazineProfitabilityView() {
       l.soldQty ? l.retQty / l.soldQty : '', l.soldQty - l.retQty, l.soldAmount - l.retAmount];
     const ws2 = XLSX.utils.aoa_to_sheet([locHead, ...rows.flatMap(r => r.m.locations.map(l => locRow(r.m.item, r.m.project, l))),
       ...totalLocations.map(l => locRow('TOTAL', '', l))]);
-    const lineHead = ['Revista', 'Proyecto', 'Tarea', 'Descripción tarea', 'Tipo doc.', 'Nº documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Localización', 'Cantidad', 'Importe (resultado)'];
+    const lineHead = ['Revista', 'Proyecto', 'Tarea', 'Descripción tarea', 'Tipo doc.', 'Nº documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Localización', 'Cantidad', 'Importe (resultado)', 'Excluida del margen'];
     const ws3 = XLSX.utils.aoa_to_sheet([lineHead, ...rows.flatMap(r => r.m.entries.map(e => [r.m.item, r.m.project, e.task, data.taskNames[e.task] || '',
-      DOC_TYPE[e.kind].label, e.doc, e.date ? new Date(e.date) : '', e.partner, e.no, e.description, e.location, e.qty, e.value]))], { cellDates: true });
+      DOC_TYPE[e.kind].label, e.doc, e.date ? new Date(e.date) : '', e.partner, e.no, e.description, e.location, e.qty, e.value, e.excluded || '']))], { cellDates: true });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws1, 'Revistas');
     XLSX.utils.book_append_sheet(wb, ws2, 'Localizaciones');
@@ -524,7 +542,7 @@ export default function MagazineProfitabilityView() {
                             <div className="space-y-4 min-[1900px]:col-span-2">
                               <ProvisionPanel m={m} p={p} saving={saving} parsePct={parsePct} save={saveProvision} defaultPct={data.provisions?.defaultPct ?? null} />
                             </div>
-                            <TaskTable m={m} taskNames={{ ...data.taskNames, ...EXTRA_TASK_NAMES }} openTask={openTask} toggle={k => setOpenTask(o => ({ ...o, [k]: !o[k] }))} />
+                            <TaskTable m={m} taskNames={{ ...data.taskNames, ...EXTRA_TASK_NAMES }} saving={saving} exclude={(e, x) => exclude(m, e, x)} openTask={openTask} toggle={k => setOpenTask(o => ({ ...o, [k]: !o[k] }))} />
                             <LocationTable title="Ventas y devoluciones por localización (Description 2)" locations={m.locations} />
                           </div>
                         </td>
@@ -618,8 +636,8 @@ function ProvisionPanel({ m, p, saving, parsePct, save, defaultPct }: {
 }
 
 // Tareas del proyecto, como en el Project Card: Begin-Total, líneas Posting y End-Total por grupo
-function TaskTable({ m, taskNames, openTask, toggle }: {
-  m: Magazine; taskNames: Record<string, string>; openTask: Record<string, boolean>; toggle: (k: string) => void;
+function TaskTable({ m, taskNames, openTask, toggle, saving, exclude }: {
+  m: Magazine; taskNames: Record<string, string>; saving: boolean; exclude: (e: MagEntry, excluded: boolean) => void; openTask: Record<string, boolean>; toggle: (k: string) => void;
 }) {
   const th = 'px-3 py-2 font-semibold whitespace-nowrap';
   const td = 'px-3 py-1.5 whitespace-nowrap tabular-nums';
@@ -668,18 +686,22 @@ function TaskTable({ m, taskNames, openTask, toggle }: {
                         <tr><td colSpan={5} className="px-3 py-2 bg-gray-50">
                           <table className="w-full text-xs">
                             <thead className="text-gray-500"><tr>
-                              {['Documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Localización', 'Cantidad', 'Importe'].map(h =>
+                              {['Documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Localización', 'Cantidad', 'Importe', ''].map(h =>
                                 <th key={h} className={`px-2 py-1 font-semibold ${['Cantidad', 'Importe'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>)}
                             </tr></thead>
                             <tbody className="divide-y divide-gray-100">
                               {entries.map((e, i) => (
-                                <tr key={i}>
+                                <tr key={i} className={e.excluded ? 'text-gray-400 [&>td:not(:last-child)]:line-through' : ''}>
                                   <td className="px-2 py-1 whitespace-nowrap"><span className="text-gray-400 mr-1">{DOC_TYPE[e.kind].label}</span>{e.doc} <DocPdfLink documentNo={e.doc} kind={DOC_TYPE[e.kind].pdf} company={COMPANY} /></td>
                                   <td className="px-2 py-1 whitespace-nowrap">{dmy(e.date)}</td>
                                   <td className="px-2 py-1">{e.partner}</td><td className="px-2 py-1 whitespace-nowrap">{e.no}</td>
-                                  <td className="px-2 py-1">{e.description}{e.fixed && <p className="text-sky-700 flex items-center gap-1"><Wrench size={11} /> {e.fixed}</p>}</td><td className="px-2 py-1 whitespace-nowrap">{e.location}</td>
+                                  <td className="px-2 py-1">{e.description}{e.fixed && <p className="text-sky-700 flex items-center gap-1"><Wrench size={11} /> {e.fixed}</p>}{e.excluded && <p className="text-amber-700">{e.excluded}</p>}</td><td className="px-2 py-1 whitespace-nowrap">{e.location}</td>
                                   <td className="px-2 py-1 text-right tabular-nums">{units(e.qty)}</td>
-                                  <td className={`px-2 py-1 text-right tabular-nums ${neg(isRevenue(k) ? e.value : -e.value)}`}>{money(isRevenue(k) ? e.value : -e.value)}</td>
+                                  <td className={`px-2 py-1 text-right tabular-nums ${e.excluded ? '' : neg(isRevenue(k) ? e.value : -e.value)}`}>{money(isRevenue(k) ? e.value : -e.value)}</td>
+                                  <td className="px-2 py-1 text-right whitespace-nowrap">
+                                    {e.key && <button onClick={() => exclude(e, !e.excluded)} disabled={saving} title={e.excluded ? 'Volver a contar en el margen' : 'No contar en el margen (p. ej. una provisión que se factura y abona)'}
+                                      className="underline text-gray-500 hover:text-gray-800 disabled:opacity-40">{e.excluded ? 'Incluir' : 'Excluir'}</button>}
+                                  </td>
                                 </tr>
                               ))}
                             </tbody>

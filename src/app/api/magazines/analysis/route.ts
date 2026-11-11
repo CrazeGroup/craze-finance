@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { applyManual, magazineAnalysis, manualLines, provisionSettings, validatedLines } from '@/lib/magazineAnalysis';
+import { applyExcluded, applyManual, excludedLines, magazineAnalysis, manualLines, provisionSettings, validatedLines } from '@/lib/magazineAnalysis';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,8 +10,8 @@ export const maxDuration = 300;
 export async function GET(req: Request) {
   try {
     const force = new URL(req.url).searchParams.get('force') === '1';
-    const [data, validated, manual, provisions] = await Promise.all([magazineAnalysis(force), validatedLines(), manualLines(), provisionSettings()]);
-    return NextResponse.json({ ...applyManual(data, manual), validated, provisions });
+    const [data, validated, manual, provisions, excluded] = await Promise.all([magazineAnalysis(force), validatedLines(), manualLines(), provisionSettings(), excludedLines()]);
+    return NextResponse.json({ ...applyExcluded(applyManual(data, manual), excluded), validated, provisions });
   } catch (error: any) {
     console.error('Magazine analysis:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });

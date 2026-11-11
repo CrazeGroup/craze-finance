@@ -27,6 +27,8 @@ export type MagEntry = {
   kind: 'salesInv' | 'salesCrMemo' | 'purchInv' | 'purchCrMemo';
   doc: string; date: string; partner: string; no: string; description: string; location: string;
   fixed?: string;   // corrección hecha en la app (proyecto equivocado o sin proyecto)
+  key?: string;     // tipo|documento|línea
+  excluded?: string; // excluida del margen en la app (no suma en las tareas): quién y cuándo
 };
 // Línea que la app asigna a otra revista que la de su Project No. en BC (o que no lo tenía)
 export type Correction = {
@@ -206,7 +208,7 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
       const amount = n(r.amount), qty = n(r.quantity);
       const isDforce = customer === CUSTOMER_NO;
       const partner = custName.get(customer) || customer;
-      const base = { kind, doc: s(r.documentNo), date: s(r.postingDate), partner, no: s(r.no), description: s(r.description) };
+      const base = { kind, doc: s(r.documentNo), date: s(r.postingDate), partner, no: s(r.no), description: s(r.description), key: `${kind}|${s(r.documentNo)}|${s(r.lineNo)}` };
 
       if (isDforce && MAGAZINE_DESC.test(s(r.description))) {
         // Contrapartida que BC genera en los abonos NON-REC: no es una devolución
@@ -314,7 +316,7 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
       const item = magazineOfProject(project);
       const base = {
         kind, doc: s(r.documentNo), date: s(r.postingDate) || crDates.get(s(r.documentNo)) || '', partner: vendName.get(vendor) || vendor,
-        no: s(r.no), description: s(r.description), location: '',
+        no: s(r.no), description: s(r.description), location: '', key: `${kind}|${s(r.documentNo)}|${s(r.lineNo)}`,
       };
       if ((!item || !task) && isGeneralCost(base.no, base.description)) continue;
       if (!item || !task) {
@@ -419,7 +421,7 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
 }
 
 export async function magazineAnalysis(force = false) {
-  return cached('magazines:analysis:v5', HOUR, async () => computeMagazineAnalysis(await getBcContext(DFORCE_COMPANY)), force);
+  return cached('magazines:analysis:v6', HOUR, async () => computeMagazineAnalysis(await getBcContext(DFORCE_COMPANY)), force);
 }
 
 // Líneas sin revista dadas por buenas (no son de ninguna revista): no se vuelven a avisar. Clave tipo|documento|línea.
@@ -467,7 +469,7 @@ export function applyManual(data: MagazineAnalysis, manual: Record<string, Manua
     const value = purchase ? -u.amount : u.amount;
     const qty = purchase ? (u.kind === 'purchInv' ? u.qty : -u.qty) : u.qty;
     const reason = `Asignada a mano en la app (${a.by || 'usuario'}, ${a.at.substring(0, 10).split('-').reverse().join('/')})`;
-    m.entries.push({ task: a.task, qty, value, kind: u.kind, doc: u.doc, date: u.date, partner: u.partner, no: u.no, description: u.description, location: '', fixed: reason });
+    m.entries.push({ task: a.task, qty, value, kind: u.kind, doc: u.doc, date: u.date, partner: u.partner, no: u.no, description: u.description, location: '', fixed: reason, key: u.key });
     const t = (m.tasks[a.task] ||= { qty: 0, value: 0 });
     t.qty += qty; t.value += value;
     out.corrections.unshift({ reason, kind: u.kind, doc: u.doc, date: u.date, partner: u.partner, no: u.no, description: u.description, location: '',
@@ -499,4 +501,41 @@ export async function setProvision(change: { defaultPct?: number | null; item?: 
   }
   await writeSetting(PROVISION_KEY, all);
   return all;
+}
+
+// Líneas excluidas del margen (p. ej. la provisión de comisiones de 113.700 € que D-FORCE factura y abona): siguen
+// en el detalle tachadas, pero no suman en las tareas ni en las localizaciones. Ajuste magazines:excluded, clave tipo|documento|línea.
+export type Exclusion = { by: string; at: string; doc: string; description: string };
+const EXCLUDED_KEY = 'magazines:excluded';
+export const excludedLines = () => readSetting<Record<string, Exclusion>>(EXCLUDED_KEY, {});
+export async function setExcluded(lines: { key: string; doc: string; description: string }[], excluded: boolean, by: string) {
+  const all = await excludedLines();
+  for (const l of lines) {
+    if (excluded) all[l.key] = { by, at: new Date().toISOString(), doc: l.doc, description: l.description };
+    else delete all[l.key];
+  }
+  await writeSetting(EXCLUDED_KEY, all);
+  return all;
+}
+
+export function applyExcluded(data: MagazineAnalysis, excluded: Record<string, Exclusion>): MagazineAnalysis {
+  if (!Object.keys(excluded).length) return data;
+  const out: MagazineAnalysis = JSON.parse(JSON.stringify(data));
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  for (const m of out.magazines) {
+    for (const e of m.entries) {
+      const x = e.key && excluded[e.key];
+      if (!x) continue;
+      e.excluded = `Excluida del margen (${x.by || 'usuario'}, ${x.at.substring(0, 10).split('-').reverse().join('/')})`;
+      const t = m.tasks[e.task];
+      if (t) { t.qty = r2(t.qty - e.qty); t.value = r2(t.value - e.value); }
+      // Venta/devolución de D-FORCE: también fuera de su localización
+      const l = MAGAZINE_DESC.test(e.description) && (e.task === TASK_SALES || e.task === TASK_RETURNS) ? m.locations.find(l => l.location === e.location) : undefined;
+      if (l) {
+        if (e.task === TASK_SALES) { l.soldQty -= e.qty; l.soldAmount -= e.value; } else { l.retQty += e.qty; l.retAmount += e.value; }
+      }
+    }
+  }
+  out.unassigned = out.unassigned.filter(u => !excluded[u.key]);
+  return out;
 }
