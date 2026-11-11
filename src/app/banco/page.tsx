@@ -16,6 +16,8 @@ const TYPES: { value: AccountType; label: string }[] = [
   { value: 'G/L Account', label: 'Cuenta' }, { value: 'Customer', label: 'Cliente' },
   { value: 'Vendor', label: 'Proveedor' }, { value: 'Bank Account', label: 'Banco' },
 ];
+// Lista de cuentas de un tipo (para el desplegable con búsqueda del nº de cuenta)
+const listId = (t: string) => `banco-cuentas-${t.replace(/[^A-Za-z]/g, '')}`;
 const fmt = (v: number) => v.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fdate = (d: string) => d.split('-').reverse().join('.');
 const cents = (v: number) => Math.round(v * 100);
@@ -27,6 +29,13 @@ export default function BancoPage() {
   const [banks, setBanks] = useState<Bank[]>([]);
   const [journals, setJournals] = useState<Journal[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
+  // Cuentas por tipo, para los desplegables: [nº, nombre]
+  const accountLists = useMemo(() => {
+    const out: Record<string, [string, string][]> = {};
+    for (const [k, name] of Object.entries(names)) { const [t, no] = k.split('|'); (out[t] ||= []).push([no, name]); }
+    for (const l of Object.values(out)) l.sort((a, b) => a[0].localeCompare(b[0]));
+    return out;
+  }, [names]);
   const [bankNo, setBankNo] = useState('');
   const [journalCode, setJournalCode] = useState('');
   const [file, setFile] = useState<File | null>(null);
@@ -162,6 +171,11 @@ export default function BancoPage() {
   const th = 'px-3 py-2 font-semibold';
   return (
     <div className="min-h-screen bg-[#F3F4F7] pb-28">
+      {TYPES.map(t => (
+        <datalist key={t.value} id={listId(t.value)}>
+          {(accountLists[t.value] || []).map(([no, name]) => <option key={no} value={no}>{name}</option>)}
+        </datalist>
+      ))}
       <header className="sticky top-0 z-20 bg-white border-b border-gray-200">
         <div className="w-full px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="mr-auto">
@@ -337,7 +351,9 @@ function LinesEditor({ row, input, names, setLine, setDoc, addLine, removeLine }
             <option value="">—</option>
             {TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
           </select>
-          <input value={l.accountNo} onChange={e => setLine(i, { accountNo: e.target.value, accountName: '' })} placeholder="Nº cuenta"
+          <input value={l.accountNo} onChange={e => setLine(i, { accountNo: e.target.value, accountName: '' })} placeholder="Buscar…"
+            list={l.accountType ? listId(l.accountType) : undefined} onFocus={e => e.currentTarget.select()}
+            title="Escribe el nº o parte del nombre y elige en la lista"
             className={`${input} w-24 ${!l.accountNo.trim() ? 'border-red-300' : ''}`} />
           {(() => {
             const name = names[`${l.accountType}|${l.accountNo.trim()}`] || l.accountName;

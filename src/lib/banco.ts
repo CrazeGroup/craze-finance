@@ -518,9 +518,29 @@ export function bookings(history: LedgerEntry[], bankNo: string): Booking[] {
   return out;
 }
 
+// Cuentas "cajón de sastre" (p. ej. VE-00078 Expenses Credit Card (Tickets)): muchos textos distintos registrados en ella
+const catchAllCache = new WeakMap<Booking[], Set<string>>();
+function catchAllAccounts(books: Booking[], own: Set<string>) {
+  let set = catchAllCache.get(books);
+  if (set) return set;
+  const texts = new Map<string, { n: number; distinct: Set<string> }>();
+  for (const b of books) {
+    const key = `${b.balType}|${b.balNo}`;
+    const t = texts.get(key) || { n: 0, distinct: new Set<string>() };
+    t.n++; t.distinct.add([...words(b.description, own)].sort().join(' '));
+    texts.set(key, t);
+  }
+  set = new Set([...texts].filter(([, t]) => t.distinct.size >= 8 && t.distinct.size / t.n >= 0.4).map(([k]) => k));
+  catchAllCache.set(books, set);
+  return set;
+}
+
 // La cuenta con la que más se parece el texto del movimiento: palabras en común (ponderadas por lo raras que son en la
 // cuenta) sobre las de la descripción o las del movimiento, la que tenga menos; ≥ 50 % y una palabra de ≥ 4 letras.
-// Entre las cuentas que pasan, la de más peso (mismo signo × 2, más recientes primero)
+// Entre las cuentas que pasan, la de más peso (mismo signo × 2, más recientes primero). Si gana una cuenta cajón de
+// sastre y hay una cuenta específica con ≥ 2 movimientos que comparten una palabra distintiva (≥ 30 %), la específica:
+// "COMPRA TARJ. VIENA FILADORS-SABADELL" → VE-00066 ESTABLIMENTS VIENA S.A. (60 pagos) y no VE-00078 por dos "TIKET
+// VIENA FILADORS" registrados ahí una vez
 function fromHistory(m: Movement, books: Booking[], own: Set<string>) {
   if (!books.length) return null;
   const docs = books.map(b => words(b.description, own));
@@ -530,22 +550,37 @@ function fromHistory(m: Movement, books: Booking[], own: Set<string>) {
   const mw = words(`${m.name} ${m.purpose}`, own);
   if (!mw.size) return null;
   const mWeight = [...mw].reduce((t, w) => t + idf(w), 0);
-  const votes = new Map<string, { weight: number; best: Booking; score: number }>();
+  type Vote = { key: string; weight: number; best: Booking; score: number; n: number; words: Map<string, number> };
+  const strong = new Map<string, Vote>();
+  const weak = new Map<string, Vote>();
   books.forEach((b, i) => {
     const ws = docs[i];
     if (!ws.size) return;
     const shared = [...ws].filter(w => mw.has(w));
     if (!shared.some(w => w.length >= 4)) return;
     const score = shared.reduce((t, w) => t + idf(w), 0) / Math.min([...ws].reduce((t, w) => t + idf(w), 0), mWeight);
-    if (score < 0.5) return;
+    if (score < 0.3) return;
     const key = `${b.balType}|${b.balNo}`;
     const weight = score * (Math.sign(b.amount) === Math.sign(m.amount) ? 2 : 1);
-    const v = votes.get(key);
-    if (!v) votes.set(key, { weight, best: b, score });
-    else { v.weight += weight; if (score > v.score || (score === v.score && b.date > v.best.date)) { v.best = b; v.score = score; } }
+    for (const votes of score >= 0.5 ? [strong, weak] : [weak]) {
+      const v = votes.get(key) || { key, weight: 0, best: b, score, n: 0, words: new Map<string, number>() };
+      votes.set(key, v);
+      for (const w of shared) v.words.set(w, (v.words.get(w) || 0) + 1);
+      if (v.n++ === 0) v.weight = weight;
+      else { v.weight += weight; if (score > v.score || (score === v.score && b.date > v.best.date)) { v.best = b; v.score = score; } }
+    }
   });
-  const top = [...votes.values()].sort((a, b) => b.weight - a.weight)[0];
-  return top || null;
+  const byWeight = (a: Vote, b: Vote) => b.weight - a.weight;
+  const top = [...strong.values()].sort(byWeight)[0];
+  if (!top) return null;
+  const generic = catchAllAccounts(books, own);
+  if (generic.has(top.key)) {
+    // Una palabra en común casi exclusiva de esa cuenta (VIENA: 60 de 62 movimientos), no una genérica (STORE)
+    const owns = (v: Vote) => [...v.words].some(([w, n]) => w.length >= 4 && n >= 3 && n / (df.get(w) || 1) >= 0.8);
+    const specific = [...weak.values()].filter(v => !generic.has(v.key) && v.n >= 2 && owns(v)).sort(byWeight)[0];
+    if (specific) return specific;
+  }
+  return top;
 }
 
 // Facturas abiertas citadas en el concepto (nº de documento o nº de documento externo)
