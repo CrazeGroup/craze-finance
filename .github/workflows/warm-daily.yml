@@ -63,6 +63,7 @@ jobs:
           out.append(('CRAZE', f'amazon?year={y}'))
           # Logistic Cost (CRAZE GmbH): año en curso (y el anterior, de su caché)
           out.append(('CRAZE', f'logistic-cost?year={y}'))
+          out.append(('CRAZE', f'customer-margin?year={y}'))
           # MAGAZINES › Magazine Analysis (Craze Entertainment)
           out.append(('Craze Entertainment', 'magazines/analysis'))
           for c, p in out: print(f'{c}|{p}')
