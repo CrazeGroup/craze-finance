@@ -336,12 +336,14 @@ function columnDate(t: string, start: number, end: number) {
 const token = (v: string) => new RegExp(`(?<![A-Za-z\\d])${v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z\\d])`);
 
 // Etiquetas genéricas, si no hay PDF modelo o no se encuentra su etiqueta
-function guessHeader(t: string) {
-  const invoiceNo = t.match(/(?:Invoice|Rechnungs?|Debit Note|Credit Note|Gutschrift|Factura|Facture|Beleg)[ -]?(?:Number|No\.?|Nr\.?|nummer|n[º°o]\.?)\s*:?\s*([A-Z0-9][A-Z0-9\-\/.]{3,})/i)?.[1]?.replace(/\.$/, '') || '';
+export function guessHeader(t: string) {
+  const invoiceNo = (t.match(/(?:Invoice|Rechnungs?|Debit Note|Credit Note|Gutschrift|Factura|Facture|Beleg)[ -]?(?:Number|No\.?|Nr\.?|nummer|n[º°o]\.?)\s*:?\s*([A-Z0-9][A-Z0-9\-\/.]{3,})/i)
+    // Notas de débito de Amazon: "Numéro Note de Débit:", "Número de Nota de Débito:", "Numero Nota di Debito:"
+    || t.match(/N[uú]m[eé]ro (?:de (?:la )?)?Not[ae] (?:de |di )D[eéè]bit[oa]?\s*:?\s*([A-Z0-9][A-Z0-9\-\/.]{3,})/i))?.[1]?.replace(/\.$/, '') || '';
   let invoiceDate = '';
   // Las etiquetas concretas, en todas sus apariciones (la primera puede ser texto: "der Monat des Rechnungsdatums");
   // la genérica, solo la primera
-  const specific = /(?:Invoice Date|Debit Note Date|Rechnungsdatum|Belegdatum|Fecha(?: de)? (?:la )?factura|Date de (?:la )?facture)(?![A-Za-zäöü])\s*:?\s*/gi;
+  const specific = /(?:Invoice Date|Debit Note Date|Rechnungsdatum|Belegdatum|Fecha(?: de)? (?:la )?factura|Date de (?:la )?facture|Date (?:de la )?Note de D[ée]bit|Fecha (?:de (?:la )?)?Nota de D[ée]bito|Data (?:della )?Nota di Debito)(?![A-Za-zäöü])\s*[:;]?\s*/gi;
   for (const m of [...t.matchAll(specific), ...[t.match(/(?:Datum|Date|Fecha)\s*:?\s*/i)].filter(x => x)]) {
     const end = m!.index! + m![0].length;
     invoiceDate = columnDate(t, m!.index!, end) || dates(t.slice(end, end + 25))[0]?.iso || '';
@@ -652,11 +654,26 @@ export async function vatGroups(ctx: BcContext) {
 // - promociones con "Rebate" o "Flexible" → AA-00069 FLEXIBLE ASIN BASED (las demás siguen al modelo: AA-00108…)
 // - Amazon Ads (AA-00015): inversión del sujeto pasivo, 19% SERVICES con VAT Bus. Posting Group UE
 const AMZ_FLEXIBLE = { number: 'AA-00069', description: 'AMZ AGREEMENT - FLEXIBLE ASIN BASED (Rebate Per Unit)', taxCode: '19% DEBIT NOTE' };
+// - devoluciones de distribuidor (nota de débito con RMA / Return ID, en cualquier idioma): una línea AA-00132 por el
+//   total, 19% DEBIT NOTE y el VAT Bus. Posting Group del proveedor (UE las sucursales, NAC la alemana), como
+//   CRZ-PI26-06221 (Amazon France, "Ship To: CRAZE GMBH(CS5A9)"). Sin IVA: "No VAT Applied"
+const AMZ_RETURN = { number: 'AA-00132', description: 'AMZ AGREEMENT - Distributor Returns', taxCode: '19% DEBIT NOTE' };
+export function amazonReturn(text: string) {
+  const t = flat(text);
+  const rma = t.match(/(?:RMA[- ]?(?:Number|Nummer|Nr\.?)|Num[eé]ro (?:de )?RMA|N[uú]mero (?:de )?RMA|Numero RMA)\s*[:;]?\s*([A-Z0-9]{6,})/i);
+  if (!rma && !/(?:Return|Retour|Rücksende|Rückgabe|Devoluci[oó]n|Reso)[- ]?ID|ID (?:de )?(?:devoluci[oó]n|reso|retour)/i.test(t)) return null;
+  const total = Math.max(0, ...amounts(t));
+  return { rma: rma?.[1] || '', total };
+}
 function amazonRules(s: OcrSuggestion, text: string, vendorName: string, warnings: string[]) {
-  if (!/amazon/i.test(vendorName)) return;
-  const rma = flat(text).match(/RMA Number:?\s*(\S+)/i);
-  if (rma || /Return ID/i.test(text)) {
-    warnings.push(`Devolución de distribuidor de Amazon${rma ? ` (RMA ${rma[1]})` : ''}: no hay ninguna registrada como factura de compra, así que las líneas no salen de una factura anterior. Revisa artículo e IVA.`);
+  if (!/amazon/i.test(vendorName)) return false;
+  const ret = amazonReturn(text);
+  if (ret && ret.total > 0) {
+    s.documentType = 'invoice';
+    s.lines = [{ lineType: 'Item', ...AMZ_RETURN, description2: '', quantity: 1, unitCost: ret.total }];
+    s.net = ret.total; s.vat = 0; s.total = ret.total;
+    s.comment += ` Amazon: devolución de distribuidor${ret.rma ? ` (RMA ${ret.rma})` : ''} → AA-00132 por el total, como CRZ-PI26-06221.`;
+    return true;
   }
   const items = s.lines.filter(l => l.lineType !== 'Comment');
   if (items.length === 1 && /rebate|flexible/i.test(text) && items[0].number !== AMZ_FLEXIBLE.number) {
@@ -667,6 +684,7 @@ function amazonRules(s: OcrSuggestion, text: string, vendorName: string, warning
     for (const l of items) if (l.number === 'AA-00015') l.taxCode = '19% SERVICES';
     s.vatBusPostingGroup = 'UE';
   }
+  return false;
 }
 
 // Todo el proceso para un PDF. vendorNo: proveedor elegido a mano (si no, el mejor candidato)
@@ -711,11 +729,12 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
       if (suggestion) suggestion.comment += ` El PDF trae ${pdfItem.number} donde las facturas de acuerdo traen su artículo (${pdfItem.model}) y no es un artículo de BC: si es un acuerdo nuevo, crea el artículo ${pdfItem.number}.`;
     }
   }
-  if (suggestion && vendor) amazonRules(suggestion, text, vendor.name, warnings);
+  const amazonReturnDoc = !!suggestion && !!vendor && amazonRules(suggestion, text, vendor.name, warnings);
   if (suggestion && vendor) uberRules(suggestion, text, vendor.name);
   // Importes con el % de IVA de los grupos de IVA propuestos (y los % para recalcular en la página al cambiar de grupo)
   const rates = vendor ? await vatRates(ctx, vendor.number, suggestion?.vatBusPostingGroup).catch(() => ({} as Record<string, number>)) : {};
-  if (suggestion && text) applyVatRates(suggestion, text, rates);
+  // (devolución de Amazon: el importe es el total, sin IVA)
+  if (suggestion && text && !amazonReturnDoc) applyVatRates(suggestion, text, rates);
   if (suggestion?.documentType === 'credit_note') warnings.push('Parece un abono (credit note): aquí solo se crean facturas; regístralo como Credit Memo en BC.');
   // La divisa del PDF manda aunque el proveedor no tenga facturas en ella (Uber en Macao: MOP; el modelo puede estar en
   // CHF); la local va vacía al crearla. Se avisa si no existe en BC
