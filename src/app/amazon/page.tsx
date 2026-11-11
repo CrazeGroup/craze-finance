@@ -239,7 +239,7 @@ export default function AmazonPage() {
                       <p>Logística = Total Charges de Logistic Costs: su Order No. (nº de Warehouse Shipment) → envío registrado → pedido de venta → primera factura del pedido desde la fecha del envío, repartido entre sus líneas por importe.
                         {data.cur.logistic.unassigned ? ` Envíos a Amazon aún sin factura (o sin enlace): ${eur(data.cur.logistic.unassigned)} en ${data.cur.logistic.unassignedRows} envíos, no incluidos.` : ''}</p>
                       <p>Amazon Ads = artículo AA-00015 en facturas/abonos de compra de proveedores Amazon, por país del proveedor (Polonia con Alemania) y mes, repartido entre los clientes Amazon de ese país en proporción a la venta del mes.{estNote(view.prevEst)}{estNote(view.curEst)}</p>
-                      <p>Deducciones Amazon = líneas sin IVA de las facturas/abonos de compra de los proveedores «Amazon EU …» (acuerdos, co-op, damage allowance, rebates, chargebacks, Amazon Promotions…), sin Ads (AA-00015) ni gastos «OPERATING»; por país del proveedor y mes, repartidas como los Ads.</p>
+                      <p>Deducciones Amazon = líneas sin IVA de las facturas/abonos de compra de los proveedores «Amazon EU …» (acuerdos, co-op, damage allowance, rebates, chargebacks, Amazon Promotions…), sin Ads (AA-00015) ni gastos «OPERATING» y sin UK Branch (no hay ventas a Amazon UK); por país del proveedor y mes, repartidas como los Ads. Si un país no tiene ventas ese mes (p. ej. LU), van a sus ventas del año.</p>
                     </div>
                   </Card>
                 )}

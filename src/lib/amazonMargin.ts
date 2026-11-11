@@ -18,7 +18,8 @@ import { InvAttrs, itemCatalog } from '@/lib/reporting/inventoryAnalysis';
 //   país y mes queda como "sin asignar".
 // - Deducciones Amazon: líneas (sin IVA) de las facturas y abonos de compra de los proveedores "Amazon EU …" (acuerdos,
 //   co-op, damage allowance, rebates, chargebacks, Amazon Promotions…), sin la de Ads (AA-00015) ni las de gastos
-//   generales ("OPERATING …"); país = el del proveedor y se reparten como los Ads.
+//   generales ("OPERATING …"); país = el del proveedor y se reparten como los Ads. En CRAZE GmbH se ignora UK Branch (GB).
+//   Ads o deducciones de un país sin ventas ese mes van a las ventas de ese país en el año.
 
 export const ADS_ITEM = 'AA-00015';
 export const FIRST_YEAR = 2025;
@@ -32,6 +33,8 @@ const isExcludedCustomer = (name: string) => /regulari/i.test(name);
 // Ads de países sin cliente Amazon propio: van con las ventas de otro país (Polonia se vende desde Amazon DE)
 const ADS_COUNTRY: Record<string, string> = { PL: 'DE' };
 const isDeductionVendor = (name: string) => /amazon eu\b/i.test(name);
+// Deducciones que no se cuentan por empresa: Amazon EU UK Branch en CRAZE GmbH (sin ventas a Amazon UK)
+const DED_IGNORE: Record<string, string[]> = { CRAZE: ['GB'] };
 const isDeductionLine = (l: any) => s(l.no) !== ADS_ITEM && !/^operating\b/i.test(s(l.description));
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400000).toISOString().substring(0, 10);
 
@@ -67,11 +70,11 @@ async function byMonths(ctx: BcContext, base: string, dateField: string, from: s
 export async function amazonYear(ctx: BcContext, company: string, year: number, force = false): Promise<AmazonYear> {
   const today = new Date().toISOString().substring(0, 10);
   const closed = `${year}-12-31` < today;
-  return cached(`amazonMargin3:${company}:${year}`, closed ? 7 * 24 * HOUR : HOUR, () => compute(ctx, year, today), force,
+  return cached(`amazonMargin4:${company}:${year}`, closed ? 7 * 24 * HOUR : HOUR, () => compute(ctx, company, year, today), force,
     { refreshAfterMs: closed ? 7 * 24 * HOUR : HOUR });
 }
 
-async function compute(ctx: BcContext, year: number, today: string): Promise<AmazonYear> {
+async function compute(ctx: BcContext, company: string, year: number, today: string): Promise<AmazonYear> {
   const from = `${year}-01-01`;
   const to = `${year}-12-31` < today ? `${year}-12-31` : today;
   const early = addDays(from, -LOOKBACK_DAYS);
@@ -238,19 +241,24 @@ async function compute(ctx: BcContext, year: number, today: string): Promise<Ama
     const k = `${customers[d[3]].country}|${d[2].substring(0, 7)}`;
     if (!salesLines.has(k)) salesLines.set(k, []);
     salesLines.get(k)!.push(i);
+    const ky = `${customers[d[3]].country}|year`;
+    if (!salesLines.has(ky)) salesLines.set(ky, []);
+    salesLines.get(ky)!.push(i);
   });
   const allocate = (by: Map<string, number>, col: number) => {
     const out: AmazonYear['ads'] = [];
     for (const [k, amount] of by) {
       if (!amount) continue;
       const [country, month] = k.split('|');
-      const ok = spread(salesLines.get(k) || [], amount, col);
+      // Sin ventas del país ese mes: a las ventas del país en el año (p. ej. LU); sin ninguna, queda sin asignar
+      const ok = spread(salesLines.get(k) || [], amount, col) || spread(salesLines.get(`${country}|year`) || [], amount, col);
       out.push({ country, month, amount: r2(amount), assigned: ok ? r2(amount) : 0 });
     }
     return out.sort((a, b) => a.month.localeCompare(b.month) || a.country.localeCompare(b.country));
   };
   const ads = allocate(byCountryMonth(adsInv, adsCr), 6);
-  const ded = allocate(byCountryMonth(dedInv, dedCr, isDeductionLine), 7);
+  const ignore = DED_IGNORE[company] || [];
+  const ded = allocate(byCountryMonth(dedInv, dedCr, l => isDeductionLine(l) && !ignore.includes(vendorCountry.get(s(l.buyFromVendorNo)) || '')), 7);
 
   for (const l of lines) for (let c = 2; c < 8; c++) l[c] = r2(l[c]);
   return {
