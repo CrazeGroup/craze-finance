@@ -52,7 +52,7 @@ export type AmazonYear = {
 };
 
 // Lee un servicio en paralelo por meses (las tablas de líneas son grandes)
-async function byMonths(ctx: BcContext, base: string, dateField: string, from: string, to: string, select: string, extra = '') {
+export async function byMonths(ctx: BcContext, base: string, dateField: string, from: string, to: string, select: string, extra = '') {
   const parts: [string, string][] = [];
   let d = from;
   while (d <= to) {

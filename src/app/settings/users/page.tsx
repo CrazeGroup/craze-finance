@@ -21,6 +21,7 @@ const MODULES = [
   { id: 'royalties', label: 'Royalties' },
   { id: 'commercial', label: 'Commercial Analysis' },
   { id: 'amazon', label: 'Amazon (margen por cliente)' },
+  { id: 'logistic_cost', label: 'Logistic Cost (CRAZE GmbH)' },
   { id: 'intercompany', label: 'Intercompany' },
   { id: 'payment_proposal', label: 'Payment Proposal' },
   { id: 'notas_compra', label: 'Notas de compra' },

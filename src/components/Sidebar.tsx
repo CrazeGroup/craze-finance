@@ -19,7 +19,7 @@ const TEXT: Record<Lang, Record<string, string>> = {
     noSection: 'No section', dragHere: 'Drag items here', newSection: 'New section', organize: 'Organize menu', done: 'Done', rename: 'Rename', dragSection: 'Drag to reorder the section',
     deleteSection: 'Delete section (its items go back to "No section")', logout: 'Log out',
     '/': 'Main Dashboard', '/riesgos': 'Risks', '/recobros': 'Collections', '/movimientos': 'Open Entries', '/pagos': 'Vendor Payments',
-    '/cierre-mensual': 'Month-End Close Tracking', '/inventario': 'Inventory (Closing)', '/inventory-analysis': 'Inventory Analysis', '/notas-compra': 'Purchase Notes', '/aduanas': 'Customs', '/insurances': 'Insurance', '/contracts': 'Contracts',
+    '/cierre-mensual': 'Month-End Close Tracking', '/inventario': 'Inventory (Closing)', '/inventory-analysis': 'Inventory Analysis', '/logistic-cost': 'Logistic Cost', '/notas-compra': 'Purchase Notes', '/aduanas': 'Customs', '/insurances': 'Insurance', '/contracts': 'Contracts',
     '/settings/users': 'Users', '/settings/logs': 'Audit Log', '/settings': 'Settings',
   },
   es: {
@@ -32,7 +32,7 @@ const TEXT: Record<Lang, Record<string, string>> = {
     noSection: 'Ohne Bereich', dragHere: 'Einträge hierher ziehen', newSection: 'Neuer Bereich', organize: 'Menü organisieren', done: 'Fertig', rename: 'Umbenennen', dragSection: 'Ziehen, um den Bereich zu verschieben',
     deleteSection: 'Bereich löschen (seine Einträge gehen zurück zu „Ohne Bereich“)', logout: 'Abmelden',
     '/': 'Haupt-Dashboard', '/riesgos': 'Risiken', '/recobros': 'Inkasso', '/movimientos': 'Offene Posten', '/pagos': 'Lieferantenzahlungen',
-    '/cierre-mensual': 'Monatsabschluss-Tracking', '/inventario': 'Inventar (Abschluss)', '/inventory-analysis': 'Bestandsanalyse', '/notas-compra': 'Einkaufsnotizen', '/aduanas': 'Zoll', '/insurances': 'Versicherungen', '/contracts': 'Verträge',
+    '/cierre-mensual': 'Monatsabschluss-Tracking', '/inventario': 'Inventar (Abschluss)', '/inventory-analysis': 'Bestandsanalyse', '/logistic-cost': 'Logistikkosten', '/notas-compra': 'Einkaufsnotizen', '/aduanas': 'Zoll', '/insurances': 'Versicherungen', '/contracts': 'Verträge',
     '/settings/users': 'Benutzer', '/settings/logs': 'Protokoll', '/settings': 'Einstellungen',
   },
 };
@@ -111,6 +111,8 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
     { href: '/royalties', label: 'Royalties', module: 'royalties' },
     { href: '/commercial', label: 'Commercial Analysis', module: 'commercial' },
     { href: '/amazon', label: 'Amazon', module: 'amazon' },
+    // Solo para CRAZE GmbH
+    ...(selectedCompany === 'CRAZE' ? [{ href: '/logistic-cost', label: 'Logistic Cost', module: 'logistic_cost' }] : []),
     { href: '/intercompany', label: 'Intercompany', module: 'intercompany' },
     { href: '/payment-proposal', label: 'Payment Proposal', module: 'payment_proposal' },
     { href: '/notas-compra', label: 'Notas de compra', module: 'notas_compra' },
