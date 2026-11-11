@@ -303,7 +303,7 @@ export default function MagazineAnalysisView() {
                     {open[m.item] && (
                       <tr>
                         <td colSpan={10} className="bg-gray-50/60 px-3 md:px-6 py-4">
-                          <div className="grid grid-cols-1 xl:grid-cols-[3fr_2fr] gap-4 items-start">
+                          <div className="grid grid-cols-1 min-[1900px]:grid-cols-[3fr_2fr] gap-4 items-start">
                             <TaskTable m={m} taskNames={data.taskNames} openTask={openTask} toggle={k => setOpenTask(o => ({ ...o, [k]: !o[k] }))} />
                             <LocationTable title="Ventas y devoluciones por localización (Description 2)" locations={m.locations} />
                           </div>
