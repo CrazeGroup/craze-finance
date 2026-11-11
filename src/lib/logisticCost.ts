@@ -34,7 +34,7 @@ export type LogisticYear = {
 export async function logisticYear(ctx: BcContext, company: string, year: number, force = false): Promise<LogisticYear> {
   const today = new Date().toISOString().substring(0, 10);
   const closed = `${year}-12-31` < today;
-  return cached(`logisticCost1:${company}:${year}`, closed ? 7 * 24 * HOUR : 24 * HOUR, () => compute(ctx, year, today), force,
+  return cached(`logisticCost2:${company}:${year}`, closed ? 7 * 24 * HOUR : 24 * HOUR, () => compute(ctx, year, today), force,
     { refreshAfterMs: closed ? 7 * 24 * HOUR : HOUR });
 }
 
@@ -76,6 +76,8 @@ async function compute(ctx: BcContext, year: number, today: string): Promise<Log
       inv = { no, date: s(l.postingDate).substring(0, 10), cust: s(l.sellToCustomerNo), sales: 0, units: 0, orderSales: new Map(), v: Array(INV_COLS.length).fill(0) };
       invs.set(no, inv);
     }
+    // Las líneas de comentario no llevan cliente: se toma de cualquier línea que lo tenga
+    if (!inv.cust && s(l.sellToCustomerNo)) inv.cust = s(l.sellToCustomerNo);
     const amt = n(l.amount);
     inv.sales += amt;
     if (s(l.type) === 'Item') inv.units += n(l.quantity);
