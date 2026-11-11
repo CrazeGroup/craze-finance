@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { RefreshCcw, User, Building2, CheckCircle, ArrowUp, ArrowDown } from 'lucide-react';
+import { RefreshCcw, User, Building2, CheckCircle, ArrowUp, ArrowDown, Lightbulb, AlertCircle } from 'lucide-react';
 import DocPdfLink, { purchasePdfKind } from '@/components/DocPdfLink';
 import { companyLabel, useCompany } from '@/contexts/CompanyContext';
 
@@ -28,20 +28,20 @@ export default function MovimientosPage() {
     } catch (e: any) { alert(`No se ha podido guardar el comentario: ${e.message}`); }
   };
 
+  const [loadError, setLoadError] = useState<string | null>(null);
   const fetchEntries = async () => {
+    setLoadError(null);
+    // Con "todas las empresas" no hay movimientos que mostrar: hay que elegir una
+    if (selectedCompany === 'ALL') { setEntries([]); setLoading(false); return; }
     setLoading(true);
     loadComments();
     try {
       const res = await fetch('/api/ledger-entries', { cache: 'no-store' });
       const data = await res.json();
-      if (Array.isArray(data)) {
-        setEntries(data);
-      } else {
-        alert(data?.error ? `Error al cargar movimientos: ${data.error}` : 'Error al cargar movimientos');
-      }
-    } catch (e) {
-      console.error(e);
-      alert('Error en conexión');
+      if (Array.isArray(data)) setEntries(data);
+      else { setEntries([]); setLoadError(data?.error || 'Error al cargar los movimientos'); }
+    } catch (e: any) {
+      setEntries([]); setLoadError(`Error de conexión: ${e.message}`);
     } finally {
       setLoading(false);
     }
@@ -49,7 +49,7 @@ export default function MovimientosPage() {
 
   useEffect(() => {
     fetchEntries();
-  }, []);
+  }, [selectedCompany]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Compute available filters based on current entries and viewMode
   const availableDocTypes = useMemo(() => {
@@ -70,12 +70,13 @@ export default function MovimientosPage() {
 
   // Excluir Amazon (clientes y proveedores cuyo nombre contiene "Amazon"); se recuerda en el navegador
   const [noAmazon, setNoAmazon] = useState(false);
+  const [onlySuggested, setOnlySuggested] = useState(false);
   useEffect(() => { try { setNoAmazon(localStorage.getItem('movimientos:sinAmazon') === '1'); } catch { /* sin almacenamiento */ } }, []);
   const changeNoAmazon = (v: boolean) => { setNoAmazon(v); try { localStorage.setItem('movimientos:sinAmazon', v ? '1' : '0'); } catch { /* sin almacenamiento */ } };
 
   // Orden por columna (clic en la cabecera: ascendente, descendente)
   type SortKey = 'entityNo' | 'entityName' | 'postingDate' | 'documentType' | 'documentNo' | 'externalDocumentNo' | 'currencyCode' | 'originalAmount' | 'remainingAmount' | 'description' | 'paymentMethodCode'
-    | 'salesReturnOrderNo' | 'messageToRecipient' | 'comment';
+    | 'salesReturnOrderNo' | 'messageToRecipient' | 'comment' | 'suggestion';
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 } | null>(null);
   const sortBy = (key: SortKey) => setSort(p => (p?.key === key ? (p.dir === 1 ? { key, dir: -1 } : null) : { key, dir: 1 }));
 
@@ -84,6 +85,7 @@ export default function MovimientosPage() {
     const list = entries.filter(e => {
       if (e.type !== viewMode) return false;
       if (noAmazon && /amazon/i.test(e.entityName || '')) return false;
+      if (onlySuggested && !e.suggestion) return false;
       if (selectedDocTypes.length > 0 && !selectedDocTypes.includes(e.documentType)) return false;
       if (selectedPaymentMethods.length > 0 && !selectedPaymentMethods.includes(e.paymentMethodCode)) return false;
       return true;
@@ -92,12 +94,15 @@ export default function MovimientosPage() {
     const { key, dir } = sort;
     const num = key === 'originalAmount' || key === 'remainingAmount';
     const val = (e: any) => (key === 'comment' ? comments[`${e.type}:${e.entryNo}`]?.text || '' : e[key]);
+    const rank = (e: any) => (e.suggestion ? SUGGESTION[e.suggestion.kind as keyof typeof SUGGESTION].rank : 9);
     return [...list].sort((a, b) => {
+      if (key === 'suggestion') return (rank(a) - rank(b)) * dir;
       if (key === 'comment') return String(val(a)).localeCompare(String(val(b)), 'es', { sensitivity: 'base' }) * dir;
       if (num) return ((Number(a[key]) || 0) - (Number(b[key]) || 0)) * dir;
       return String(a[key] ?? '').localeCompare(String(b[key] ?? ''), 'es', { numeric: true, sensitivity: 'base' }) * dir;
     });
-  }, [entries, viewMode, selectedDocTypes, selectedPaymentMethods, noAmazon, sort, comments]);
+  }, [entries, viewMode, selectedDocTypes, selectedPaymentMethods, noAmazon, onlySuggested, sort, comments]);
+  const suggestedCount = useMemo(() => entries.filter(e => e.type === viewMode && e.suggestion && (!noAmazon || !/amazon/i.test(e.entityName || ''))).length, [entries, viewMode, noAmazon]);
   const amazonCount = useMemo(() => entries.filter(e => e.type === viewMode && /amazon/i.test(e.entityName || '')).length, [entries, viewMode]);
 
   // Clear filters when switching view modes
@@ -167,11 +172,30 @@ export default function MovimientosPage() {
                 Excluir {viewMode === 'Customer' ? 'clientes' : 'proveedores'} Amazon{amazonCount ? ` (${amazonCount} mov.)` : ''}
               </label>
             </div>
+            <div>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Para cerrar</p>
+              <label className="inline-flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none pt-0.5">
+                <input type="checkbox" checked={onlySuggested} onChange={e => setOnlySuggested(e.target.checked)} />
+                Solo con sugerencia ({suggestedCount})
+              </label>
+            </div>
             <p className="ml-auto self-end text-xs text-gray-500">{filteredEntries.length} movimientos</p>
           </section>
         )}
 
-        {loading ? (
+        {selectedCompany === 'ALL' ? (
+          <div className="bg-white rounded-xl border border-gray-200 py-16 text-center">
+            <Building2 className="mx-auto text-gray-400 mb-3" size={32} />
+            <p className="text-sm text-gray-700 font-semibold">Selecciona una empresa concreta en el menú</p>
+            <p className="text-xs text-gray-500 mt-1">Los movimientos abiertos se leen de BC empresa a empresa.</p>
+          </div>
+        ) : loadError ? (
+          <div className="bg-white rounded-xl border border-red-200 py-10 text-center">
+            <AlertCircle className="mx-auto text-red-500 mb-3" size={28} />
+            <p className="text-sm text-red-700">{loadError}</p>
+            <button onClick={fetchEntries} className="mt-3 text-sm font-semibold text-gray-700 underline">Reintentar</button>
+          </div>
+        ) : loading ? (
           <div className="bg-white rounded-xl border border-gray-200 py-16 flex justify-center text-sm text-gray-500 gap-2 items-center">
             <RefreshCcw size={16} className="animate-spin" /> Cargando movimientos…
           </div>
@@ -189,7 +213,7 @@ export default function MovimientosPage() {
                     ['entityNo', `Nº ${viewMode === 'Customer' ? 'cliente' : 'proveedor'}`], ['entityName', 'Nombre'], ['postingDate', 'Posting Date'],
                     ['documentType', 'Doc. Type'], ['documentNo', 'Document No.'], ['externalDocumentNo', 'Ext. Doc. No.'],
                     ...(viewMode === 'Customer' ? [['salesReturnOrderNo', 'Sales Return Order No.']] : []), ['currencyCode', 'Divisa'],
-                    ['originalAmount', 'Original Amt.', true], ['remainingAmount', 'Remaining Amt.', true], ['description', 'Description'],
+                    ['originalAmount', 'Original Amt.', true], ['remainingAmount', 'Remaining Amt.', true], ['suggestion', 'Sugerencia para cerrar'], ['description', 'Description'],
                     ...(viewMode === 'Customer' ? [['messageToRecipient', 'Message to Recipient']] : []), ['paymentMethodCode', 'Payment Method'], ['comment', 'Comentario'],
                   ] as [SortKey, string, boolean?][]).map(([key, label, right]) => (
                     <th key={key} className={`${th} ${right ? 'text-right' : 'text-left'}`}>
@@ -205,7 +229,7 @@ export default function MovimientosPage() {
                 {filteredEntries.map((entry, idx) => (
                   <tr key={idx} className="border-t border-gray-100 hover:bg-gray-50">
                     <td className="px-3 py-2 font-mono text-gray-900 whitespace-nowrap">{entry.entityNo}</td>
-                    <td className="px-3 py-2 font-semibold text-gray-900 min-w-[200px]">{entry.entityName}</td>
+                    <td className="px-3 py-2 font-semibold text-gray-900 max-w-[200px] truncate" title={entry.entityName}>{entry.entityName}</td>
                     <td className="px-3 py-2 text-gray-600 tabular-nums whitespace-nowrap">{dateEs(entry.postingDate)}</td>
                     <td className="px-3 py-2">
                       <span className="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 text-xs font-semibold text-gray-700 whitespace-nowrap">{entry.documentType || '—'}</span>
@@ -214,7 +238,7 @@ export default function MovimientosPage() {
                       {entry.documentNo}
                       {entry.type === 'Vendor' && <DocPdfLink documentNo={entry.documentNo} kind={purchasePdfKind(entry.documentType)} />}
                     </td>
-                    <td className="px-3 py-2 font-mono text-gray-600">{entry.externalDocumentNo || '—'}</td>
+                    <td className="px-3 py-2 font-mono text-gray-600 max-w-[170px] truncate" title={entry.externalDocumentNo}>{entry.externalDocumentNo || '—'}</td>
                     {viewMode === 'Customer' && (
                       <td className="px-3 py-2 font-mono whitespace-nowrap">
                         {entry.salesReturnOrderNo
@@ -227,10 +251,11 @@ export default function MovimientosPage() {
                     <td className="px-3 py-2 text-gray-600">{entry.currencyCode || 'EUR'}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-gray-600 whitespace-nowrap">{nf(entry.originalAmount)}</td>
                     <td className={`px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap ${entry.remainingAmount < 0 ? 'text-red-600' : 'text-gray-900'}`}>{nf(entry.remainingAmount)}</td>
-                    <td className="px-3 py-2 text-gray-700 min-w-[250px]">{entry.description}</td>
-                    {viewMode === 'Customer' && <td className="px-3 py-2 text-gray-700 min-w-[220px]">{entry.messageToRecipient || <span className="text-gray-300">—</span>}</td>}
+                    <td className="px-3 py-2 min-w-[180px]"><SuggestionCell s={entry.suggestion} nf={nf} dateEs={dateEs} /></td>
+                    <td className="px-3 py-2 text-gray-700 max-w-[220px] truncate" title={entry.description}>{entry.description}</td>
+                    {viewMode === 'Customer' && <td className="px-3 py-2 text-gray-700 max-w-[220px] truncate" title={entry.messageToRecipient}>{entry.messageToRecipient || <span className="text-gray-300">—</span>}</td>}
                     <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{entry.paymentMethodCode || '—'}</td>
-                    <td className="px-2 py-1.5 min-w-[220px]">
+                    <td className="px-2 py-1.5 min-w-[200px]">
                       <CommentCell key={`${entry.type}:${entry.entryNo}:${comments[`${entry.type}:${entry.entryNo}`]?.at || ''}`}
                         value={comments[`${entry.type}:${entry.entryNo}`]} onSave={t => saveComment(`${entry.type}:${entry.entryNo}`, t)} />
                     </td>
@@ -253,5 +278,28 @@ function CommentCell({ value, onSave }: { value?: { text: string; by?: string; a
       onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
       placeholder="Añadir comentario…" title={value ? `${value.by ? `${value.by} · ` : ''}${value.at.substring(0, 10)}` : undefined}
       className={`w-full rounded px-2 py-1 text-sm border ${text ? 'border-indigo-200 bg-indigo-50/50 text-gray-900' : 'border-transparent hover:border-gray-200 text-gray-700'} focus:border-gray-400 focus:bg-white outline-none`} />
+  );
+}
+
+// Sugerencia para cerrar el movimiento con otros abiertos del mismo cliente / proveedor
+const SUGGESTION = {
+  exact_ref: { rank: 0, label: 'Mismo importe y se citan', cls: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+  exact: { rank: 1, label: 'Mismo importe', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  combo: { rank: 2, label: 'Suman el importe', cls: 'bg-sky-50 text-sky-800 border-sky-200' },
+  ref: { rank: 3, label: 'Se citan (otro importe)', cls: 'bg-amber-50 text-amber-800 border-amber-200' },
+} as const;
+type Sug = { kind: keyof typeof SUGGESTION; note: string; entries: { entryNo: number; documentType: string; documentNo: string; postingDate: string | null; remaining: number }[] };
+function SuggestionCell({ s, nf, dateEs }: { s?: Sug | null; nf: (v: number) => string; dateEs: (d: string) => string }) {
+  if (!s) return <span className="text-gray-300">—</span>;
+  const k = SUGGESTION[s.kind];
+  const tip = `${s.note}\n${s.entries.map(e => `${e.documentType} ${e.documentNo} · ${dateEs(e.postingDate || '')} · ${nf(e.remaining)}`).join('\n')}`;
+  return (
+    <span className={`inline-flex items-start gap-1 border rounded px-1.5 py-0.5 text-xs ${k.cls}`} title={tip}>
+      <Lightbulb size={12} className="mt-0.5 shrink-0" />
+      <span>
+        <span className="font-semibold">{s.entries.map(e => e.documentNo).join(' + ')}</span>
+        <span className="block text-[11px] opacity-80">{k.label}{s.entries.length === 1 ? ` · ${s.entries[0].documentType} ${nf(s.entries[0].remaining)}` : ''}</span>
+      </span>
+    </span>
   );
 }
