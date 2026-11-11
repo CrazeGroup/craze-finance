@@ -20,8 +20,8 @@ type Row = {
   // Incidencias subsanadas con abonos y facturas nuevas (las incidencias se mantienen como comentario)
   corrected?: string[];
 };
-// Con incidencia pendiente: tiene incidencias y no están subsanadas
-const pending = (r: Row) => r.issues.length > 0 && !r.corrected?.length;
+type Validation = { by?: string; at: string };
+const rowKey = (r: Row) => `${r.source}|${r.invoiceNo}`;
 type Orphan = { target: string; no: string; vendorInvoiceNo: string; postingDate: string; invoiceDate: string; vendor: string; currency: string; amount: number; source?: string };
 type Excluded = { invoiceNo: string; creditMemoNo: string; target: string; postingDate: string; externalDocNo: string; creditMemoAmount: number; source?: string };
 type Data = { rows: Row[]; orphanPurchases: Orphan[]; excludedCredited?: Excluded[]; warnings: string[] };
@@ -49,6 +49,30 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [reload, setReload] = useState({ n: 0, force: false });
   const [state, setState] = useState<{ data: Data | null; loading: boolean; error: string | null }>({ data: null, loading: true, error: null });
+  // Incidencias validadas a mano (revisadas y dadas por buenas), compartidas entre usuarios
+  const [validated, setValidated] = useState<Record<string, Validation>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+  useEffect(() => {
+    fetch('/api/controlling/intercompany/validated', { cache: 'no-store' }).then(r => r.json())
+      .then(d => d.validated && setValidated(d.validated)).catch(() => {});
+  }, [reload]);
+  const isValidated = (r: Row) => !!validated[rowKey(r)];
+  // Con incidencia pendiente: tiene incidencias, no están subsanadas y nadie las ha validado
+  const pending = (r: Row) => r.issues.length > 0 && !r.corrected?.length && !isValidated(r);
+  const setValid = async (r: Row, on: boolean) => {
+    const key = rowKey(r);
+    setSaving(key);
+    try {
+      const res = await fetch('/api/controlling/intercompany/validated', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, validated: on }) });
+      const d = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`);
+      setValidated(d.validated);
+    } catch (e: any) {
+      alert(`No se pudo guardar la validación: ${e.message}`);
+    } finally {
+      setSaving(null);
+    }
+  };
 
   useEffect(() => {
     if (!from || !to || from > to) return;
@@ -80,13 +104,14 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
     return (d?.rows || []).filter(r => (!onlyIssues || pending(r))
       && (!q || [r.invoiceNo, r.externalDocNo, r.purchase?.no, r.purchase?.vendorInvoiceNo, r.final?.no, r.final?.customer, r.customer].some(v => v && v.toLowerCase().includes(q))))
       .sort((a, b) => a.postingDate.localeCompare(b.postingDate) || a.invoiceNo.localeCompare(b.invoiceNo));
-  }, [d, onlyIssues, search]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d, onlyIssues, search, validated]);
   const toggle = (k: string) => setOpen(o => ({ ...o, [k]: !o[k] }));
   const money = (v: number, cur: string) => `${num(v, 2)} ${cur}`;
 
   const groupKeys = (r: Row): string[] => grouping === 'month' ? [r.postingDate.substring(0, 7)]
     : grouping === 'pair' ? [`${r.source} → ${r.target}`]
-    : grouping === 'issue' ? (r.corrected?.length ? ['Corregida'] : r.issues.length ? Array.from(new Set(r.issues.map(issueType))) : ['Correcta']) : ['all'];
+    : grouping === 'issue' ? (r.corrected?.length ? ['Corregida'] : isValidated(r) ? ['Validada'] : r.issues.length ? Array.from(new Set(r.issues.map(issueType))) : ['Correcta']) : ['all'];
   const groupLabel = (k: string) => (grouping === 'month' ? `${MONTHS[Number(k.substring(5, 7)) - 1]} ${k.substring(0, 4)}` : k);
 
   const exportExcel = () => {
@@ -96,6 +121,7 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
       'Factura compra': r.purchase?.no || '', 'Vendor Invoice No.': r.purchase?.vendorInvoiceNo || '', 'Fecha compra': r.purchase?.invoiceDate || '',
       'Divisa compra': r.purchase?.currency || '', 'Importe compra': r.purchase?.amount ?? '',
       'Venta final': r.final?.found ? r.final.no : '', 'Cliente final': r.final?.customer || '', 'Incidencias': r.issues.join(' · ') || 'Correcta', 'Corregida': r.corrected?.join(' · ') || '',
+      'Validada': validated[rowKey(r)] ? `${validated[rowKey(r)].by || 'Sí'} ${validated[rowKey(r)].at.substring(0, 10)}` : '',
     }));
     const orphans = (d?.orphanPurchases || []).map(o => ({ 'Empresa (compra)': o.target, 'Proveedor': o.vendor, 'Factura compra': o.no, 'Vendor Invoice No.': o.vendorInvoiceNo, 'Fecha': o.invoiceDate, 'Divisa': o.currency, 'Importe': o.amount }));
     const wb = XLSX.utils.book_new();
@@ -164,11 +190,11 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
       </tr></thead>
       <tbody>
         {list.map(r => {
-          const k = `${r.source}|${r.invoiceNo}`;
+          const k = rowKey(r), v = validated[k], canValidate = r.issues.length > 0 && !r.corrected?.length;
           return (
             <Fragment key={k}>
               <tr className={`border-b border-gray-100 hover:bg-gray-50 cursor-pointer ${r.issues.length ? '' : ''}`} onClick={() => toggle(k)}>
-                <td className={td}>{pending(r) ? <AlertTriangle size={14} className="text-amber-600" /> : <CheckCircle2 size={14} className={r.corrected?.length ? 'text-sky-600' : 'text-emerald-600'} />}</td>
+                <td className={td}>{pending(r) ? <AlertTriangle size={14} className="text-amber-600" /> : <CheckCircle2 size={14} className={r.corrected?.length ? 'text-sky-600' : v && canValidate ? 'text-violet-600' : 'text-emerald-600'} />}</td>
                 <td className={`${td} text-gray-600`}>{r.source} → {r.target}</td>
                 <td className={`${td} font-mono font-semibold`}>{open[k] ? '▾ ' : '▸ '}{r.invoiceNo}</td>
                 <td className={`${td} font-mono`}>{date(r.invoiceDate)}</td>
@@ -180,7 +206,13 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
                 <td className={td}>{r.final ? (r.final.found ? <span className="font-mono">{r.final.no} <span className="text-gray-500 font-sans">{r.final.customer}</span></span> : <span className="text-gray-400">{r.externalDocNo || '–'}</span>) : <span className="text-gray-300">n/a</span>}</td>
                 <td className="py-1.5 px-2 text-[11px] min-w-[240px]">
                   {r.corrected?.length ? <span className="block mb-0.5 text-sky-800 font-semibold">Corregida: <span className="font-normal">{r.corrected.join(' · ')}</span></span> : null}
-                  <span className={r.corrected?.length ? 'text-gray-500' : 'text-[#C0392B]'}>{r.issues.join(' · ') || <span className="text-emerald-700">Correcta</span>}</span>
+                  {canValidate && (
+                    <label onClick={e => e.stopPropagation()} className={`flex items-center gap-1.5 mb-0.5 font-semibold cursor-pointer ${v ? 'text-violet-800' : 'text-gray-600'}`}>
+                      <input type="checkbox" checked={!!v} disabled={saving === k} onChange={e => setValid(r, e.target.checked)} />
+                      {v ? <span>Validada{v.by ? ` por ${v.by}` : ''} el {date(v.at.substring(0, 10))}</span> : <span>Validar incidencias</span>}
+                    </label>
+                  )}
+                  <span className={r.corrected?.length || v ? 'text-gray-500' : 'text-[#C0392B]'}>{r.issues.join(' · ') || <span className="text-emerald-700">Correcta</span>}</span>
                 </td>
               </tr>
               {open[k] && <tr><td /><td colSpan={10} className="py-2 pr-2"><LinesTable r={r} /></td></tr>}
@@ -196,9 +228,9 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
     for (const r of rows) for (const k of groupKeys(r)) m.set(k, [...(m.get(k) || []), r]);
     return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, grouping]);
+  }, [rows, grouping, validated]);
 
-  const total = d?.rows.length || 0, bad = d?.rows.filter(pending).length || 0, fixed = d?.rows.filter(r => r.corrected?.length).length || 0;
+  const total = d?.rows.length || 0, bad = d?.rows.filter(pending).length || 0, fixed = d?.rows.filter(r => r.corrected?.length).length || 0, valid = d?.rows.filter(r => r.issues.length && !r.corrected?.length && isValidated(r)).length || 0;
   return (
     <Section title="Intercompany" source="Facturas de venta registradas a empresas del grupo (API v2 salesInvoices + líneas) frente a la factura de compra en la otra empresa (purchaseInvoices + líneas) y, en drop shipment de CRAZE GmbH a UK / Group AG, la venta final al cliente">
       <div className="flex flex-wrap items-end gap-4">
@@ -245,7 +277,7 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
             {d.warnings.map(w => <p key={w} className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{w}</p>)}
             <Grid cols={4}>
               <Kpi label="Facturas intercompañía" value={num(total)} sub="Ventas a empresas del grupo en el periodo" />
-              <Kpi label="Correctas" value={num(total - bad)} sub={total ? `${num(((total - bad) / total) * 100, 1)} %${fixed ? ` · ${num(fixed)} corregidas con abonos / facturas nuevas` : ''}` : ''} />
+              <Kpi label="Correctas" value={num(total - bad)} sub={total ? `${num(((total - bad) / total) * 100, 1)} %${fixed ? ` · ${num(fixed)} corregidas con abonos / facturas nuevas` : ''}${valid ? ` · ${num(valid)} validadas a mano` : ''}` : ''} />
               <Kpi highlight tone="main" label="Con incidencias" value={num(bad)} sub="Sin compra, importe, divisa, fecha o artículos distintos, o sin venta final" />
               <Kpi label="Compras sin factura de venta" value={num(d.orphanPurchases.length)} sub="Compras a una empresa del grupo cuyo Vendor Invoice No. no es una venta suya del periodo" />
             </Grid>
@@ -257,7 +289,7 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
                       <button onClick={() => toggle(`g:${k}`)} className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm bg-gray-50 hover:bg-gray-100">
                         {open[`g:${k}`] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                         <span className="font-semibold text-gray-900">{groupLabel(k)}</span>
-                        <span className="ml-auto text-xs text-gray-500">{list.length} facturas · {list.filter(pending).length} con incidencias{list.some(r => r.corrected?.length) ? ` · ${list.filter(r => r.corrected?.length).length} corregidas` : ''}</span>
+                        <span className="ml-auto text-xs text-gray-500">{list.length} facturas · {list.filter(pending).length} con incidencias{list.some(r => r.corrected?.length) ? ` · ${list.filter(r => r.corrected?.length).length} corregidas` : ''}{list.some(r => r.issues.length && !r.corrected?.length && isValidated(r)) ? ` · ${list.filter(r => r.issues.length && !r.corrected?.length && isValidated(r)).length} validadas` : ''}</span>
                       </button>
                       {open[`g:${k}`] && <div className="overflow-x-auto"><RowsTable list={list} /></div>}
                     </div>
