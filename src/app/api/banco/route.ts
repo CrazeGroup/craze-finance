@@ -25,13 +25,14 @@ export async function GET() {
     const [banks, journals, accounts, customers, vendors] = await Promise.all([
       bcFetchAll(odataUrl(`${ctx.apiBase}/bankAccounts`, { $select: 'number,displayName,iban,currencyCode,blocked' }), ctx.token),
       bcFetchAll(odataUrl(`${ctx.apiBase}/journals`, { $select: 'code,displayName,balancingAccountNumber' }), ctx.token),
-      bcFetchAll(odataUrl(`${ctx.apiBase}/accounts`, { $select: 'number,displayName' }), ctx.token).catch(() => []),
+      bcFetchAll(odataUrl(`${ctx.apiBase}/accounts`, { $select: 'number,displayName,accountType,blocked' }), ctx.token).catch(() => []),
       prisma.customer.findMany({ where: { companyId }, select: { bcId: true, name: true } }),
       prisma.vendor.findMany({ where: { companyId }, select: { bcId: true, name: true } }),
     ]);
     // Nombre de cada cuenta por tipo|número, para mostrarlo junto al nº en las líneas del diario
     const names: Record<string, string> = {};
-    for (const a of accounts as any[]) names[`G/L Account|${a.number}`] = a.displayName;
+    // Solo cuentas de registro (no títulos ni totales) y no bloqueadas
+    for (const a of (accounts as any[]).filter(a => a.accountType === 'Posting' && !a.blocked)) names[`G/L Account|${a.number}`] = a.displayName;
     for (const b of banks as any[]) names[`Bank Account|${b.number}`] = b.displayName;
     for (const c of customers) if (c.bcId) names[`Customer|${c.bcId}`] = c.name;
     for (const v of vendors) if (v.bcId) names[`Vendor|${v.bcId}`] = v.name;
