@@ -4,11 +4,13 @@ import { useEffect, useState } from 'react';
 import { companyLabel, useCompany } from '@/contexts/CompanyContext';
 import DForceView from './DForceView';
 import MailfinishView from './MailfinishView';
+import MagazineAnalysisView from './MagazineAnalysisView';
 
 // MAGAZINES (solo Craze Entertainment): las revistas de D-FORCE, con una pestaña por proceso
 const TABS = [
   { id: 'dforce', label: 'D-FORCE' },
   { id: 'mailfinish', label: 'MAILFINISH' },
+  { id: 'analysis', label: 'MAGAZINE ANALYSIS' },
 ] as const;
 type TabId = typeof TABS[number]['id'];
 const COMPANY = 'Craze Entertainment';
@@ -55,7 +57,7 @@ export default function MagazinesPage() {
         </div>
       </header>
       <main className="w-full px-4 md:px-8 pt-6">
-        {tab === 'dforce' ? <DForceView /> : <MailfinishView />}
+        {tab === 'dforce' ? <DForceView /> : tab === 'mailfinish' ? <MailfinishView /> : <MagazineAnalysisView />}
       </main>
     </div>
   );
