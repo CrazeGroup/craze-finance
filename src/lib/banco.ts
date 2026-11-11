@@ -812,7 +812,7 @@ export async function sendToBatch(ctx: BcContext, journal: { id: string; code: s
     try {
       await bcRequest('PATCH', key(c.lineNumber), ctx.token, {
         Document_Type: c.docType,
-        ...(c.applies ? { Applies_to_Doc_Type: c.applies.type.replace(/ /g, '_x0020_'), Applies_to_Doc_No: c.applies.no } : {}),
+        ...(c.applies ? { Applies_to_Doc_Type: c.applies.type, Applies_to_Doc_No: c.applies.no } : {}),
       });
     } catch (e: any) {
       warnings.push(`No se ha podido poner el tipo de documento ni la liquidación en las líneas (${String(e?.message || e).substring(0, 160)}); revísalo en BC.`);
@@ -850,7 +850,7 @@ export async function sendClearing(ctx: BcContext, journal: { id: string; code: 
     throw e;
   }
 
-  const warnings: string[] = [];
+  // Si algo falla (BC no deja liquidar, divisa…) se borran las líneas: o quedan las dos bien o ninguna
   const template = await templateName(ctx, journal.id);
   const key = (n: number) => `${ctx.odataCompanyBase}/General_Journals_Excel(Journal_Template_Name='${encodeURIComponent(q(template))}',Journal_Batch_Name='${encodeURIComponent(q(journal.code))}',Line_No=${n})`;
   for (const c of created) {
@@ -860,13 +860,16 @@ export async function sendClearing(ctx: BcContext, journal: { id: string; code: 
         Bal_Account_Type: 'G/L Account', Bal_Account_No: '', ...(c.line.currencyCode ? { Currency_Code: c.line.currencyCode } : {}),
       });
       await bcRequest('PATCH', key(c.lineNumber), ctx.token, {
-        Applies_to_Doc_Type: c.line.appliesToDocType && c.line.appliesToDocType !== 'Empty' ? c.line.appliesToDocType.replace(/ /g, '_x0020_') : ' ',
+        Applies_to_Doc_Type: c.line.appliesToDocType && c.line.appliesToDocType !== 'Empty' ? c.line.appliesToDocType : ' ',
         Applies_to_Doc_No: c.line.appliesToDocNo,
       });
     } catch (e: any) {
-      warnings.push(`Línea ${c.line.accountType} ${c.line.accountNo}: no se ha podido quitar la contrapartida o poner la liquidación (${String(e?.message || e).substring(0, 160)}); revísalo en BC.`);
+      for (const d of created) await bcRequest('DELETE', `${base}(${d.id})`, ctx.token).catch(() => {});
+      const msg = String(e?.message || e).replace(/^BC PATCH [^:]*: /, '');
+      throw new Error(`BC no deja liquidar ${c.line.appliesToDocType} ${c.line.appliesToDocNo} (${c.line.accountType} ${c.line.accountNo}): ${msg.substring(0, 300)}. No se ha dejado nada en el lote.`);
     }
   }
+  const warnings: string[] = [];
   if (!docNo) warnings.push('Las líneas han quedado sin nº de documento: ponles el mismo en BC antes de registrar.');
   return { lines: created.length, documentNumber: docNo, warnings };
 }

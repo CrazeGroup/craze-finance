@@ -293,7 +293,7 @@ export default function MovimientosPage() {
 const sideLabel = (t: string) => (t === 'Customer' ? 'Cliente' : 'Proveedor');
 type Cross = {
   type: 'Customer' | 'Vendor'; entryNo: number; entityNo: string; entityName: string; documentType: string; documentNo: string;
-  externalDocumentNo: string; postingDate: string | null; remaining: number; cited: boolean; count: number;
+  externalDocumentNo: string; postingDate: string | null; remaining: number; reason: 'cited' | 'name' | 'amount'; cited: boolean; count: number;
 };
 
 // El mismo importe (de signo contrario) abierto en otro cliente o proveedor, con el botón para cerrar ambos
@@ -301,12 +301,12 @@ function CrossCell({ c, nf, dateEs, sent, onClose }: { c?: Cross | null; nf: (v:
   if (!c) return <span className="text-gray-300">—</span>;
   return (
     <div className="flex items-start gap-2">
-      <span className={`inline-flex items-start gap-1 border rounded px-1.5 py-0.5 text-xs ${c.cited ? 'bg-violet-50 text-violet-800 border-violet-200' : 'bg-orange-50 text-orange-800 border-orange-200'}`}
+      <span className={`inline-flex items-start gap-1 border rounded px-1.5 py-0.5 text-xs ${c.reason !== 'amount' ? 'bg-violet-50 text-violet-800 border-violet-200' : 'bg-orange-50 text-orange-800 border-orange-200'}`}
         title={`${sideLabel(c.type)} ${c.entityNo} · ${c.entityName}\n${c.documentType} ${c.documentNo}${c.externalDocumentNo ? ` (${c.externalDocumentNo})` : ''} · ${dateEs(c.postingDate || '')} · ${nf(c.remaining)}${c.count > 1 ? `\n${c.count} movimientos con ese importe: se muestra ${c.cited ? 'el que se cita' : 'el de fecha más cercana'}` : ''}`}>
         <Shuffle size={12} className="mt-0.5 shrink-0" />
         <span>
           <span className="font-semibold">{c.entityName}</span>
-          <span className="block text-[11px] opacity-80">{sideLabel(c.type)} {c.entityNo} · {c.documentType} {c.documentNo} · {nf(c.remaining)}{c.cited ? ' · se citan' : ''}{c.count > 1 ? ` · ${c.count} posibles` : ''}</span>
+          <span className="block text-[11px] opacity-80">{sideLabel(c.type)} {c.entityNo} · {c.documentType} {c.documentNo} · {nf(c.remaining)} · {c.reason === 'cited' ? 'se citan' : c.reason === 'name' ? 'nombre parecido' : 'solo por importe'}{c.count > 1 ? ` · ${c.count} posibles` : ''}</span>
         </span>
       </span>
       {sent
@@ -321,14 +321,17 @@ function ClearDialog({ entry, nf, onCancel, onSent }: { entry: any; nf: (v: numb
   const c: Cross = entry.cross;
   const [journals, setJournals] = useState<{ code: string; name: string; bankNo: string }[]>([]);
   const [journalCode, setJournalCode] = useState('');
-  const [date, setDate] = useState(() => new Date().toISOString().substring(0, 10));
+  // BC no deja liquidar un movimiento posterior a la fecha del asiento: como mínimo, la del más reciente de los dos
+  const minDate = [entry.postingDate, c.postingDate].filter(Boolean).sort().pop() || '';
+  const [date, setDate] = useState(() => { const t = new Date().toISOString().substring(0, 10); return t < minDate ? minDate : t; });
+  const tooEarly = !!minDate && date < minDate;
   const [busy, setBusy] = useState('Cargando lotes…');
   const [error, setError] = useState('');
   const [result, setResult] = useState<{ documentNumber: string; warnings: string[] } | null>(null);
   const descr = `Cierre ${entry.documentNo} / ${c.documentNo}`;
   const lines = [
-    { accountType: entry.type, accountNo: entry.entityNo, name: entry.entityName, amount: -entry.remainingAmount, description: descr, appliesToDocType: entry.documentType, appliesToDocNo: entry.documentNo, currencyCode: entry.currencyCode || '' },
-    { accountType: c.type, accountNo: c.entityNo, name: c.entityName, amount: -c.remaining, description: descr, appliesToDocType: c.documentType, appliesToDocNo: c.documentNo, currencyCode: entry.currencyCode || '' },
+    { accountType: entry.type, accountNo: entry.entityNo, name: entry.entityName, amount: -entry.remainingAmount, description: descr, appliesToDocType: entry.documentType, appliesToDocNo: entry.documentNo, currencyCode: entry.currencyCode || '', postingDate: entry.postingDate },
+    { accountType: c.type, accountNo: c.entityNo, name: c.entityName, amount: -c.remaining, description: descr, appliesToDocType: c.documentType, appliesToDocNo: c.documentNo, currencyCode: entry.currencyCode || '', postingDate: c.postingDate },
   ];
 
   // Mismo lote por defecto que BANCO: el de la cuenta de banco que se usó la última vez
@@ -379,7 +382,8 @@ function ClearDialog({ entry, nf, onCancel, onSent }: { entry: any; nf: (v: numb
           </label>
           <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
             Fecha
-            <input type="date" value={date} onChange={e => setDate(e.target.value)} className={`${input} block mt-1 normal-case tracking-normal font-normal`} />
+            <input type="date" value={date} min={minDate || undefined} onChange={e => setDate(e.target.value)} className={`${input} block mt-1 normal-case tracking-normal font-normal ${tooEarly ? 'border-red-400' : ''}`} />
+            {tooEarly && <span className="block mt-1 normal-case tracking-normal font-normal text-red-600">No antes del {minDate.split('-').reverse().join('/')}</span>}
           </label>
         </div>
         <table className="w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
@@ -407,7 +411,7 @@ function ClearDialog({ entry, nf, onCancel, onSent }: { entry: any; nf: (v: numb
         <div className="flex justify-end gap-2">
           <button onClick={onCancel} className="px-3 py-1.5 text-sm font-semibold border border-gray-300 rounded-lg bg-white hover:bg-gray-50">{result ? 'Cerrar' : 'Cancelar'}</button>
           {!result && (
-            <button onClick={send} disabled={!journalCode || !date || !!busy}
+            <button onClick={send} disabled={!journalCode || !date || tooEarly || !!busy}
               className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold rounded-lg bg-gray-900 text-white hover:bg-gray-800 disabled:opacity-50">
               {busy ? <RefreshCcw size={15} className="animate-spin" /> : <Send size={15} />} {busy || `Enviar al lote ${journalCode || '…'}`}
             </button>
