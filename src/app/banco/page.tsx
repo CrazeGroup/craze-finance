@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, FileText, Loader2, Plus, Send, Trash2, Upload } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertCircle, CheckCircle2, ChevronDown, FileText, Loader2, Plus, Send, Trash2, Upload } from 'lucide-react';
 import { companyLabel, useCompany } from '@/contexts/CompanyContext';
 import type { AccountType, MovementResult, SuggestedLine } from '@/lib/banco';
 
@@ -16,8 +16,6 @@ const TYPES: { value: AccountType; label: string }[] = [
   { value: 'G/L Account', label: 'Cuenta' }, { value: 'Customer', label: 'Cliente' },
   { value: 'Vendor', label: 'Proveedor' }, { value: 'Bank Account', label: 'Banco' },
 ];
-// Lista de cuentas de un tipo (para el desplegable con búsqueda del nº de cuenta)
-const listId = (t: string) => `banco-cuentas-${t.replace(/[^A-Za-z]/g, '')}`;
 const fmt = (v: number) => v.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fdate = (d: string) => d.split('-').reverse().join('.');
 const cents = (v: number) => Math.round(v * 100);
@@ -171,11 +169,6 @@ export default function BancoPage() {
   const th = 'px-3 py-2 font-semibold';
   return (
     <div className="min-h-screen bg-[#F3F4F7] pb-28">
-      {TYPES.map(t => (
-        <datalist key={t.value} id={listId(t.value)}>
-          {(accountLists[t.value] || []).map(([no, name]) => <option key={no} value={no}>{name}</option>)}
-        </datalist>
-      ))}
       <header className="sticky top-0 z-20 bg-white border-b border-gray-200">
         <div className="w-full px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="mr-auto">
@@ -305,7 +298,7 @@ export default function BancoPage() {
                             ))}
                           </div>
                         ) : (
-                          <LinesEditor row={r} input={input} names={names} setLine={(i, p) => setLine(r.idx, i, p)}
+                          <LinesEditor row={r} input={input} names={names} lists={accountLists} setLine={(i, p) => setLine(r.idx, i, p)}
                             setDoc={v => update(r.idx, x => ({ ...x, documentNo: v }))}
                             addLine={() => update(r.idx, x => ({ ...x, lines: [...x.lines, { accountType: x.lines[0]?.accountType || '', accountNo: x.lines[0]?.accountNo || '', accountName: '', description: x.lines[0]?.description || '', amount: Math.round((x.amount - x.lines.reduce((t, l) => t + l.amount, 0)) * 100) / 100 }] }))}
                             removeLine={i => update(r.idx, x => ({ ...x, lines: x.lines.filter((_, j) => j !== i) }))} />
@@ -337,8 +330,8 @@ export default function BancoPage() {
   );
 }
 
-function LinesEditor({ row, input, names, setLine, setDoc, addLine, removeLine }: {
-  row: Row; input: string; names: Record<string, string>; setLine: (i: number, patch: Partial<SuggestedLine>) => void; setDoc: (v: string) => void;
+function LinesEditor({ row, input, names, lists, setLine, setDoc, addLine, removeLine }: {
+  row: Row; input: string; names: Record<string, string>; lists: Record<string, [string, string][]>; setLine: (i: number, patch: Partial<SuggestedLine>) => void; setDoc: (v: string) => void;
   addLine: () => void; removeLine: (i: number) => void;
 }) {
   const s = row.suggestion;
@@ -351,9 +344,7 @@ function LinesEditor({ row, input, names, setLine, setDoc, addLine, removeLine }
             <option value="">—</option>
             {TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
           </select>
-          <input value={l.accountNo} onChange={e => setLine(i, { accountNo: e.target.value, accountName: '' })} placeholder="Buscar…"
-            list={l.accountType ? listId(l.accountType) : undefined} onFocus={e => e.currentTarget.select()}
-            title="Escribe el nº o parte del nombre y elige en la lista"
+          <AccountPicker value={l.accountNo} options={lists[l.accountType] || []} onChange={no => setLine(i, { accountNo: no, accountName: '' })}
             className={`${input} w-32 ${!l.accountNo.trim() ? 'border-red-300' : ''}`} />
           {(() => {
             const name = names[`${l.accountType}|${l.accountNo.trim()}`] || l.accountName;
@@ -379,5 +370,73 @@ function LinesEditor({ row, input, names, setLine, setDoc, addLine, removeLine }
         {cents(diff) !== 0 && <span className="text-red-700 font-semibold">Faltan {fmt(diff)}</span>}
       </div>
     </div>
+  );
+}
+
+// Selector de cuenta con búsqueda (nº o nombre) sobre todas las cuentas del tipo: G/L Accounts, Vendors, Customers o
+// Bank Accounts. La lista se abre con posición fija para que no la recorte la tabla; Enter sin resultados deja lo escrito.
+const plain = (v: string) => v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+function AccountPicker({ value, options, onChange, className }: {
+  value: string; options: [string, string][]; onChange: (no: string) => void; className: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [hi, setHi] = useState(0);
+  const [pos, setPos] = useState({ left: 0, top: 0, up: false });
+  const btn = useRef<HTMLButtonElement>(null);
+  const pop = useRef<HTMLDivElement>(null);
+  const hits = useMemo(() => {
+    const words = plain(q).split(/\s+/).filter(Boolean);
+    const all = words.length ? options.filter(([no, name]) => { const t = plain(`${no} ${name}`); return words.every(w => t.includes(w)); }) : options;
+    return all.slice(0, 200);
+  }, [q, options]);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => { if (!pop.current?.contains(e.target as Node) && !btn.current?.contains(e.target as Node)) setOpen(false); };
+    const off = (e: Event) => { if (!pop.current?.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', close);
+    window.addEventListener('scroll', off, true);
+    return () => { document.removeEventListener('mousedown', close); window.removeEventListener('scroll', off, true); };
+  }, [open]);
+  useEffect(() => { pop.current?.querySelector(`[data-i="${hi}"]`)?.scrollIntoView({ block: 'nearest' }); }, [hi]);
+  const show = () => {
+    const r = btn.current!.getBoundingClientRect();
+    const up = r.bottom + 330 > window.innerHeight && r.top > 330;
+    setPos({ left: Math.min(r.left, window.innerWidth - 430), top: up ? r.top - 4 : r.bottom + 4, up });
+    setQ(''); setHi(Math.max(0, options.findIndex(o => o[0] === value))); setOpen(true);
+  };
+  const pick = (no: string) => { onChange(no); setOpen(false); btn.current?.focus(); };
+  return (
+    <>
+      <button ref={btn} type="button" onClick={() => (open ? setOpen(false) : show())} className={`${className} flex items-center justify-between gap-1 text-left`}>
+        <span className="truncate">{value || <span className="text-gray-400">Elegir…</span>}</span>
+        <ChevronDown size={14} className="text-gray-400 flex-shrink-0" />
+      </button>
+      {open && (
+        <div ref={pop} style={{ left: pos.left, top: pos.top, transform: pos.up ? 'translateY(-100%)' : undefined }}
+          className="fixed z-50 w-[420px] bg-white border border-gray-200 rounded-lg shadow-xl p-2">
+          <input autoFocus value={q} placeholder={options.length ? `Buscar entre ${options.length} por nº o nombre…` : 'Elige antes el tipo de cuenta'}
+            onChange={e => { setQ(e.target.value); setHi(0); }}
+            onKeyDown={e => {
+              if (e.key === 'ArrowDown') { e.preventDefault(); setHi(h => Math.min(h + 1, hits.length - 1)); }
+              else if (e.key === 'ArrowUp') { e.preventDefault(); setHi(h => Math.max(h - 1, 0)); }
+              else if (e.key === 'Enter') { e.preventDefault(); if (hits[hi]) pick(hits[hi][0]); else if (q.trim()) pick(q.trim()); }
+              else if (e.key === 'Escape') { setOpen(false); btn.current?.focus(); }
+            }}
+            className="w-full border border-gray-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:border-gray-900" />
+          <div className="mt-1.5 max-h-72 overflow-y-auto">
+            {hits.map(([no, name], i) => (
+              <button key={no} type="button" data-i={i} onMouseEnter={() => setHi(i)} onClick={() => pick(no)}
+                className={`w-full flex gap-3 px-2 py-1.5 rounded text-left text-sm ${i === hi ? 'bg-gray-100' : ''} ${no === value ? 'font-semibold' : ''}`}>
+                <span className="w-24 flex-shrink-0 text-gray-900">{no}</span>
+                <span className="truncate text-gray-600">{name}</span>
+              </button>
+            ))}
+            {!hits.length && <p className="px-2 py-2 text-xs text-gray-500">{q.trim() ? `Sin resultados. Enter para usar "${q.trim()}".` : 'Sin cuentas.'}</p>}
+            {hits.length === 200 && <p className="px-2 py-1 text-[11px] text-gray-400">Primeros 200: escribe para afinar.</p>}
+          </div>
+        </div>
+      )}
+    </>
   );
 }
