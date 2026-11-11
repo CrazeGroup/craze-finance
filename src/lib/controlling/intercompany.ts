@@ -89,7 +89,7 @@ export async function intercompanyReport(source: string, from: string, requested
   const to = open ? today() : requestedTo;
   const old = to < shift(today(), -60);
   const maxAge = old ? 30 * 24 * HOUR : open ? HOUR : 12 * HOUR;
-  return cached(`intercompany11:${source}:${from}:${open ? 'hoy' : to}`, maxAge, async () => {
+  return cached(`intercompany12:${source}:${from}:${open ? 'hoy' : to}`, maxAge, async () => {
     const ctx = await getBcContext(source);
     const sales = (await bcFetchAll(odataUrl(`${ctx.apiBase}/salesInvoices`, {
       $filter: `postingDate ge ${from} and postingDate le ${to}`,
@@ -176,9 +176,10 @@ export async function intercompanyReport(source: string, from: string, requested
           // Ventas finales registradas fuera de la ventana: se buscan por nº o External Document No.
           const known = new Set(tSales.flatMap((r: any) => [norm(r.number), norm(r.externalDocumentNumber)]).filter(Boolean));
           const missing = Array.from(new Set(mine.map(r => s(r.x.externalDocumentNumber)).filter(e => e && !known.has(norm(e)))));
-          for (const part of chunk(missing, 10)) {
+          // (BC no admite «or» entre campos distintos: una consulta por campo)
+          for (const [field, part] of chunk(missing, 15).flatMap(p => [['externalDocumentNumber', p], ['number', p]] as const)) {
             const found = await bcFetchAll(odataUrl(`${tctx.apiBase}/salesInvoices`, {
-              $filter: part.map(e => `externalDocumentNumber eq '${q(e)}' or number eq '${q(e)}'`).join(' or '),
+              $filter: part.map(e => `${field} eq '${q(e)}'`).join(' or '),
               $select: 'number,externalDocumentNumber,postingDate,customerName,currencyCode,totalAmountExcludingTax,status',
             }), tctx.token).catch(() => [] as any[]);
             tSales.push(...found.filter((r: any) => s(r.status) !== 'Draft' && !groupCompanyOf(s(r.customerName)) && !tSales.some((x: any) => s(x.number) === s(r.number))));
