@@ -24,6 +24,10 @@ const LOOKBACK_DAYS = 92;   // envíos de finales del año anterior que se factu
 const s = (v: any) => (v == null ? '' : String(v).trim());
 const r2 = (v: number) => Math.round(v * 100) / 100;
 const isAmazon = (name: string) => /amazon/i.test(name);
+// Clientes Amazon que no son ventas a Amazon (ajustes de stock FBA): fuera del informe
+const isExcludedCustomer = (name: string) => /regulari/i.test(name);
+// Ads de países sin cliente Amazon propio: van con las ventas de otro país (Polonia se vende desde Amazon DE)
+const ADS_COUNTRY: Record<string, string> = { PL: 'DE' };
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400000).toISOString().substring(0, 10);
 
 export type AmazonCustomer = { no: string; name: string; country: string };
@@ -57,7 +61,7 @@ async function byMonths(ctx: BcContext, base: string, dateField: string, from: s
 export async function amazonYear(ctx: BcContext, company: string, year: number, force = false): Promise<AmazonYear> {
   const today = new Date().toISOString().substring(0, 10);
   const closed = `${year}-12-31` < today;
-  return cached(`amazonMargin1:${company}:${year}`, closed ? 7 * 24 * HOUR : HOUR, () => compute(ctx, year, today), force,
+  return cached(`amazonMargin2:${company}:${year}`, closed ? 7 * 24 * HOUR : HOUR, () => compute(ctx, year, today), force,
     { refreshAfterMs: closed ? 7 * 24 * HOUR : HOUR });
 }
 
@@ -93,7 +97,7 @@ async function compute(ctx: BcContext, year: number, today: string): Promise<Ama
 
   // Clientes Amazon (Sell-to)
   const custInfo = new Map<string, AmazonCustomer>();
-  for (const c of customerRows) if (isAmazon(s(c.displayName))) custInfo.set(s(c.number), { no: s(c.number), name: s(c.displayName), country: s(c.country) });
+  for (const c of customerRows) if (isAmazon(s(c.displayName)) && !isExcludedCustomer(s(c.displayName))) custInfo.set(s(c.number), { no: s(c.number), name: s(c.displayName), country: s(c.country) });
 
   // Factor a divisa local por documento
   const factor = new Map<string, number>();
@@ -199,7 +203,7 @@ async function compute(ctx: BcContext, year: number, today: string): Promise<Ama
 
   // Amazon Ads por país y mes
   const vendorCountry = new Map<string, string>();
-  for (const v of vendorRows) if (isAmazon(s(v.displayName))) vendorCountry.set(s(v.number), s(v.country));
+  for (const v of vendorRows) if (isAmazon(s(v.displayName))) vendorCountry.set(s(v.number), ADS_COUNTRY[s(v.country)] || s(v.country));
   const adsBy = new Map<string, number>();
   const addAds = (l: any, sign: number) => {
     const country = vendorCountry.get(s(l.buyFromVendorNo));

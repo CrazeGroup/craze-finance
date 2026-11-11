@@ -231,10 +231,10 @@ export default function AmazonPage() {
                       </table>
                     </div>
                     <div className="mt-3 space-y-1 text-[11px] text-gray-500">
-                      <p>Cliente = Sell-to de la factura (clientes cuyo nombre contiene «Amazon»); importes en divisa local, sin IVA. Coste = cantidad × Unit Cost (LCY) de la línea.</p>
+                      <p>Cliente = Sell-to de la factura (clientes cuyo nombre contiene «Amazon», sin «FBA Regularization»); importes en divisa local, sin IVA. Coste = cantidad × Unit Cost (LCY) de la línea.</p>
                       <p>Logística = Total Charges de Logistic Costs: su Order No. (nº de Warehouse Shipment) → envío registrado → pedido de venta → primera factura del pedido desde la fecha del envío, repartido entre sus líneas por importe.
                         {data.cur.logistic.unassigned ? ` Envíos a Amazon aún sin factura (o sin enlace): ${eur(data.cur.logistic.unassigned)} en ${data.cur.logistic.unassignedRows} envíos, no incluidos.` : ''}</p>
-                      <p>Amazon Ads = artículo AA-00015 en facturas/abonos de compra de proveedores Amazon, por país del proveedor y mes, repartido entre los clientes Amazon de ese país en proporción a la venta del mes.</p>
+                      <p>Amazon Ads = artículo AA-00015 en facturas/abonos de compra de proveedores Amazon, por país del proveedor (Polonia con Alemania) y mes, repartido entre los clientes Amazon de ese país en proporción a la venta del mes.</p>
                     </div>
                   </Card>
                 )}
