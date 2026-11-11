@@ -73,13 +73,38 @@ export function analysisDates(month: string) {
   return { year, cur, prev };
 }
 
-// Filas compactas [fecha, artículo, location, valor, uds] con los artículos y locations indexados
-export async function indexer(force: boolean) {
+// Atributos de un artículo (ficha de CRAZE GmbH + Royalty Code) y descripción de los Raw Article / Article To Root.
+// Lo usan Análisis Inventario y Amazon (margen por cliente).
+export async function itemCatalog(force: boolean) {
   const [attrs, royalty] = await Promise.all([
     itemAttributes(force),
     royaltyCodesByItem(force).catch(() => ({} as Record<string, string>)),
   ]);
   const attrBy = new Map(attrs.map(a => [a.no, a]));
+  const attrsOf = (no: string, desc: string): InvAttrs => {
+    const a = attrBy.get(no);
+    const card = cardItem(no, royalty);
+    return {
+      no, desc: a?.desc || desc, range: a?.range || '', cat: a?.cat || '', line: a?.line || '',
+      license: a?.license || '', bu: a?.bu || '', raw: a?.raw || '', root: a?.root || '', royalty: card ? royalty[card] || '' : '',
+      cg: a?.cg || '', pmc: a?.pmc || '',
+    };
+  };
+  // Descripción de Raw Article / Article To Root: la del artículo con ese nº (o nº + DE / EN)
+  const rawDescs = (items: InvAttrs[]) => {
+    const descOf = new Map(attrs.map(a => [a.no, a.desc]));
+    const rawDesc: Record<string, string> = {};
+    for (const code of new Set(items.flatMap(i => [i.raw, i.root]).filter(Boolean))) {
+      rawDesc[code] = descOf.get(code) || descOf.get(`${code}DE`) || descOf.get(`${code}EN`) || '';
+    }
+    return rawDesc;
+  };
+  return { attrsOf, rawDescs };
+}
+
+// Filas compactas [fecha, artículo, location, valor, uds] con los artículos y locations indexados
+export async function indexer(force: boolean) {
+  const catalog = await itemCatalog(force);
   const items: InvAttrs[] = [];
   const itemIdx = new Map<string, number>();
   const locs: string[] = [];
@@ -88,29 +113,15 @@ export async function indexer(force: boolean) {
   const add = (di: number, no: string, desc: string, loc: string, value: number, qty: number) => {
     let ii = itemIdx.get(no);
     if (ii === undefined) {
-      const a = attrBy.get(no);
-      const card = cardItem(no, royalty);
       ii = items.length;
       itemIdx.set(no, ii);
-      items.push({
-        no, desc: a?.desc || desc, range: a?.range || '', cat: a?.cat || '', line: a?.line || '',
-        license: a?.license || '', bu: a?.bu || '', raw: a?.raw || '', root: a?.root || '', royalty: card ? royalty[card] || '' : '',
-        cg: a?.cg || '', pmc: a?.pmc || '',
-      });
+      items.push(catalog.attrsOf(no, desc));
     }
     let li = locIdx.get(loc);
     if (li === undefined) { li = locs.length; locIdx.set(loc, li); locs.push(loc); }
     rows.push([di, ii, li, Math.round(value * 100) / 100, qty]);
   };
-  // Descripción de Raw Article / Article To Root: la del artículo con ese nº (o nº + DE / EN)
-  const rawDescs = () => {
-    const descOf = new Map(attrs.map(a => [a.no, a.desc]));
-    const rawDesc: Record<string, string> = {};
-    for (const code of new Set(items.flatMap(i => [i.raw, i.root]).filter(Boolean))) {
-      rawDesc[code] = descOf.get(code) || descOf.get(`${code}DE`) || descOf.get(`${code}EN`) || '';
-    }
-    return rawDesc;
-  };
+  const rawDescs = () => catalog.rawDescs(items);
   return { items, locs, rows, add, rawDescs };
 }
 

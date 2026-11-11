@@ -110,6 +110,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
     { href: '/controlling', label: 'Controlling', module: 'controlling' },
     { href: '/royalties', label: 'Royalties', module: 'royalties' },
     { href: '/commercial', label: 'Commercial Analysis', module: 'commercial' },
+    { href: '/amazon', label: 'Amazon', module: 'amazon' },
     { href: '/intercompany', label: 'Intercompany', module: 'intercompany' },
     { href: '/payment-proposal', label: 'Payment Proposal', module: 'payment_proposal' },
     { href: '/notas-compra', label: 'Notas de compra', module: 'notas_compra' },

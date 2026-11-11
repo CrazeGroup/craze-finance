@@ -20,6 +20,7 @@ const MODULES = [
   { id: 'controlling', label: 'Controlling' },
   { id: 'royalties', label: 'Royalties' },
   { id: 'commercial', label: 'Commercial Analysis' },
+  { id: 'amazon', label: 'Amazon (margen por cliente)' },
   { id: 'intercompany', label: 'Intercompany' },
   { id: 'payment_proposal', label: 'Payment Proposal' },
   { id: 'notas_compra', label: 'Notas de compra' },

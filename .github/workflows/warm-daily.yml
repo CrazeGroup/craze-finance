@@ -59,6 +59,8 @@ jobs:
           out.append(('CRAZE', 'commercial/dims'))
           for a in ['GmbH', 'UK', 'Swiss', 'Asia']:
               for yy in (y, y - 1): out.append(('CRAZE', f'commercial/facts?company={a}&year={yy}'))
+          # Amazon: margen por cliente del año en curso (y el anterior, que la ruta lee de su caché)
+          out.append(('CRAZE', f'amazon?year={y}'))
           for c, p in out: print(f'{c}|{p}')
           EOF
           fail=0

@@ -66,7 +66,7 @@ export async function middleware(request: NextRequest) {
     // If they don't have permission for this module (and are not an API route like /api/dashboard), block
     // We allow API routes since they might be fetching data for allowed components, 
     // but in a strict setup we'd check API routes too. Let's keep it simple for now and just check main UI routes.
-    const protectedUiRoutes = ['dashboard', 'riesgos', 'recobros', 'movimientos', 'pagos', 'cashflow', 'banco', 'cierre-mensual', 'settings'];
+    const protectedUiRoutes = ['dashboard', 'riesgos', 'recobros', 'movimientos', 'pagos', 'cashflow', 'banco', 'cierre-mensual', 'amazon', 'settings'];
     
     // Map routes to permission names
     const permissionMap: Record<string, string> = {

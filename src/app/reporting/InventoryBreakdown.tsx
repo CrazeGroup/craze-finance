@@ -16,8 +16,8 @@ export type Analysis = {
 // Características por las que se desglosa (como el selector de Commercial Analysis, más Product Range,
 // Categorization Code, Customer Group Code y PM Classification del artículo; sin Customer, Dimension, KAM ni Sell
 // Country, que no existen en el inventario)
-const DIMS = ['location', 'bu', 'line', 'range', 'cat', 'cg', 'pmc', 'license', 'royalty', 'raw', 'root', 'article'] as const;
-type Dim = typeof DIMS[number];
+export const DIMS = ['location', 'bu', 'line', 'range', 'cat', 'cg', 'pmc', 'license', 'royalty', 'raw', 'root', 'article'] as const;
+export type Dim = typeof DIMS[number];
 // En el valor de inventario no se desglosa por artículo (solo en las compras)
 const ARTICLE_DIMS: Dim[] = ['raw', 'root', 'article'];
 const DIM_LABEL: Record<Exclude<Dim, 'location'>, string> = {
@@ -58,13 +58,18 @@ function keyFn(an: Analysis, dim: Dim, none: string) {
   };
 }
 
+// opts (otros informes con el mismo gráfico + detalle, p. ej. Amazon): título y nota propios y las características
+// que se ofrecen en "Detalle por" (la primera es la inicial)
+export type BreakdownOpts = { title?: string; note?: string; dims?: Dim[] };
+
 // Valor de inventario: la tabla lleva además el nº de palets (uds del grupo por artículo ÷ uds por palet, hacia arriba)
 // y el Average Days in Stock del mes de cada grupo (adsData = filas del ADS)
-export default function InventoryBreakdown({ fmt, an, kind = 'stock', adsData }: { fmt: Fmt; an: Analysis; kind?: BreakdownKind; adsData?: Analysis | null }) {
+export default function InventoryBreakdown({ fmt, an, kind = 'stock', adsData, opts }: { fmt: Fmt; an: Analysis; kind?: BreakdownKind; adsData?: Analysis | null; opts?: BreakdownOpts }) {
   const { t, eur, pct, num } = fmt;
   const stock = kind === 'stock';
   const ads = kind === 'ads';
-  const [dim, setDim] = useState<Dim>('location');
+  const dimList = opts?.dims ?? DIMS.filter(d => kind === 'flow' || !ARTICLE_DIMS.includes(d));
+  const [dim, setDim] = useState<Dim>(dimList[0]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const nPrev = an.prevDates.length;
@@ -164,7 +169,7 @@ export default function InventoryBreakdown({ fmt, an, kind = 'stock', adsData }:
 
   return (
     <Grid>
-      <Card title={t(TITLE[kind])} sub={`${t('trendSub', { year: an.year, prev: an.year - 1 })} · ${dimName(dim)}: ${chartLabel}`}>
+      <Card title={opts?.title ?? t(TITLE[kind])} sub={`${t('trendSub', { year: an.year, prev: an.year - 1 })} · ${dimName(dim)}: ${chartLabel}`}>
         <LineChart fmt={fmt} height={360} days={ads} labels={months.map((_, i) => monthLabel(i))} datasets={[
           { label: String(an.year), data: series(nPrev, monthNo), color: C.navy },
           { label: String(an.year - 1), data: series(0, nPrev), color: C.magenta, dashed: true },
@@ -176,7 +181,7 @@ export default function InventoryBreakdown({ fmt, an, kind = 'stock', adsData }:
             {t('detailBy')}
             <select value={dim} onChange={e => changeDim(e.target.value as Dim)}
               className="rpt-noprint border border-gray-300 rounded-lg px-2 py-1 text-sm font-semibold bg-white">
-              {DIMS.filter(d => kind === 'flow' || !ARTICLE_DIMS.includes(d)).map(d => <option key={d} value={d}>{dimName(d)}</option>)}
+              {dimList.map(d => <option key={d} value={d}>{dimName(d)}</option>)}
             </select>
           </label>
           {selected.size > 0
@@ -248,7 +253,7 @@ export default function InventoryBreakdown({ fmt, an, kind = 'stock', adsData }:
             </tbody>
           </table>
         </div>
-        <p className="mt-3 text-[11px] text-gray-500">{t(NOTE[kind])}</p>
+        <p className="mt-3 text-[11px] text-gray-500">{opts?.note ?? t(NOTE[kind])}</p>
       </Card>
     </Grid>
   );
