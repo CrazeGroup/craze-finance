@@ -89,7 +89,7 @@ export async function intercompanyReport(source: string, from: string, requested
   const to = open ? today() : requestedTo;
   const old = to < shift(today(), -60);
   const maxAge = old ? 30 * 24 * HOUR : open ? HOUR : 12 * HOUR;
-  return cached(`intercompany10:${source}:${from}:${open ? 'hoy' : to}`, maxAge, async () => {
+  return cached(`intercompany11:${source}:${from}:${open ? 'hoy' : to}`, maxAge, async () => {
     const ctx = await getBcContext(source);
     const sales = (await bcFetchAll(odataUrl(`${ctx.apiBase}/salesInvoices`, {
       $filter: `postingDate ge ${from} and postingDate le ${to}`,
@@ -135,19 +135,29 @@ export async function intercompanyReport(source: string, from: string, requested
           $filter: `postingDate ge ${shift(from, -45)} and postingDate le ${shift(to, 90)}`,
           $select: 'number,vendorInvoiceNumber,invoiceDate,postingDate,vendorNumber,vendorName,currencyCode,totalAmountExcludingTax,status',
         }), tctx.token)).filter((p: any) => groupCompanyOf(s(p.vendorName)) === source);
+        const mine = ic.filter(r => r.target === t);
+        // Compras registradas fuera de la ventana (p. ej. meses antes que la venta): se buscan por Vendor Invoice No.
+        const inWindow = new Set(allPurch.map((p: any) => norm(p.vendorInvoiceNumber)));
+        for (const part of chunk(mine.map(r => s(r.x.number)).filter(no => !inWindow.has(norm(no))), 15)) {
+          const found = await bcFetchAll(odataUrl(`${tctx.apiBase}/purchaseInvoices`, {
+            $filter: part.map(no => `vendorInvoiceNumber eq '${q(no)}'`).join(' or '),
+            $select: 'number,vendorInvoiceNumber,invoiceDate,postingDate,vendorNumber,vendorName,currencyCode,totalAmountExcludingTax,status',
+          }), tctx.token).catch(() => [] as any[]);
+          allPurch.push(...found.filter((p: any) => groupCompanyOf(s(p.vendorName)) === source));
+        }
         const purch = allPurch.filter((p: any) => s(p.status) !== 'Draft');
+        const earliest = (docs: any[], d: string) => docs.reduce((m: string, x: any) => (d10(x.postingDate) && d10(x.postingDate) < m ? d10(x.postingDate) : m), d);
         // Compras en borrador (sin registrar) por Vendor Invoice No.
         const drafts = new Map<string, string>(allPurch.filter((p: any) => s(p.status) === 'Draft').map((p: any) => [norm(p.vendorInvoiceNumber), s(p.number)]));
         // Abonos de compra al origen, por la factura de compra que abonan
         const purchMemos = new Map<string, any[]>();
         for (const m of (await bcFetchAll(odataUrl(`${tctx.apiBase}/purchaseCreditMemos`, {
-          $filter: `postingDate ge ${shift(from, -45)} and postingDate le ${shift(to, 120)}`,
+          $filter: `postingDate ge ${earliest(purch, shift(from, -45))} and postingDate le ${shift(to, 120)}`,
           $select: 'number,invoiceNumber,vendorName,postingDate,totalAmountExcludingTax,status',
         }), tctx.token).catch(() => [] as any[])).filter((m: any) => s(m.status) !== 'Draft' && s(m.invoiceNumber) && groupCompanyOf(s(m.vendorName)) === source)) {
           purchMemos.set(s(m.invoiceNumber), [...(purchMemos.get(s(m.invoiceNumber)) || []), m]);
         }
         const purchases = new Map(purch.map((p: any) => [norm(p.vendorInvoiceNumber), p]));
-        const mine = ic.filter(r => r.target === t);
         const matchedNos = mine.map(r => purchases.get(norm(r.x.number))?.number).filter(Boolean) as string[];
         const salesNos = new Set(mine.map(r => norm(r.x.number)));
         // Compras al origen dentro del periodo sin factura de venta del origen en el periodo
@@ -163,6 +173,16 @@ export async function intercompanyReport(source: string, from: string, requested
             $filter: `postingDate ge ${shift(from, -45)} and postingDate le ${shift(to, 90)}`,
             $select: 'number,externalDocumentNumber,postingDate,customerName,currencyCode,totalAmountExcludingTax,status',
           }), tctx.token)).filter((r: any) => s(r.status) !== 'Draft' && !groupCompanyOf(s(r.customerName)));
+          // Ventas finales registradas fuera de la ventana: se buscan por nº o External Document No.
+          const known = new Set(tSales.flatMap((r: any) => [norm(r.number), norm(r.externalDocumentNumber)]).filter(Boolean));
+          const missing = Array.from(new Set(mine.map(r => s(r.x.externalDocumentNumber)).filter(e => e && !known.has(norm(e)))));
+          for (const part of chunk(missing, 10)) {
+            const found = await bcFetchAll(odataUrl(`${tctx.apiBase}/salesInvoices`, {
+              $filter: part.map(e => `externalDocumentNumber eq '${q(e)}' or number eq '${q(e)}'`).join(' or '),
+              $select: 'number,externalDocumentNumber,postingDate,customerName,currencyCode,totalAmountExcludingTax,status',
+            }), tctx.token).catch(() => [] as any[]);
+            tSales.push(...found.filter((r: any) => s(r.status) !== 'Draft' && !groupCompanyOf(s(r.customerName)) && !tSales.some((x: any) => s(x.number) === s(r.number))));
+          }
           const byNo = new Map(tSales.map((r: any) => [norm(r.number), r]));
           const byExt = new Map<string, any>();
           for (const r of tSales) if (norm(r.externalDocumentNumber) && !byExt.has(norm(r.externalDocumentNumber))) byExt.set(norm(r.externalDocumentNumber), r);
@@ -175,7 +195,7 @@ export async function intercompanyReport(source: string, from: string, requested
           const groupNos = new Set(Array.from(finalGroups.values()).flat().map((x: any) => s(x.number)));
           if (groupNos.size) {
             for (const m of (await bcFetchAll(odataUrl(`${tctx.apiBase}/salesCreditMemos`, {
-              $filter: `postingDate ge ${shift(from, -45)} and postingDate le ${shift(to, 120)}`,
+              $filter: `postingDate ge ${earliest(tSales, shift(from, -45))} and postingDate le ${shift(to, 120)}`,
               $select: 'number,invoiceNumber,customerName,postingDate,totalAmountExcludingTax,status',
             }), tctx.token).catch(() => [] as any[])).filter((m: any) => s(m.status) !== 'Draft' && groupNos.has(s(m.invoiceNumber)))) {
               finalMemos.set(s(m.invoiceNumber), [...(finalMemos.get(s(m.invoiceNumber)) || []), m]);
