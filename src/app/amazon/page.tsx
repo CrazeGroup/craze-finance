@@ -129,11 +129,11 @@ export default function AmazonPage() {
                 <Grid cols={3}>
                   {([['Ventas', 's'], ['Product cost', 'c'], ['Coste logístico', 'l'], ['Amazon Ads', 'a'], ['Deducciones Amazon', 'd']] as const).map(([label, k]) => (
                     <Kpi key={k} label={label} value={eur(view.total[k])}
-                      sub={view.totalLy && k !== 'a' ? `${data.prev!.year}: ${eur(view.totalLy[k])}${k !== 's' && view.total.s ? ` · ${pct((view.total[k] / view.total.s) * 100)} s/ventas` : ''}` : k !== 's' && view.total.s ? `${pct((view.total[k] / view.total.s) * 100)} s/ventas` : undefined}
-                      extra={view.totalLy && k !== 'a' ? <span className="text-xs font-semibold"><Delta fmt={fmt} cur={view.total[k]} prev={view.totalLy[k]} invert={k !== 's'} /></span> : undefined} />
+                      sub={view.totalLy && k !== 'a' && k !== 'd' ? `${data.prev!.year}: ${eur(view.totalLy[k])}${k !== 's' && view.total.s ? ` · ${pct((view.total[k] / view.total.s) * 100)} s/ventas` : ''}` : k !== 's' && view.total.s ? `${pct((view.total[k] / view.total.s) * 100)} s/ventas` : undefined}
+                      extra={view.totalLy && k !== 'a' && k !== 'd' ? <span className="text-xs font-semibold"><Delta fmt={fmt} cur={view.total[k]} prev={view.totalLy[k]} invert={k !== 's'} /></span> : undefined} />
                   ))}
                   <Kpi label="Margen" value={eur(margin(view.total))} tone={margin(view.total) < 0 ? 'red' : 'main'} highlight
-                    sub={`${pctOf(view.total)} s/ventas${view.totalLy ? ` · ${data.prev!.year}: ${eur(margin(view.totalLy))} (${pctOf(view.totalLy)})${view.prevEst.months.length ? ', Ads estimados' : ''}` : ''}`}
+                    sub={`${pctOf(view.total)} s/ventas${view.totalLy ? ` · ${data.prev!.year}: ${eur(margin(view.totalLy))} (${pctOf(view.totalLy)})${view.prevEst.some(e => e.months.length) ? `, ${view.prevEst.filter(e => e.months.length).map(e => KIND_NAME[e.kind]).join(' y ')} estimados` : ''}` : ''}`}
                     extra={view.totalLy ? <span className="text-xs font-semibold"><Delta fmt={fmt} cur={margin(view.total)} prev={margin(view.totalLy)} /></span> : undefined} />
                 </Grid>
                 <InventoryBreakdown fmt={fmt} an={view.analysis} kind="flow" opts={{
@@ -251,47 +251,67 @@ export default function AmazonPage() {
   );
 }
 
-// Meses sin facturas de Ads (2025 antes de que se subieran): Ads estimados = venta × % de Ads sobre la venta del país en
-// los meses que sí tienen facturas de Ads (de este año y del otro cargado). Solo los meses anteriores a la primera factura.
-type Est = { year: number; months: string[]; rates: Record<string, number> };
-function estimateAds(y: Year, refs: Year[]): { lines: number[][]; est: Est } {
-  const est: Est = { year: y.year, months: [], rates: {} };
-  const adsMonths = y.ads.filter(a => a.amount).map(a => a.month).sort();
-  if (!adsMonths.length) return { lines: y.lines, est };
-  const first = adsMonths[0];
-  const sales: Record<string, number> = {}, ads: Record<string, number> = {};
+// Meses sin facturas de Ads / deducciones (2025 antes de que se subieran, desde 10/2025): importe estimado = venta × % de
+// Ads (o deducciones) sobre la venta del país en los meses que sí tienen facturas (de este año y del otro cargado).
+// Primer mes con facturas = el primero con al menos el 5 % del importe medio mensual (sueltos de pocos euros no cuentan);
+// los meses anteriores se estiman (sustituyen lo poco que tengan).
+type Kind = 'a' | 'd';
+const KIND_COL: Record<Kind, number> = { a: 6, d: 7 };
+const KIND_NAME: Record<Kind, string> = { a: 'Ads', d: 'deducciones' };
+type Est = { year: number; kind: Kind; first: string; months: string[]; rates: Record<string, number> };
+const listOf = (y: Year, kind: Kind) => (kind === 'a' ? y.ads : y.ded || []);
+function firstMonth(y: Year, kind: Kind) {
+  const by: Record<string, number> = {};
+  for (const a of listOf(y, kind)) by[a.month] = (by[a.month] || 0) + a.amount;
+  const vals = Object.values(by).filter(v => Math.abs(v) > 0.5);
+  if (!vals.length) return '';
+  const avg = vals.reduce((t, v) => t + Math.abs(v), 0) / vals.length;
+  return Object.keys(by).sort().find(m => Math.abs(by[m]) >= 0.05 * avg) || '';
+}
+function estimate(y: Year, lines: number[][], refs: Year[], kind: Kind): { lines: number[][]; est: Est } {
+  const col = KIND_COL[kind];
+  const first = firstMonth(y, kind);
+  const est: Est = { year: y.year, kind, first, months: [], rates: {} };
+  if (!first || first <= `${y.year}-01`) return { lines, est };
+  const sales: Record<string, number> = {}, amt: Record<string, number> = {};
   for (const r of refs) {
-    const withAds = new Set(r.ads.filter(a => a.assigned).map(a => `${a.country}|${a.month}`));
+    const rFirst = firstMonth(r, kind);
+    const withData = new Set(listOf(r, kind).filter(a => a.assigned && a.month >= rFirst).map(a => `${a.country}|${a.month}`));
     for (const l of r.lines) {
       const d = r.docs[l[0]];
       const country = r.customers[d[3]].country;
-      if (!withAds.has(`${country}|${d[2].substring(0, 7)}`)) continue;
+      if (!withData.has(`${country}|${d[2].substring(0, 7)}`)) continue;
       sales[country] = (sales[country] || 0) + l[3];
-      ads[country] = (ads[country] || 0) + l[6];
+      amt[country] = (amt[country] || 0) + (l[col] || 0);
     }
   }
-  for (const c of Object.keys(sales)) if (sales[c] > 0 && ads[c]) est.rates[c] = ads[c] / sales[c];
+  for (const c of Object.keys(sales)) if (sales[c] > 0 && amt[c]) est.rates[c] = amt[c] / sales[c];
   const months = new Set<string>();
-  const lines = y.lines.map(l => {
+  const out = lines.map(l => {
     const d = y.docs[l[0]];
     const month = d[2].substring(0, 7);
     if (month >= first) return l;
     months.add(month);
     const e = [...l];
-    e[6] = l[3] * (est.rates[y.customers[d[3]].country] || 0);
+    while (e.length <= col) e.push(0);
+    e[col] = l[3] * (est.rates[y.customers[d[3]].country] || 0);
     return e;
   });
   est.months = Array.from(months).sort();
-  return { lines, est };
+  return { lines: out, est };
 }
-const estNote = (e: Est) => e.months.length
-  ? ` Ads de ${e.year} estimados en ${e.months.map(m => `${m.substring(5, 7)}/${m.substring(2, 4)}`).join(', ')} (sin facturas de Ads subidas): venta × % de Ads del país en los meses con facturas (${Object.entries(e.rates).map(([c, r]) => `${c} ${(r * 100).toFixed(1).replace('.', ',')} %`).join(', ')}).`
-  : '';
+function estimateAll(y: Year, refs: Year[]) {
+  const a = estimate(y, y.lines, refs, 'a');
+  const d = estimate(y, a.lines, refs, 'd');
+  return { lines: d.lines, ests: [a.est, d.est] };
+}
+const estNote = (ests: Est[]) => ests.filter(e => e.months.length).map(e =>
+  ` ${KIND_NAME[e.kind].charAt(0).toUpperCase() + KIND_NAME[e.kind].slice(1)} de ${e.year} estimados en ${e.months.map(m => `${m.substring(5, 7)}/${m.substring(2, 4)}`).join(', ')} (sin facturas subidas): venta × % de ${KIND_NAME[e.kind]} del país en los meses con facturas (${Object.entries(e.rates).map(([c, r]) => `${c} ${(r * 100).toFixed(1).replace('.', ',')} %`).join(', ')}).`).join('');
 
 // Agrega los datos: totales, clientes → meses → documentos y las filas del gráfico (formato de Análisis Inventario)
 function build({ cur, prev }: Data) {
-  const curE = estimateAds(cur, prev ? [cur, prev] : [cur]);
-  const prevE = prev ? estimateAds(prev, [prev, cur]) : null;
+  const curE = estimateAll(cur, prev ? [cur, prev] : [cur]);
+  const prevE = prev ? estimateAll(prev, [prev, cur]) : null;
   const lyTo = prev ? sameDay(cur.to, prev.year) : '';
   // Artículos de los dos años en una lista
   const items: InvAttrs[] = [];
@@ -352,14 +372,17 @@ function build({ cur, prev }: Data) {
       addTo(c.ly, l); addTo(totalLy, l);
       if (month <= cur.to.substring(0, 7)) addTo(monthOf(c, month).ly, l);
     }
-    for (const a of prev.ads) if (!a.assigned && a.month <= lyTo.substring(0, 7)) totalLy.a += a.amount;
-    for (const a of prev.ded || []) if (!a.assigned && a.month <= lyTo.substring(0, 7)) totalLy.d += a.amount;
+    // Lo que no tiene ventas en su país (sin asignar), en los meses con facturas (los anteriores van estimados)
+    for (const e of prevE!.ests) for (const a of listOf(prev, e.kind)) {
+      if (!a.assigned && a.month <= lyTo.substring(0, 7) && a.month >= e.first) totalLy[e.kind] += a.amount;
+    }
   }
   // Ads y deducciones sin clientes en su país y mes: se suman al total (margen) pero aparte de los clientes
   const openBy = new Map<string, { kind: 'a' | 'd'; country: string; amount: number; months: string[] }>();
   for (const [kind, list] of [['a', cur.ads], ['d', cur.ded || []]] as const) {
     for (const a of list) {
-      if (a.assigned || !a.amount) continue;
+      const first = curE.ests.find(e => e.kind === kind)?.first || '';
+      if (a.assigned || !a.amount || a.month < first) continue;
       const k = `${kind}|${a.country}`;
       const g = openBy.get(k) || { kind, country: a.country, amount: 0, months: [] };
       g.amount += a.amount; g.months.push(a.month.substring(5, 7) + '/' + a.month.substring(2, 4));
@@ -383,5 +406,5 @@ function build({ cur, prev }: Data) {
     year: cur.year, month: cur.to.substring(0, 7), dates: [...prevDates, ...curDates], curDates, prevDates,
     totals: [], items, locs: custKeys, rows, rawDesc: { ...(prev?.rawDesc || {}), ...cur.rawDesc },
   };
-  return { prevEst: prevE?.est ?? { year: 0, months: [], rates: {} }, curEst: curE.est, total: grand, totalLy, grand, customers, open, analysis };
+  return { prevEst: prevE?.ests ?? [], curEst: curE.ests, total: grand, totalLy, grand, customers, open, analysis };
 }
