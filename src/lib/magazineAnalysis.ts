@@ -1,5 +1,6 @@
 import { bcFetchAll, getBcContext, odataUrl, type BcContext } from '@/lib/bcClient';
-import { cached, HOUR } from '@/lib/reporting/cache';
+import { cached, HOUR, readSetting, writeSetting } from '@/lib/reporting/cache';
+import { pdfText } from '@/lib/ocr';
 import { CUSTOMER_NO, DFORCE_COMPANY } from '@/lib/dforce';
 
 // MAGAZINES › ANALYSIS (Craze Entertainment): beneficio de cada revista, con la estructura de tareas del Project Card.
@@ -40,7 +41,7 @@ export type Magazine = {
   locations: MagLocation[];
   entries: MagEntry[];
 };
-export type Unassigned = { reason: string; kind: MagEntry['kind']; doc: string; date: string; partner: string; no: string; description: string; project: string; task: string; qty: number; amount: number };
+export type Unassigned = { key: string; pdf?: string; reason: string; kind: MagEntry['kind']; doc: string; date: string; partner: string; no: string; description: string; project: string; task: string; qty: number; amount: number };
 export type MagazineAnalysis = {
   magazines: Magazine[];
   taskNames: Record<string, string>;
@@ -109,6 +110,59 @@ async function purchCrDates(ctx: BcContext) {
   return new Map(rows.map((r: any) => [s(r.no), s(r.postingDate)]));
 }
 
+// Revistas que cita un texto: "INKEE“, Ausgabe 0225", "Galupy 07/25", "GALUPY SPECIAL 01/2026" → artículos
+export function magazinesInText(text: string) {
+  const out = new Map<string, string>();
+  const re = /(GALUPY|INKEE)(\s*SPECIAL)?[^\n\d]{0,40}?(\d{1,2})\s*[\/\-.]?\s*(?:20)?(\d{2})(?!\d)/gi;
+  for (const m of String(text || '').replace(/\s+/g, ' ').matchAll(re)) {
+    const mm = +m[3];
+    if (mm < 1 || mm > 12) continue;
+    const item = `${m[1].toUpperCase() === 'INKEE' ? '05993' : m[2] ? '05994' : '05995'}_${m[4]}${String(mm).padStart(2, '0')}`;
+    if (!out.has(item)) {
+      const i = m.index || 0;
+      out.set(item, text.replace(/\s+/g, ' ').substring(Math.max(0, i - 40), i + m[0].length + 10).trim());
+    }
+  }
+  return out;
+}
+
+type PdfMags = { mags: string[]; snippet: string; error?: string };
+// Lee (una sola vez: se guarda por documento en el ajuste magazines:pdf-mags) el PDF adjunto de cada compra
+async function pdfMagazines(ctx: BcContext, docs: [string, MagEntry['kind']][]): Promise<Record<string, PdfMags>> {
+  const stored = await readSetting<Record<string, PdfMags>>('magazines:pdf-mags', {});
+  const todo = docs.filter(([doc]) => !stored[doc]);
+  if (!todo.length) return stored;
+  const get = async (url: string) => {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json' }, cache: 'no-store' });
+    if (!res.ok) throw new Error(`BC ${res.status}`);
+    return res;
+  };
+  const transient: Record<string, PdfMags> = {};
+  for (const [doc, kind] of todo.slice(0, 40)) {
+    const credit = kind === 'purchCrMemo';
+    try {
+      const head = (await (await get(odataUrl(`${ctx.apiBase}/${credit ? 'purchaseCreditMemos' : 'purchaseInvoices'}`, { $filter: `number eq '${doc.replace(/'/g, "''")}'`, $select: 'id' }))).json()).value?.[0];
+      if (!head) { stored[doc] = { mags: [], snippet: '', error: 'Documento no encontrado en BC' }; continue; }
+      const atts: any[] = (await (await get(odataUrl(`${ctx.apiBase}/documentAttachments`, {
+        $filter: `parentType eq '${credit ? 'Purchase Credit Memo' : 'Purchase Invoice'}' and parentId eq ${head.id}`, $select: 'id,fileName',
+      }))).json()).value || [];
+      const files = atts.filter(a => /\.pdf$/i.test(a.fileName || ''));
+      if (!files.length) { stored[doc] = { mags: [], snippet: '', error: 'Sin PDF adjunto en BC' }; continue; }
+      const found = new Map<string, string>();
+      for (const a of files) {
+        const text = await pdfText(new Uint8Array(await (await get(`${ctx.apiBase}/documentAttachments(${a.id})/attachmentContent`)).arrayBuffer())).catch(() => '');
+        magazinesInText(text).forEach((v, k) => { if (!found.has(k)) found.set(k, v); });
+      }
+      stored[doc] = { mags: Array.from(found.keys()), snippet: Array.from(found.values())[0] || '' };
+    } catch (e: any) {
+      // Error de BC: no se guarda, se reintenta en el próximo cálculo
+      transient[doc] = { mags: [], snippet: '', error: `No se ha podido leer el PDF: ${String(e.message).substring(0, 80)}` };
+    }
+  }
+  await writeSetting('magazines:pdf-mags', stored);
+  return { ...stored, ...transient };
+}
+
 export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineAnalysis> {
   const [raw, crDates] = await Promise.all([readAll(ctx), purchCrDates(ctx)]);
   const custName = new Map(raw.customers.map((c: any) => [s(c.number), s(c.displayName)]));
@@ -132,7 +186,7 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
   const unassigned: Unassigned[] = [];
   const corrections: Correction[] = [];
   // Magazine Ads sin revista en el proyecto ni en el External Document No. (IN-CE-00009…): se asignan después por fecha
-  const pendingAds: { base: Omit<MagEntry, 'task' | 'qty' | 'value' | 'location'>; qty: number; amount: number; project: string; task: string }[] = [];
+  const pendingAds: { key: string; base: Omit<MagEntry, 'task' | 'qty' | 'value' | 'location'>; qty: number; amount: number; project: string; task: string }[] = [];
 
   const push = (m: Magazine, e: MagEntry) => {
     m.entries.push(e);
@@ -191,12 +245,13 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
         push(m, { ...base, task: lineTask, qty: sign * qty, value: sign * amount, location: '', fixed: `${reason} (${raw.extDoc.get(base.doc) || base.description})` });
         continue;
       }
-      if (ads && !item) { pendingAds.push({ base, qty: sign * qty, amount: sign * amount, project, task }); continue; }
+      if (ads && !item) { pendingAds.push({ key: `${kind}|${base.doc}|${s(r.lineNo)}`, base, qty: sign * qty, amount: sign * amount, project, task }); continue; }
       if (!item || !task) {
         // Solo interesan las de revistas: D-FORCE o con aspecto de anuncio / proyecto (almacenaje y handling sin proyecto no)
         if (isGeneralCost(base.no, base.description) && !project) continue;
         if (isDforce || project || /magazine|galupy|inkee/i.test(s(r.description))) {
           unassigned.push({
+            key: `${kind}|${base.doc}|${s(r.lineNo)}`,
             reason: !project ? 'Sin Project No.' : !item ? 'Proyecto que no es de revista' : 'Sin Project Task No.',
             kind, doc: base.doc, date: base.date, partner, no: base.no, description: base.description, project, task, qty: sign * qty, amount: sign * amount,
           });
@@ -227,7 +282,7 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
       .filter(([item, date]) => item.startsWith(prefix) && prefix && a.base.date && days(date, a.base.date) <= 21)
       .sort((x, y) => Number(hasAds(x[0])) - Number(hasAds(y[0])) || days(x[1], a.base.date) - days(y[1], a.base.date))[0];
     if (!best) {
-      unassigned.push({ reason: 'Magazine Ads sin revista (ni proyecto ni External Document No.)', ...a.base, project: a.project, task: a.task, qty: a.qty, amount: a.amount });
+      unassigned.push({ key: a.key, reason: 'Magazine Ads sin revista (ni proyecto ni External Document No.)', ...a.base, project: a.project, task: a.task, qty: a.qty, amount: a.amount });
       continue;
     }
     const reason = `Sin revista en BC: On Sale ${best[1].split('-').reverse().join('/')} (External Document No. ${raw.extDoc.get(a.base.doc) || '—'})`;
@@ -238,6 +293,16 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
   // ---- Compras (facturas y abonos registrados) ----
   const projectVendors = new Set<string>();
   [...raw.purchInv, ...raw.purchCr].forEach((r: any) => { if (magazineOfProject(s(r.jobNo))) projectVendors.add(s(r.buyFromVendorNo)); });
+  const pendingPurch: { sign: number; base: Omit<MagEntry, 'task' | 'qty' | 'value'>; u: Unassigned }[] = [];
+  // Tarea habitual de cada artículo de compra en las líneas con proyecto (AA-00041 Proofreading → 004.004)
+  const taskCount = new Map<string, Map<string, number>>();
+  [...raw.purchInv, ...raw.purchCr].forEach((r: any) => {
+    if (!magazineOfProject(s(r.jobNo)) || !s(r.jobTaskNo)) return;
+    const c = taskCount.get(s(r.no)) || new Map<string, number>();
+    c.set(s(r.jobTaskNo), (c.get(s(r.jobTaskNo)) || 0) + 1);
+    taskCount.set(s(r.no), c);
+  });
+  const usualTask = (no: string) => Array.from(taskCount.get(no)?.entries() || []).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
   const purchases = (rows: any[], kind: 'purchInv' | 'purchCrMemo') => {
     const sign = kind === 'purchInv' ? -1 : 1;
     for (const r of rows) {
@@ -254,9 +319,13 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
       if (!item || !task) {
         // Sin proyecto: solo se avisa de los proveedores que trabajan para las revistas (los que tienen otras líneas con proyecto)
         if (project || projectVendors.has(vendor)) {
-          unassigned.push({
-            reason: !project ? 'Sin Project No.' : !item ? 'Proyecto que no es de revista' : 'Sin Project Task No.',
-            kind, doc: base.doc, date: base.date, partner: base.partner, no: base.no, description: base.description, project, task, qty: n(r.quantity), amount: -sign * amount,
+          pendingPurch.push({
+            sign, base,
+            u: {
+              key: `${kind}|${base.doc}|${s(r.lineNo)}`,
+              reason: !project ? 'Sin Project No.' : !item ? 'Proyecto que no es de revista' : 'Sin Project Task No.',
+              kind, doc: base.doc, date: base.date, partner: base.partner, no: base.no, description: base.description, project, task, qty: n(r.quantity), amount: -sign * amount,
+            },
           });
         }
         continue;
@@ -268,6 +337,27 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
   };
   purchases(raw.purchInv, 'purchInv');
   purchases(raw.purchCr, 'purchCrMemo');
+
+  // Compras sin proyecto: la revista del PDF adjunto ("Korrektorat … des Magazins „INKEE“, Ausgabe 0225" → 05993_2502)
+  const known = new Set<string>([...Array.from(mags.keys()), ...raw.projects.map((p: any) => magazineOfProject(s(p.No))).filter(Boolean)]);
+  const pdfs = await pdfMagazines(ctx, Array.from(new Map(pendingPurch.map(p => [p.u.doc, p.u.kind])).entries()));
+  for (const p of pendingPurch) {
+    const found = pdfs[p.u.doc];
+    const list = (found?.mags || []).filter(m => known.has(m));
+    const task = p.u.task || usualTask(p.u.no);
+    if (list.length === 1 && task) {
+      const reason = `Sin Project No.: revista del PDF («${found.snippet}»)`;
+      corrections.push({ reason, ...p.base, qty: p.u.qty, amount: p.u.amount, bcProject: p.u.project, bcTask: p.u.task, magazine: list[0], task });
+      push(mag(list[0]), { ...p.base, task, qty: p.u.qty * -p.sign, value: -p.u.amount, fixed: reason });
+      continue;
+    }
+    const pdf = !found ? undefined
+      : found.error ? found.error
+      : list.length > 1 ? `El PDF menciona varias revistas: ${list.join(', ')}`
+      : list.length === 1 ? `El PDF dice ${list[0]}, pero no se sabe la tarea del artículo ${p.u.no}`
+      : 'El PDF no dice la revista';
+    unassigned.push({ ...p.u, pdf });
+  }
 
   // Proyectos de revista sin movimientos también aparecen (p. ej. números aún sin vender)
   for (const p of raw.projects) {
@@ -318,5 +408,19 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
 }
 
 export async function magazineAnalysis(force = false) {
-  return cached('magazines:analysis:v2', HOUR, async () => computeMagazineAnalysis(await getBcContext(DFORCE_COMPANY)), force);
+  return cached('magazines:analysis:v3', HOUR, async () => computeMagazineAnalysis(await getBcContext(DFORCE_COMPANY)), force);
+}
+
+// Líneas sin revista dadas por buenas (no son de ninguna revista): no se vuelven a avisar. Clave tipo|documento|línea.
+export type Validation = { by: string; at: string; description: string; doc: string };
+const VALIDATED_KEY = 'magazines:validated';
+export const validatedLines = () => readSetting<Record<string, Validation>>(VALIDATED_KEY, {});
+export async function setValidated(lines: { key: string; doc: string; description: string }[], validated: boolean, by: string) {
+  const all = await validatedLines();
+  for (const l of lines) {
+    if (validated) all[l.key] = { by, at: new Date().toISOString(), description: l.description, doc: l.doc };
+    else delete all[l.key];
+  }
+  await writeSetting(VALIDATED_KEY, all);
+  return all;
 }

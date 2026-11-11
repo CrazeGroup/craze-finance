@@ -2,9 +2,11 @@
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { AlertCircle, AlertTriangle, ChevronDown, ChevronRight, Download, RefreshCw, Search, Wrench } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Download, RefreshCw, Search, Wrench } from 'lucide-react';
 import DocPdfLink from '@/components/DocPdfLink';
-import type { MagEntry, Magazine, MagazineAnalysis, MagLocation } from '@/lib/magazineAnalysis';
+import type { MagEntry, Magazine, MagazineAnalysis as Analysis, MagLocation, Unassigned, Validation } from '@/lib/magazineAnalysis';
+
+type MagazineAnalysis = Analysis & { validated?: Record<string, Validation> };
 
 const nf = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const qf = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 });
@@ -79,6 +81,27 @@ export default function MagazineProfitabilityView() {
   const [openTask, setOpenTask] = useState<Record<string, boolean>>({});
   const [showIssues, setShowIssues] = useState(false);
   const [showFixes, setShowFixes] = useState(false);
+  const [showValidated, setShowValidated] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const pending = useMemo(() => (data?.unassigned || []).filter(u => !data?.validated?.[u.key]), [data]);
+  const validatedRows = useMemo(() => (data?.unassigned || []).filter(u => data?.validated?.[u.key]), [data]);
+  // Validar = la línea no es de ninguna revista: no se vuelve a avisar (se guarda en la app, no en BC)
+  const validate = async (lines: Unassigned[], validated: boolean) => {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/magazines/analysis/validate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ validated, lines: lines.map(l => ({ key: l.key, doc: l.doc, description: `${l.partner} · ${l.description}` })) }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      setData(d => (d ? { ...d, validated: json.validated } : d));
+    } catch (e: any) {
+      alert(`No se ha podido guardar: ${e.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const load = async (force = false) => {
     setLoading(true); setError(null);
@@ -130,9 +153,9 @@ export default function MagazineProfitabilityView() {
     XLSX.utils.book_append_sheet(wb, ws1, 'Revistas');
     XLSX.utils.book_append_sheet(wb, ws2, 'Localizaciones');
     XLSX.utils.book_append_sheet(wb, ws3, 'Líneas');
-    if (data.unassigned.length) {
+    if (pending.length) {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Motivo', 'Tipo doc.', 'Nº documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Project No.', 'Project Task No.', 'Cantidad', 'Importe'],
-        ...data.unassigned.map(u => [u.reason, DOC_TYPE[u.kind].label, u.doc, u.date ? new Date(u.date) : '', u.partner, u.no, u.description, u.project, u.task, u.qty, u.amount])], { cellDates: true }), 'Sin asignar');
+        ...pending.map(u => [u.reason, DOC_TYPE[u.kind].label, u.doc, u.date ? new Date(u.date) : '', u.partner, u.no, u.description, u.project, u.task, u.qty, u.amount])], { cellDates: true }), 'Sin asignar');
     }
     if (data.corrections.length) {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Motivo', 'Tipo doc.', 'Nº documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Localización', 'Project No. en BC', 'Task No. en BC', 'Revista correcta', 'Tarea', 'Cantidad', 'Importe'],
@@ -202,32 +225,64 @@ export default function MagazineProfitabilityView() {
             ))}
           </section>
 
-          {data.unassigned.length > 0 && (
+          {(pending.length > 0 || validatedRows.length > 0) && (
             <section className="bg-amber-50 border border-amber-200 rounded-xl">
               <button onClick={() => setShowIssues(v => !v)} className="w-full px-4 py-2.5 flex items-center gap-2 text-sm text-amber-900 text-left">
                 <AlertTriangle size={16} />
-                <span className="font-semibold">{data.unassigned.length} líneas sin revista</span>
-                <span className="text-amber-800">· sin Project No. / Task No. en BC ni revista en el External Document No.; no cuentan en ninguna revista (almacenaje y handling sin proyecto no se listan)</span>
+                <span className="font-semibold">{pending.length} líneas sin revista</span>
+                <span className="text-amber-800">
+                  · sin Project No. en BC ni revista en el External Document No. o el PDF; no cuentan en ninguna revista
+                  {validatedRows.length > 0 && <> · {validatedRows.length} validadas</>}
+                </span>
                 {showIssues ? <ChevronDown size={16} className="ml-auto shrink-0" /> : <ChevronRight size={16} className="ml-auto shrink-0" />}
               </button>
               {showIssues && (
                 <div className="px-4 pb-4 overflow-x-auto">
-                  <p className="text-xs text-amber-900 mb-1">Rellena Project No. y Project Task No. en BC. Importe: en ventas, + = ingreso; en compras, + = coste.</p>
+                  <div className="flex flex-wrap items-center gap-3 mb-1">
+                    <p className="text-xs text-amber-900 mr-auto">Rellena Project No. y Project Task No. en BC, o valida las que no son de ninguna revista para que no se avisen más. Almacenaje y handling sin proyecto no se listan. Importe: en ventas, + = ingreso; en compras, + = coste.</p>
+                    {pending.length > 0 && (
+                      <button onClick={() => validate(pending, true)} disabled={saving}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-amber-300 bg-white text-xs text-amber-900 hover:bg-amber-100 disabled:opacity-50">
+                        <CheckCircle2 size={13} /> Validar todas ({pending.length})
+                      </button>
+                    )}
+                    {validatedRows.length > 0 && (
+                      <label className="flex items-center gap-1 text-xs text-amber-900">
+                        <input type="checkbox" checked={showValidated} onChange={e => setShowValidated(e.target.checked)} /> Ver validadas ({validatedRows.length})
+                      </label>
+                    )}
+                  </div>
                   <table className="w-full text-xs bg-white rounded-lg border border-amber-200">
                     <thead className="text-gray-500 bg-gray-50"><tr>
-                      {['Motivo', 'Documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Project No.', 'Task No.', 'Cantidad', 'Importe'].map(h =>
-                        <th key={h} className={`${th} ${['Cantidad', 'Importe'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>)}
+                      {['Motivo', 'Documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Project No.', 'Task No.', 'Cantidad', 'Importe', ''].map((h, i) =>
+                        <th key={i} className={`${th} ${['Cantidad', 'Importe'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>)}
                     </tr></thead>
                     <tbody className="divide-y divide-gray-100">
-                      {data.unassigned.map((u, i) => (
-                        <tr key={i}>
-                          <td className={td}>{u.reason}</td>
-                          <td className={td}><span className="text-gray-400 mr-1">{DOC_TYPE[u.kind].label}</span>{u.doc} <DocPdfLink documentNo={u.doc} kind={DOC_TYPE[u.kind].pdf} company={COMPANY} /></td>
-                          <td className={td}>{dmy(u.date)}</td><td className={td}>{u.partner}</td><td className={td}>{u.no}</td>
-                          <td className="px-3 py-1.5">{u.description}</td><td className={td}>{u.project}</td><td className={td}>{u.task}</td>
-                          <td className={`${td} text-right`}>{units(u.qty)}</td><td className={`${td} text-right`}>{money(u.amount)}</td>
-                        </tr>
-                      ))}
+                      {[...pending, ...(showValidated ? validatedRows : [])].map(u => {
+                        const v = data.validated?.[u.key];
+                        return (
+                          <tr key={u.key} className={v ? 'text-gray-400' : ''}>
+                            <td className="px-3 py-1.5">{u.reason}{u.pdf && <p className="text-amber-700">PDF: {u.pdf}</p>}</td>
+                            <td className={td}><span className="text-gray-400 mr-1">{DOC_TYPE[u.kind].label}</span>{u.doc} <DocPdfLink documentNo={u.doc} kind={DOC_TYPE[u.kind].pdf} company={COMPANY} /></td>
+                            <td className={td}>{dmy(u.date)}</td><td className={td}>{u.partner}</td><td className={td}>{u.no}</td>
+                            <td className="px-3 py-1.5">{u.description}</td><td className={td}>{u.project}</td><td className={td}>{u.task}</td>
+                            <td className={`${td} text-right`}>{units(u.qty)}</td><td className={`${td} text-right`}>{money(u.amount)}</td>
+                            <td className={`${td} text-right`}>
+                              {v ? (
+                                <span className="inline-flex items-center gap-2">
+                                  <span title={`${v.by || ''} ${new Date(v.at).toLocaleString('es-ES')}`} className="text-emerald-700 inline-flex items-center gap-1"><CheckCircle2 size={12} /> Validada</span>
+                                  <button onClick={() => validate([u], false)} disabled={saving} className="underline hover:text-gray-700">Quitar</button>
+                                </span>
+                              ) : (
+                                <button onClick={() => validate([u], true)} disabled={saving} title="No es de ninguna revista: no volver a avisar"
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-50">
+                                  <CheckCircle2 size={12} /> Validar
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
