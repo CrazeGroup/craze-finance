@@ -3,8 +3,10 @@
 import { useState, useEffect, useMemo } from 'react';
 import { RefreshCcw, User, Building2, CheckCircle } from 'lucide-react';
 import DocPdfLink, { purchasePdfKind } from '@/components/DocPdfLink';
+import { companyLabel, useCompany } from '@/contexts/CompanyContext';
 
 export default function MovimientosPage() {
+  const { selectedCompany } = useCompany();
   const [entries, setEntries] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'Customer' | 'Vendor'>('Customer');
@@ -68,191 +70,116 @@ export default function MovimientosPage() {
     setSelectedPaymentMethods([]);
   }, [viewMode]);
 
+  const nf = (v: number) => v.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const dateEs = (d: string) => (d ? d.substring(0, 10).split('-').reverse().join('.') : '—');
+  const toggle = (list: string[], set: (f: (p: string[]) => string[]) => void, v: string) => set(p => (p.includes(v) ? p.filter(x => x !== v) : [...p, v]));
+  const chip = (on: boolean) => `px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors ${on ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`;
+  const th = 'px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-gray-500 whitespace-nowrap';
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 p-8 pb-32">
-      <header className="flex flex-wrap justify-between items-end mb-8 gap-4">
-        <div>
-          <h1 className="text-4xl font-extrabold text-black tracking-tight">
-            Movimientos Abiertos
-          </h1>
-          <p className="text-gray-700 font-semibold mt-2">Consulta de entradas contables para Clientes y Proveedores.</p>
-        </div>
-        <div className="flex gap-4">
-          <button 
-            onClick={fetchEntries}
-            className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-lg transition-all backdrop-blur-sm border border-white/10"
-          >
-            <RefreshCcw size={18} className={loading ? 'animate-spin' : ''} />
-            Actualizar
+    <div className="min-h-screen bg-[#F3F4F7] pb-28">
+      <header className="sticky top-0 z-20 bg-white border-b border-gray-200">
+        <div className="w-full px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
+          <div className="mr-auto">
+            <p className="font-bold text-gray-900 leading-tight text-lg">Movimientos abiertos</p>
+            <p className="text-xs text-gray-500">{companyLabel(selectedCompany)} · movimientos pendientes de clientes y proveedores</p>
+          </div>
+          <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+            {([['Customer', 'Clientes', User], ['Vendor', 'Proveedores', Building2]] as const).map(([v, label, Icon]) => (
+              <button key={v} onClick={() => setViewMode(v)}
+                className={`flex items-center gap-2 px-4 py-1.5 font-semibold ${viewMode === v ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
+                <Icon size={15} /> {label}
+              </button>
+            ))}
+          </div>
+          <button onClick={fetchEntries} disabled={loading}
+            className="flex items-center gap-2 border border-gray-300 bg-white text-gray-700 text-sm font-semibold px-3 py-1.5 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+            <RefreshCcw size={15} className={loading ? 'animate-spin' : ''} /> Actualizar
           </button>
         </div>
       </header>
 
-      {/* View Toggle */}
-      <div className="flex justify-center mb-8">
-        <div className="bg-slate-900/80 p-1 rounded-xl flex border border-white/10 backdrop-blur-md">
-          <button
-            onClick={() => setViewMode('Customer')}
-            className={`flex items-center gap-2 px-8 py-3 rounded-lg font-medium transition-all ${
-              viewMode === 'Customer'
-                ? 'bg-gradient-to-r from-blue-500 to-indigo-500 text-white shadow-lg'
-                : 'text-gray-900 font-bold hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <User size={18} />
-            Clientes
-          </button>
-          <button
-            onClick={() => setViewMode('Vendor')}
-            className={`flex items-center gap-2 px-8 py-3 rounded-lg font-medium transition-all ${
-              viewMode === 'Vendor'
-                ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg'
-                : 'text-gray-900 font-bold hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <Building2 size={18} />
-            Proveedores
-          </button>
-        </div>
-      </div>
-
-      {/* Filters */}
-      <div className="mb-6 flex flex-wrap gap-6 bg-white/5 p-4 rounded-xl border border-white/10 backdrop-blur-sm">
-        {/* Document Type Filter */}
-        {availableDocTypes.length > 0 && (
-          <div className="flex flex-col gap-2">
-            <span className="text-sm text-gray-800 font-medium font-medium">Filtrar por Tipo de Documento:</span>
-            <div className="flex flex-wrap gap-2">
-              {availableDocTypes.map(dt => (
-                <button
-                  key={dt}
-                  onClick={() => {
-                    if (selectedDocTypes.includes(dt)) {
-                      setSelectedDocTypes(prev => prev.filter(d => d !== dt));
-                    } else {
-                      setSelectedDocTypes(prev => [...prev, dt]);
-                    }
-                  }}
-                  className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                    selectedDocTypes.includes(dt)
-                      ? 'bg-indigo-500/20 text-indigo-700 font-bold border-indigo-500/50 shadow-[0_0_10px_rgba(99,102,241,0.2)]'
-                      : 'bg-white/5 text-gray-900 font-bold border-white/10 hover:bg-white/10 hover:text-gray-800 font-medium'
-                  }`}
-                >
-                  {dt || 'Vacio'}
-                </button>
-              ))}
-              {selectedDocTypes.length > 0 && (
-                <button 
-                  onClick={() => setSelectedDocTypes([])}
-                  className="px-2 py-1 text-xs text-gray-700 font-semibold font-bold hover:text-red-300 transition-colors underline decoration-red-400/30 underline-offset-2 ml-2"
-                >
-                  Limpiar Filtro
-                </button>
-              )}
-            </div>
-          </div>
+      <main className="w-full px-4 md:px-8 pt-6 space-y-4">
+        {(availableDocTypes.length > 0 || availablePaymentMethods.length > 0) && (
+          <section className="bg-white rounded-xl border border-gray-200 p-4 flex flex-wrap gap-x-8 gap-y-3">
+            {availableDocTypes.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Tipo de documento</p>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {availableDocTypes.map(dt => (
+                    <button key={dt} onClick={() => toggle(selectedDocTypes, setSelectedDocTypes, dt)} className={chip(selectedDocTypes.includes(dt))}>{dt || 'Vacío'}</button>
+                  ))}
+                  {selectedDocTypes.length > 0 && <button onClick={() => setSelectedDocTypes([])} className="ml-1 text-xs text-gray-500 hover:text-gray-900 underline">Limpiar</button>}
+                </div>
+              </div>
+            )}
+            {availablePaymentMethods.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Forma de pago</p>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {availablePaymentMethods.map(pm => (
+                    <button key={pm} onClick={() => toggle(selectedPaymentMethods, setSelectedPaymentMethods, pm)} className={chip(selectedPaymentMethods.includes(pm))}>{pm || 'Vacío'}</button>
+                  ))}
+                  {selectedPaymentMethods.length > 0 && <button onClick={() => setSelectedPaymentMethods([])} className="ml-1 text-xs text-gray-500 hover:text-gray-900 underline">Limpiar</button>}
+                </div>
+              </div>
+            )}
+          </section>
         )}
 
-        {/* Payment Method Filter */}
-        {availablePaymentMethods.length > 0 && (
-          <div className="flex flex-col gap-2">
-            <span className="text-sm text-gray-800 font-medium font-medium">Filtrar por Forma de Pago:</span>
-            <div className="flex flex-wrap gap-2">
-              {availablePaymentMethods.map(pm => (
-                <button
-                  key={pm}
-                  onClick={() => {
-                    if (selectedPaymentMethods.includes(pm)) {
-                      setSelectedPaymentMethods(prev => prev.filter(p => p !== pm));
-                    } else {
-                      setSelectedPaymentMethods(prev => [...prev, pm]);
-                    }
-                  }}
-                  className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                    selectedPaymentMethods.includes(pm)
-                      ? 'bg-indigo-500/20 text-indigo-700 font-bold border-indigo-500/50 shadow-[0_0_10px_rgba(99,102,241,0.2)]'
-                      : 'bg-white/5 text-gray-900 font-bold border-white/10 hover:bg-white/10 hover:text-gray-800 font-medium'
-                  }`}
-                >
-                  {pm || 'Vacio'}
-                </button>
-              ))}
-              {selectedPaymentMethods.length > 0 && (
-                <button 
-                  onClick={() => setSelectedPaymentMethods([])}
-                  className="px-2 py-1 text-xs text-gray-700 font-semibold font-bold hover:text-red-300 transition-colors underline decoration-red-400/30 underline-offset-2 ml-2"
-                >
-                  Limpiar Filtro
-                </button>
-              )}
-            </div>
+        {loading ? (
+          <div className="bg-white rounded-xl border border-gray-200 py-16 flex justify-center text-sm text-gray-500 gap-2 items-center">
+            <RefreshCcw size={16} className="animate-spin" /> Cargando movimientos…
           </div>
-        )}
-      </div>
-
-      {loading ? (
-        <div className="flex justify-center items-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-400"></div>
-        </div>
-      ) : filteredEntries.length === 0 ? (
-        <div className="text-center py-20 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm shadow-lg">
-          <CheckCircle className="mx-auto text-gray-900 font-bold mb-4" size={48} />
-          <p className="text-xl text-gray-800 font-medium">No hay movimientos que coincidan con los filtros.</p>
-        </div>
-      ) : (
-        <div className="bg-white/5 rounded-xl border border-white/10 backdrop-blur-sm overflow-hidden shadow-2xl">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm text-gray-800 font-medium">
-              <thead className="bg-slate-900/50 text-gray-900 font-bold border-b border-white/10">
+        ) : filteredEntries.length === 0 ? (
+          <div className="bg-white rounded-xl border border-gray-200 py-16 text-center">
+            <CheckCircle className="mx-auto text-emerald-500 mb-3" size={36} />
+            <p className="text-sm text-gray-600">No hay movimientos que coincidan con los filtros.</p>
+          </div>
+        ) : (
+          <section className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  <th className="p-4 font-medium whitespace-nowrap">Nº {viewMode === 'Customer' ? 'Cliente' : 'Proveedor'}</th>
-                  <th className="p-4 font-medium">Nombre</th>
-                  <th className="p-4 font-medium">Posting Date</th>
-                  <th className="p-4 font-medium">Doc. Type</th>
-                  <th className="p-4 font-medium">Document No.</th>
-                  <th className="p-4 font-medium">Ext. Doc. No.</th>
-                  <th className="p-4 font-medium">Currency</th>
-                  <th className="p-4 font-medium text-right">Original Amt.</th>
-                  <th className="p-4 font-medium text-right">Remaining Amt.</th>
-                  <th className="p-4 font-medium">Description</th>
-                  <th className="p-4 font-medium">Payment Method</th>
+                  <th className={`${th} text-left`}>Nº {viewMode === 'Customer' ? 'cliente' : 'proveedor'}</th>
+                  <th className={`${th} text-left`}>Nombre</th>
+                  <th className={`${th} text-left`}>Posting Date</th>
+                  <th className={`${th} text-left`}>Doc. Type</th>
+                  <th className={`${th} text-left`}>Document No.</th>
+                  <th className={`${th} text-left`}>Ext. Doc. No.</th>
+                  <th className={`${th} text-left`}>Divisa</th>
+                  <th className={`${th} text-right`}>Original Amt.</th>
+                  <th className={`${th} text-right`}>Remaining Amt.</th>
+                  <th className={`${th} text-left`}>Description</th>
+                  <th className={`${th} text-left`}>Payment Method</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody>
                 {filteredEntries.map((entry, idx) => (
-                  <tr key={idx} className="hover:bg-white/5 transition-colors">
-                    <td className="p-4 text-indigo-700 font-bold font-medium whitespace-nowrap">{entry.entityNo}</td>
-                    <td className="p-4 text-white font-medium min-w-[200px]">{entry.entityName}</td>
-                    <td className="p-4 text-gray-900 font-bold whitespace-nowrap">
-                      {entry.postingDate ? new Date(entry.postingDate).toLocaleDateString() : '-'}
+                  <tr key={idx} className="border-t border-gray-100 hover:bg-gray-50">
+                    <td className="px-3 py-2 font-mono text-gray-900 whitespace-nowrap">{entry.entityNo}</td>
+                    <td className="px-3 py-2 font-semibold text-gray-900 min-w-[200px]">{entry.entityName}</td>
+                    <td className="px-3 py-2 text-gray-600 tabular-nums whitespace-nowrap">{dateEs(entry.postingDate)}</td>
+                    <td className="px-3 py-2">
+                      <span className="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 text-xs font-semibold text-gray-700 whitespace-nowrap">{entry.documentType || '—'}</span>
                     </td>
-                    <td className="p-4">
-                      <span className="px-2 py-1 rounded bg-gray-50 border border-gray-200 text-xs">
-                        {entry.documentType || '-'}
-                      </span>
-                    </td>
-                    <td className="p-4 text-gray-800 font-medium whitespace-nowrap">
+                    <td className="px-3 py-2 font-mono text-gray-900 whitespace-nowrap">
                       {entry.documentNo}
                       {entry.type === 'Vendor' && <DocPdfLink documentNo={entry.documentNo} kind={purchasePdfKind(entry.documentType)} />}
                     </td>
-                    <td className="p-4 text-gray-900 font-bold">{entry.externalDocumentNo || '-'}</td>
-                    <td className="p-4 text-gray-900 font-bold">{entry.currencyCode || 'EUR'}</td>
-                    <td className="p-4 text-right text-gray-800 font-medium">
-                      {entry.originalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-                    <td className="p-4 text-right font-semibold text-gray-900 font-bold">
-                      {entry.remainingAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-                    <td className="p-4 text-gray-900 font-bold min-w-[250px]">{entry.description}</td>
-                    <td className="p-4 text-gray-700 font-semibold">{entry.paymentMethodCode || '-'}</td>
+                    <td className="px-3 py-2 font-mono text-gray-600">{entry.externalDocumentNo || '—'}</td>
+                    <td className="px-3 py-2 text-gray-600">{entry.currencyCode || 'EUR'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-gray-600 whitespace-nowrap">{nf(entry.originalAmount)}</td>
+                    <td className={`px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap ${entry.remainingAmount < 0 ? 'text-red-600' : 'text-gray-900'}`}>{nf(entry.remainingAmount)}</td>
+                    <td className="px-3 py-2 text-gray-700 min-w-[250px]">{entry.description}</td>
+                    <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{entry.paymentMethodCode || '—'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
-        </div>
-      )}
+          </section>
+        )}
+      </main>
     </div>
   );
 }
