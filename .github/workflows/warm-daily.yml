@@ -1,0 +1,72 @@
+# Precalcula cada mañana lo que cada página abre por defecto, para que durante el día cargue al momento desde la caché
+# (stale-while-revalidate: después se renueva sola en segundo plano). 05:15 UTC = 06:15 en invierno / 07:15 en verano
+# (hora de Madrid). Análisis Inventario va aparte (warm-inventory.yml, de madrugada) y el histórico de Aduanas cada hora.
+name: Precalcular informes (mañana)
+
+on:
+  schedule:
+    - cron: '15 5 * * *'
+  workflow_dispatch:
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Precalcular
+        env:
+          APP_URL: ${{ vars.APP_URL || 'https://craze-finance-iota.vercel.app' }}
+          INTERNAL_API_TOKEN: ${{ secrets.INTERNAL_API_TOKEN }}
+        run: |
+          # Lista "empresa|ruta" con las mismas fechas por defecto que usan las páginas
+          python3 - > calls.txt <<'EOF'
+          import datetime as dt, calendar
+          t = dt.date.today()
+          y = t.year
+          iso = lambda d: d.isoformat()
+          prev_month_end = t.replace(day=1) - dt.timedelta(days=1)
+          prev_month = prev_month_end.strftime('%Y-%m')
+          q = (t.month - 1) // 3 - 1                      # trimestre anterior (como Royalties)
+          qy, qi = (y - 1, 3) if q < 0 else (y, q)
+          q_from = dt.date(qy, qi * 3 + 1, 1)
+          q_to = dt.date(qy, qi * 3 + 3, calendar.monthrange(qy, qi * 3 + 3)[1])
+          def same_day(year, d):                          # Ventas por licencia: mismo día en otro año
+              return dt.date(year, d.month, min(d.day, calendar.monthrange(year, d.month)[1]))
+          GROUP = ['CRAZE', 'Craze Iberia SL', 'Craze UK', 'CRAZE Group AG', 'Craze Entertainment']
+          out = []
+          # Dashboard: cada empresa y el consolidado
+          for c in GROUP + ['ALL']: out.append((c, 'dashboard'))
+          # Reporting: mes anterior de cada empresa (Análisis Inventario va en warm-inventory.yml)
+          for c in GROUP:
+              for s in ['receivables', 'payables', 'provisions', 'inventory', 'purchases']:
+                  out.append((c, f'reporting/{s}?month={prev_month}'))
+          out.append(('CRAZE', f'reporting/bwa?month={prev_month}'))
+          # Controlling (CRAZE GmbH, la empresa que abren por defecto)
+          out.append(('CRAZE', f'controlling/purchase-items?company=CRAZE&from={y}-01-01&to={iso(t)}'))
+          out.append(('CRAZE', f'controlling/consumed-provisions?from={y}-01-01&to={iso(prev_month_end)}'))
+          for c in GROUP: out.append((c, f'controlling/intercompany?company={c}&from={y}-01-01&to={iso(t)}'))
+          for yy in range(prev_month_end.year - 2, prev_month_end.year + 1):
+              out.append(('CRAZE', f'controlling/license-sales?company=CRAZE&from={yy}-01-01&to={iso(same_day(yy, prev_month_end))}'))
+          for yy in range(y - 2, y + 1):
+              out.append(('CRAZE', f'controlling/order-intake?company=CRAZE&year={yy}&from=1&to=12' + ('&open=1' if yy == y else '')))
+          out.append(('CRAZE', f'controlling/bwa-pbi?year={y}'))
+          out.append(('CRAZE', f'bwa/live?year={y}'))
+          # Royalties: último trimestre (CRAZE GmbH), resumen del grupo y Minimum Guarantee
+          out.append(('CRAZE', f'royalties?company=CRAZE&from={iso(q_from)}&to={iso(q_to)}'))
+          out.append(('CRAZE', f'royalties/group?from={iso(q_from)}&to={iso(q_to)}'))
+          out.append(('CRAZE', f'royalties/mg?to={iso(q_to)}'))
+          # Commercial Analysis: datos maestros y cada empresa, año en curso y anterior
+          out.append(('CRAZE', 'commercial/dims'))
+          for a in ['GmbH', 'UK', 'Swiss', 'Asia']:
+              for yy in (y, y - 1): out.append(('CRAZE', f'commercial/facts?company={a}&year={yy}'))
+          for c, p in out: print(f'{c}|{p}')
+          EOF
+          fail=0
+          while IFS='|' read -r company path; do
+            enc=$(printf %s "$company" | jq -sRr @uri)
+            url="$APP_URL/api/$(printf %s "$path" | sed "s/company=$company/company=$enc/")"
+            code=$(curl -s -o out.json -w '%{http_code}' -m 300 -H "Authorization: Bearer $INTERNAL_API_TOKEN" -H "x-craze-company: $enc" "$url" || echo 000)
+            echo "$company · $path → $code"
+            if [ "$code" != "200" ]; then head -c 300 out.json; echo; fail=1; fi
+          done < calls.txt
+          exit $fail

@@ -81,12 +81,15 @@ export type IcRow = {
   corrected?: string[];
 };
 
-export async function intercompanyReport(source: string, from: string, to: string, force = false) {
+export async function intercompanyReport(source: string, from: string, requestedTo: string, force = false) {
   // Caché en la base de datos: periodos que acaban hace más de 2 meses ya no cambian (30 días, sin renovarse cada hora;
-  // el botón de actualizar lo fuerza); los recientes se renuevan cada hora en segundo plano
+  // el botón de actualizar lo fuerza); los recientes se renuevan cada hora en segundo plano. Un periodo que llega a hoy se
+  // guarda como "hasta hoy", para que la misma caché sirva de un día para otro (la página abre del 1 de enero a hoy)
+  const open = requestedTo >= today();
+  const to = open ? today() : requestedTo;
   const old = to < shift(today(), -60);
-  const maxAge = old ? 30 * 24 * HOUR : to < today() ? 12 * HOUR : HOUR;
-  return cached(`intercompany10:${source}:${from}:${to}`, maxAge, async () => {
+  const maxAge = old ? 30 * 24 * HOUR : open ? HOUR : 12 * HOUR;
+  return cached(`intercompany10:${source}:${from}:${open ? 'hoy' : to}`, maxAge, async () => {
     const ctx = await getBcContext(source);
     const sales = (await bcFetchAll(odataUrl(`${ctx.apiBase}/salesInvoices`, {
       $filter: `postingDate ge ${from} and postingDate le ${to}`,

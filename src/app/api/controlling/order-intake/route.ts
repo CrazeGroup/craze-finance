@@ -4,7 +4,8 @@ import { getBcContext } from '@/lib/bcClient';
 import { orderIntakeYear } from '@/lib/controlling/orderIntake';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+// Sin caché puede tardar más de 60 s; se precalcula cada mañana (warm-daily.yml)
+export const maxDuration = 300;
 
 // Facturación según Order Date de un año: /api/controlling/order-intake?year=YYYY&from=M&to=M[&open=1][&force=1]
 // open=1 añade las Sales Orders abiertas (solo tiene sentido en el año en curso)

@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { intercompanyReport, IC_COMPANIES } from '@/lib/controlling/intercompany';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+// Sin caché puede tardar más de 60 s; se precalcula cada mañana (warm-daily.yml)
+export const maxDuration = 300;
 
 const isDate = (d: string | null): d is string => !!d && /^\d{4}-\d{2}-\d{2}$/.test(d);
 

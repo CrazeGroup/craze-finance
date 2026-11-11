@@ -1,4 +1,4 @@
-# Precalcula cada noche Análisis Inventario (valor, KPIs, compras CHINA TRF) y Controlling · Compras por artículo/proveedor para que la página cargue al momento:
+# Precalcula cada noche Análisis Inventario (valor, KPIs, compras CHINA TRF) para que la página cargue al momento:
 # CRAZE los últimos 12 meses y el resto de empresas el mes en curso y el anterior. Los meses cerrados se guardan una
 # semana en caché (y el mes en curso un día), así que las llamadas de meses ya calculados vuelven al momento.
 name: Precalcular Análisis Inventario
@@ -31,11 +31,6 @@ jobs:
             done
           }
           for i in $(seq 0 11); do warm "CRAZE" "$(date -u -d "$(date -u +%Y-%m-01) -$i month" +%Y-%m)"; done
-          # Controlling · Compras por artículo / proveedor: año en curso hasta hoy (lo que abre la página por defecto)
-          code=$(curl -s -o out.json -w '%{http_code}' -m 300 -H "Authorization: Bearer $INTERNAL_API_TOKEN" -H "x-craze-company: CRAZE" \
-            "$APP_URL/api/controlling/purchase-items?company=CRAZE&from=$(date -u +%Y)-01-01&to=$(date -u +%Y-%m-%d)" || echo 000)
-          echo "CRAZE · controlling/purchase-items → $code"
-          if [ "$code" != "200" ]; then head -c 300 out.json; echo; fail=1; fi
           for company in "Craze Iberia SL" "Craze UK" "CRAZE Group AG" "Craze Entertainment"; do
             for i in 0 1; do warm "$company" "$(date -u -d "$(date -u +%Y-%m-01) -$i month" +%Y-%m)"; done
           done

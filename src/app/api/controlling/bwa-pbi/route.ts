@@ -3,7 +3,8 @@ import { getBcContext } from '@/lib/bcClient';
 import { bwaPbiData } from '@/lib/controlling/bwaPbi';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+// Sin caché puede tardar más de 60 s; se precalcula cada mañana (warm-daily.yml)
+export const maxDuration = 300;
 
 // BWA del Power BI (todas las sociedades, leído desde CRAZE): /api/controlling/bwa-pbi?year=YYYY[&force=1]
 // Devuelve el año pedido y el anterior (para la comparativa Year -1).

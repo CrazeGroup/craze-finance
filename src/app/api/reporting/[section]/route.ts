@@ -9,7 +9,8 @@ import { bwaReport } from '@/lib/reporting/bwa';
 import { cashflowReport } from '@/lib/reporting/cashflowReport';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+// Sin caché puede tardar más de 60 s; se precalcula cada mañana (warm-daily.yml)
+export const maxDuration = 300;
 
 // Un bloque del reporting mensual: /api/reporting/<bloque>?month=YYYY-MM[&force=1]
 // Los datos se leen de Business Central (con caché) salvo el cashflow, que es el de la propia app.

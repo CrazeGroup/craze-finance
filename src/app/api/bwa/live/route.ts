@@ -5,7 +5,8 @@ import { bwaAnalytics } from '@/lib/bwaAnalytics';
 import { companyCurrency } from '@/lib/royalties';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+// Sin caché puede tardar más de 60 s; se precalcula cada mañana (warm-daily.yml)
+export const maxDuration = 300;
 
 // BWA Analytics en directo de BC: /api/bwa/live?year=2026[&force=1]
 export async function GET(req: Request) {

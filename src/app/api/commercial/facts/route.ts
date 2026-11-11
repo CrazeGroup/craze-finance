@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { commercialFacts, commercialPlans, COMPANIES, withPart, type CompanyAbbr } from '@/lib/commercial/commercial';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+// Sin caché puede tardar más de 60 s; se precalcula cada mañana (warm-daily.yml)
+export const maxDuration = 300;
 
 // Sell-in, presupuesto y forecast agregados de una empresa y año: /api/commercial/facts?company=GmbH&year=2026[&force=1][&plans=1]
 // force=1 relee de BC el facturado y los pedidos; plans=1, el presupuesto y el forecast (guardados aparte, se renuevan a diario).
