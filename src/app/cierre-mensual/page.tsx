@@ -221,7 +221,7 @@ export default function CierreMensualPage() {
               <button onClick={() => deleteGroup(group)} className="text-xs font-semibold text-gray-400 hover:text-red-600" title="Eliminar la subempresa"><Trash2 size={13} /></button>
             </div>
           )}
-          <div className="overflow-x-auto">
+          <div className="table-scroll [--table-offset:126px]">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-500">
                 <tr>

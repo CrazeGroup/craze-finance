@@ -205,7 +205,7 @@ export default function MovimientosPage() {
             <p className="text-sm text-gray-600">No hay movimientos que coincidan con los filtros.</p>
           </div>
         ) : (
-          <section className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+          <section className="table-scroll bg-white rounded-xl border border-gray-200 [--table-offset:84px]">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>

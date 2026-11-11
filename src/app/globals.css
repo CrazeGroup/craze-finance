@@ -24,6 +24,14 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* Tablas largas: se desplazan dentro de su recuadro (alto de la ventana menos la cabecera de la página, --table-offset)
+   con la fila de títulos fija arriba, como inmovilizar la primera fila en Excel */
+@layer components {
+  .table-scroll { max-height: calc(100vh - var(--table-offset, 90px)); overflow: auto; }
+  /* :where = sin especificidad, para que las clases de Tailwind de cada celda (p. ej. el mes actual) manden */
+  .table-scroll :where(thead th) { position: sticky; top: 0; z-index: 10; background-color: rgb(249 250 251); box-shadow: inset 0 -1px 0 rgb(229 231 235); }
+}
+
 /* Reporting: exportación a PDF (imprimir → Guardar como PDF) */
 @media print {
   @page { size: A4 landscape; margin: 10mm; }

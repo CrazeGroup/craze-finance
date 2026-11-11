@@ -4,7 +4,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { LogOut, Building2, ChevronDown, ChevronRight, FolderPlus, GripVertical, Pencil, Trash2, Check, Languages, Menu as MenuIcon, PanelLeftClose } from 'lucide-react';
+import { LogOut, Building2, ChevronDown, ChevronRight, FolderPlus, GripVertical, Pencil, Trash2, Check, Languages, Menu as MenuIcon, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useCompany, COMPANIES, companyLabel } from '@/contexts/CompanyContext';
 import { useLanguage, LANGS, LANG_NAMES, type Lang } from '@/contexts/LanguageContext';
 
@@ -132,11 +132,18 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
   };
 
   // Menú oculto: sin barra; solo un botón flotante arriba a la izquierda (debajo del logo de la cabecera de la página)
+  // Oculto: una franja estrecha a la izquierda (ocupa su propio espacio, no tapa la página) con el botón para abrirlo
   if (hidden) return (
-    <button type="button" onClick={() => toggleHidden(false)} title={tx('show')}
-      className="app-menu-toggle fixed top-[84px] left-3 z-50 flex items-center gap-1.5 bg-black text-white text-xs font-semibold px-3 py-1.5 rounded-full shadow-lg hover:bg-gray-800">
-      <MenuIcon size={14} /> {tx('menu')}
-    </button>
+    <aside className="app-menu-toggle w-11 flex-shrink-0 border-r border-gray-200 bg-white flex flex-col items-center h-full">
+      <button type="button" onClick={() => toggleHidden(false)} title={tx('show')} aria-label={tx('show')}
+        className="mt-2 p-2 rounded-md text-gray-500 hover:text-black hover:bg-gray-100">
+        <PanelLeftOpen size={18} />
+      </button>
+      <button type="button" onClick={() => toggleHidden(false)} title={tx('show')}
+        className="mt-3 text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400 hover:text-black [writing-mode:vertical-rl] rotate-180">
+        {tx('menu')}
+      </button>
+    </aside>
   );
 
   // Selector de idioma: dentro de la sección Config del usuario (o al final si no la tiene)
