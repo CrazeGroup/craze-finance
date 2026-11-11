@@ -318,5 +318,5 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
 }
 
 export async function magazineAnalysis(force = false) {
-  return cached('magazines:analysis', HOUR, async () => computeMagazineAnalysis(await getBcContext(DFORCE_COMPANY)), force);
+  return cached('magazines:analysis:v2', HOUR, async () => computeMagazineAnalysis(await getBcContext(DFORCE_COMPANY)), force);
 }
