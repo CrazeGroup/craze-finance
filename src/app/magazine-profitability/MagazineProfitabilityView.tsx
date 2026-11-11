@@ -646,6 +646,7 @@ function TaskTable({ m, taskNames, openTask, toggle, saving, exclude }: {
   const groups = Array.from(new Set([...GROUPS, ...keys.map(groupOf)])).sort();
   const isRevenue = (k: string) => groupOf(k) === '001';
   const profit = Object.values(m.tasks).reduce((a, t) => a + t.value, 0);
+  const soldQty = m.tasks[TASK_SALES]?.qty || 0;
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
       <p className="px-3 py-2 text-xs font-semibold text-gray-600 border-b border-gray-100">Project Card · {m.project || m.item}{m.projects.length > 1 && <span className="font-normal text-amber-700"> (también {m.projects.filter(p => p !== m.project).join(', ')})</span>}</p>
@@ -653,7 +654,7 @@ function TaskTable({ m, taskNames, openTask, toggle, saving, exclude }: {
         <thead className="text-xs text-gray-500 bg-gray-50">
           <tr>
             <th className={`${th} text-left`}>Task No.</th><th className={`${th} text-left`}>Descripción</th>
-            <th className={`${th} text-right`}>Cantidad</th><th className={`${th} text-right`}>Ingresos (Total Price)</th><th className={`${th} text-right`}>Coste (Total Cost)</th>
+            <th className={`${th} text-right`}>Cantidad</th><th className={`${th} text-right`}>Ingreso / Coste</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -663,7 +664,7 @@ function TaskTable({ m, taskNames, openTask, toggle, saving, exclude }: {
             const qty = inGroup.reduce((a, k) => a + (m.tasks[k]?.qty || 0), 0);
             return (
               <Fragment key={g}>
-                <tr className="bg-gray-50/80 font-semibold text-gray-800"><td className={td}>{g}</td><td className="px-3 py-1.5" colSpan={4}>{taskNames[g] || GROUP_LABEL[g] || g}</td></tr>
+                <tr className="bg-gray-50/80 font-semibold text-gray-800"><td className={td}>{g}</td><td className="px-3 py-1.5" colSpan={3}>{taskNames[g] || GROUP_LABEL[g] || g}</td></tr>
                 {inGroup.map(k => {
                   const t = m.tasks[k];
                   const entries = m.entries.filter(e => e.task === k);
@@ -676,14 +677,14 @@ function TaskTable({ m, taskNames, openTask, toggle, saving, exclude }: {
                           <span className="inline-flex items-center gap-1">
                             {entries.length > 0 && (openTask[ok] ? <ChevronDown size={12} className="text-gray-400" /> : <ChevronRight size={12} className="text-gray-400" />)}
                             {taskNames[k] || k}{entries.length > 0 && <span className="text-xs text-gray-400">({entries.length})</span>}
+                            {k === TASK_RETURNS && t && soldQty > 0 && <span className="text-xs text-gray-500">· {pct(-t.qty / soldQty)} de la venta</span>}
                           </span>
                         </td>
                         <td className={`${td} text-right`}>{t ? units(t.qty) : '—'}</td>
-                        <td className={`${td} text-right ${isRevenue(k) ? neg(t?.value || 0) : ''}`}>{isRevenue(k) && t ? money(t.value) : '—'}</td>
-                        <td className={`${td} text-right`}>{!isRevenue(k) && t ? money(-t.value) : '—'}</td>
+                        <td className={`${td} text-right ${isRevenue(k) ? neg(t?.value || 0) : ''}`}>{t ? money(isRevenue(k) ? t.value : -t.value) : '—'}</td>
                       </tr>
                       {openTask[ok] && (
-                        <tr><td colSpan={5} className="px-3 py-2 bg-gray-50">
+                        <tr><td colSpan={4} className="px-3 py-2 bg-gray-50">
                           <table className="w-full text-xs">
                             <thead className="text-gray-500"><tr>
                               {['Documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Localización', 'Cantidad', 'Importe', ''].map(h =>
@@ -714,15 +715,14 @@ function TaskTable({ m, taskNames, openTask, toggle, saving, exclude }: {
                 <tr className="font-semibold text-gray-800">
                   <td className={td}>{g}.999</td><td className="px-3 py-1.5">END {taskNames[g] || GROUP_LABEL[g] || g}</td>
                   <td className={`${td} text-right`}>{g === '001' ? '' : units(qty)}</td>
-                  <td className={`${td} text-right`}>{g === '001' ? money(sum) : ''}</td>
-                  <td className={`${td} text-right`}>{g !== '001' ? money(-sum) : ''}</td>
+                  <td className={`${td} text-right`}>{money(g === '001' ? sum : -sum)}</td>
                 </tr>
               </Fragment>
             );
           })}
           <tr className="border-t-2 border-gray-300 font-bold">
             <td className={td} /><td className="px-3 py-2">BENEFICIO</td><td />
-            <td className={`${td} text-right ${profit < 0 ? 'text-red-600' : 'text-emerald-700'}`} colSpan={2}>{money(profit)}</td>
+            <td className={`${td} text-right ${profit < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{money(profit)}</td>
           </tr>
         </tbody>
       </table>
