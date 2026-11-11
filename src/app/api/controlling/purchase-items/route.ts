@@ -4,7 +4,8 @@ import { getBcContext } from '@/lib/bcClient';
 import { probeSources, purchaseItemsReport } from '@/lib/controlling/purchaseItems';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+// Sin caché lee todas las facturas, abonos y movimientos contables de compra del periodo (40–60 s para un año)
+export const maxDuration = 300;
 
 // Controlling · compras por artículo: /api/controlling/purchase-items?from=YYYY-MM-DD&to=YYYY-MM-DD[&force=1]
 const isDate = (s: string | null): s is string => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);

@@ -67,8 +67,12 @@ export async function probeSources(ctx: BcContext, from: string, to: string) {
   return out;
 }
 
-export async function purchaseItemsReport(ctx: BcContext, company: string, from: string, to: string, force = false) {
-  return cached(`ctrl:purchItems5:${company}:${from}:${to}`, to < today() ? 6 * HOUR : 1 * HOUR, async () => {
+// Un periodo que llega a hoy (o después) se guarda como "hasta hoy": la misma caché sirve de un día para otro (se devuelve
+// al momento y se renueva en segundo plano cada hora), en vez de recalcular el año entero cada día al cambiar la fecha
+export async function purchaseItemsReport(ctx: BcContext, company: string, from: string, requestedTo: string, force = false) {
+  const open = requestedTo >= today();
+  return cached(`ctrl:purchItems5:${company}:${from}:${open ? 'hoy' : requestedTo}`, open ? 1 * HOUR : 6 * HOUR, async () => {
+    const to = open ? today() : requestedTo;
     const warnings: string[] = [];
     const cm = await creditMemoServices(ctx);
     const dateFilter = (f: string) => `${f} ge ${from} and ${f} le ${to}`;
