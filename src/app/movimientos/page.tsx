@@ -293,7 +293,7 @@ export default function MovimientosPage() {
 const sideLabel = (t: string) => (t === 'Customer' ? 'Cliente' : 'Proveedor');
 type Cross = {
   type: 'Customer' | 'Vendor'; entryNo: number; entityNo: string; entityName: string; documentType: string; documentNo: string;
-  externalDocumentNo: string; postingDate: string | null; remaining: number; reason: 'cited' | 'name' | 'amount'; cited: boolean; count: number;
+  externalDocumentNo: string; postingDate: string | null; remaining: number; reason: 'cited' | 'name'; cited: boolean; count: number;
 };
 
 // El mismo importe (de signo contrario) abierto en otro cliente o proveedor, con el botón para cerrar ambos
@@ -301,12 +301,12 @@ function CrossCell({ c, nf, dateEs, sent, onClose }: { c?: Cross | null; nf: (v:
   if (!c) return <span className="text-gray-300">—</span>;
   return (
     <div className="flex items-start gap-2">
-      <span className={`inline-flex items-start gap-1 border rounded px-1.5 py-0.5 text-xs ${c.reason !== 'amount' ? 'bg-violet-50 text-violet-800 border-violet-200' : 'bg-orange-50 text-orange-800 border-orange-200'}`}
+      <span className={`inline-flex items-start gap-1 border rounded px-1.5 py-0.5 text-xs ${c.reason === 'cited' ? 'bg-violet-50 text-violet-800 border-violet-200' : 'bg-orange-50 text-orange-800 border-orange-200'}`}
         title={`${sideLabel(c.type)} ${c.entityNo} · ${c.entityName}\n${c.documentType} ${c.documentNo}${c.externalDocumentNo ? ` (${c.externalDocumentNo})` : ''} · ${dateEs(c.postingDate || '')} · ${nf(c.remaining)}${c.count > 1 ? `\n${c.count} movimientos con ese importe: se muestra ${c.cited ? 'el que se cita' : 'el de fecha más cercana'}` : ''}`}>
         <Shuffle size={12} className="mt-0.5 shrink-0" />
         <span>
           <span className="font-semibold">{c.entityName}</span>
-          <span className="block text-[11px] opacity-80">{sideLabel(c.type)} {c.entityNo} · {c.documentType} {c.documentNo} · {nf(c.remaining)} · {c.reason === 'cited' ? 'se citan' : c.reason === 'name' ? 'nombre parecido' : 'solo por importe'}{c.count > 1 ? ` · ${c.count} posibles` : ''}</span>
+          <span className="block text-[11px] opacity-80">{sideLabel(c.type)} {c.entityNo} · {c.documentType} {c.documentNo} · {nf(c.remaining)} · {c.reason === 'cited' ? 'se citan' : 'nombre parecido'}{c.count > 1 ? ` · ${c.count} posibles` : ''}</span>
         </span>
       </span>
       {sent

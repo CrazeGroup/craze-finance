@@ -97,11 +97,13 @@ function suggestFor(e: Entry, group: Entry[]): Suggestion | null {
 // Mismo importe pendiente (de signo contrario) en OTRO cliente o proveedor de la misma divisa: el pago se ha podido
 // registrar en la cuenta equivocada (Microsoft Ireland / Deutschland, las cuentas Amazon de cada país…) o compensa un
 // movimiento del mismo tercero como cliente y proveedor. Solo cuando el propio cliente / proveedor no tiene ya uno con
-// el importe exacto. Un importe igual por sí solo suele ser casualidad (11 € de dm y de Lufthansa), así que hace falta:
-//  - que se citen (el nº de documento de uno aparece en el otro), o
-//  - que los nombres compartan una palabra (Microsoft, Amazon, Rofu…), o
-//  - solo por importe, si es único en la empresa, con céntimos y de al menos 100.
-const nameWords = (s: string) => new Set(normName(s).split(' ').filter(w => w.length >= 4 && !/\d/.test(w)));
+// el importe exacto. Un importe igual por sí solo es casualidad (dm / Lufthansa, Kaufland / Amazon), así que hace falta
+// que se citen (el nº de documento de uno aparece en el otro) o que los nombres compartan una palabra propia (Microsoft,
+// Amazon, Rofu…), sin contar las genéricas (Credit Card, Deutsche, Branch…).
+const GENERIC_WORDS = new Set(['credit', 'card', 'expenses', 'ticket', 'lastschrift', 'deutsche', 'deutschland', 'europe', 'european',
+  'international', 'zentral', 'branch', 'succursale', 'sucursal', 'niederlassung', 'dutch', 'services', 'service', 'group', 'gruppe',
+  'handel', 'lager', 'online', 'store', 'shop', 'trading', 'logistics', 'logistik', 'germany', 'spain', 'france', 'italia', 'italy']);
+const nameWords = (s: string) => new Set(normName(s).split(' ').filter(w => w.length >= 4 && !/\d/.test(w) && !GENERIC_WORDS.has(w)));
 const similarName = (a: string, b: string) => { const wa = nameWords(a); return [...nameWords(b)].some(w => wa.has(w)); };
 function crossFor(e: Entry, byAmount: Map<string, Entry[]>) {
   const c0 = cents(e.remainingAmount);
@@ -111,14 +113,13 @@ function crossFor(e: Entry, byAmount: Map<string, Entry[]>) {
   const dist = (c: Entry) => Math.abs(Date.parse(c.postingDate || '1970-01-01') - Date.parse(e.postingDate || '1970-01-01'));
   const reason = (c: Entry): 'cited' | 'name' | null => (cites(e, c) || cites(c, e) ? 'cited' : similarName(e.entityName, c.entityName) ? 'name' : null);
   const strong = cands.map(c => ({ c, r: reason(c) })).filter(x => x.r).sort((a, b) => Number(b.r === 'cited') - Number(a.r === 'cited') || dist(a.c) - dist(b.c));
-  const amountOnly = cands.length === 1 && Math.abs(c0) >= 10000 && c0 % 100 !== 0;
-  const pick = strong[0] || (amountOnly ? { c: cands[0], r: 'amount' as const } : null);
+  const pick = strong[0];
   if (!pick) return null;
   const best = pick.c;
   return {
     type: best.type, entryNo: best.entryNo, entityNo: best.entityNo, entityName: best.entityName, documentType: best.documentType,
     documentNo: best.documentNo, externalDocumentNo: best.externalDocumentNo, postingDate: best.postingDate, remaining: best.remainingAmount,
-    reason: pick.r, cited: pick.r === 'cited', count: cands.length,
+    reason: pick.r as 'cited' | 'name', cited: pick.r === 'cited', count: cands.length,
   };
 }
 
