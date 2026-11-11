@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { RefreshCcw, User, Building2, CheckCircle } from 'lucide-react';
+import { RefreshCcw, User, Building2, CheckCircle, ArrowUp, ArrowDown } from 'lucide-react';
 import DocPdfLink, { purchasePdfKind } from '@/components/DocPdfLink';
 import { companyLabel, useCompany } from '@/contexts/CompanyContext';
 
@@ -54,15 +54,34 @@ export default function MovimientosPage() {
     return Array.from(methods).sort();
   }, [entries, viewMode]);
 
+  // Excluir Amazon (clientes y proveedores cuyo nombre contiene "Amazon"); se recuerda en el navegador
+  const [noAmazon, setNoAmazon] = useState(false);
+  useEffect(() => { try { setNoAmazon(localStorage.getItem('movimientos:sinAmazon') === '1'); } catch { /* sin almacenamiento */ } }, []);
+  const changeNoAmazon = (v: boolean) => { setNoAmazon(v); try { localStorage.setItem('movimientos:sinAmazon', v ? '1' : '0'); } catch { /* sin almacenamiento */ } };
+
+  // Orden por columna (clic en la cabecera: ascendente, descendente)
+  type SortKey = 'entityNo' | 'entityName' | 'postingDate' | 'documentType' | 'documentNo' | 'externalDocumentNo' | 'currencyCode' | 'originalAmount' | 'remainingAmount' | 'description' | 'paymentMethodCode';
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 } | null>(null);
+  const sortBy = (key: SortKey) => setSort(p => (p?.key === key ? (p.dir === 1 ? { key, dir: -1 } : null) : { key, dir: 1 }));
+
   // Apply filters
   const filteredEntries = useMemo(() => {
-    return entries.filter(e => {
+    const list = entries.filter(e => {
       if (e.type !== viewMode) return false;
+      if (noAmazon && /amazon/i.test(e.entityName || '')) return false;
       if (selectedDocTypes.length > 0 && !selectedDocTypes.includes(e.documentType)) return false;
       if (selectedPaymentMethods.length > 0 && !selectedPaymentMethods.includes(e.paymentMethodCode)) return false;
       return true;
     });
-  }, [entries, viewMode, selectedDocTypes, selectedPaymentMethods]);
+    if (!sort) return list;
+    const { key, dir } = sort;
+    const num = key === 'originalAmount' || key === 'remainingAmount';
+    return [...list].sort((a, b) => {
+      if (num) return ((Number(a[key]) || 0) - (Number(b[key]) || 0)) * dir;
+      return String(a[key] ?? '').localeCompare(String(b[key] ?? ''), 'es', { numeric: true, sensitivity: 'base' }) * dir;
+    });
+  }, [entries, viewMode, selectedDocTypes, selectedPaymentMethods, noAmazon, sort]);
+  const amazonCount = useMemo(() => entries.filter(e => e.type === viewMode && /amazon/i.test(e.entityName || '')).length, [entries, viewMode]);
 
   // Clear filters when switching view modes
   useEffect(() => {
@@ -101,7 +120,7 @@ export default function MovimientosPage() {
 
       <main className="w-full px-4 md:px-8 pt-6 space-y-4">
         {(availableDocTypes.length > 0 || availablePaymentMethods.length > 0) && (
-          <section className="bg-white rounded-xl border border-gray-200 p-4 flex flex-wrap gap-x-8 gap-y-3">
+          <section className="bg-white rounded-xl border border-gray-200 p-4 flex flex-wrap items-start gap-x-8 gap-y-3">
             {availableDocTypes.length > 0 && (
               <div>
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Tipo de documento</p>
@@ -124,6 +143,14 @@ export default function MovimientosPage() {
                 </div>
               </div>
             )}
+            <div>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Amazon</p>
+              <label className="inline-flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none pt-0.5">
+                <input type="checkbox" checked={noAmazon} onChange={e => changeNoAmazon(e.target.checked)} />
+                Excluir {viewMode === 'Customer' ? 'clientes' : 'proveedores'} Amazon{amazonCount ? ` (${amazonCount} mov.)` : ''}
+              </label>
+            </div>
+            <p className="ml-auto self-end text-xs text-gray-500">{filteredEntries.length} movimientos</p>
           </section>
         )}
 
@@ -141,17 +168,18 @@ export default function MovimientosPage() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  <th className={`${th} text-left`}>Nº {viewMode === 'Customer' ? 'cliente' : 'proveedor'}</th>
-                  <th className={`${th} text-left`}>Nombre</th>
-                  <th className={`${th} text-left`}>Posting Date</th>
-                  <th className={`${th} text-left`}>Doc. Type</th>
-                  <th className={`${th} text-left`}>Document No.</th>
-                  <th className={`${th} text-left`}>Ext. Doc. No.</th>
-                  <th className={`${th} text-left`}>Divisa</th>
-                  <th className={`${th} text-right`}>Original Amt.</th>
-                  <th className={`${th} text-right`}>Remaining Amt.</th>
-                  <th className={`${th} text-left`}>Description</th>
-                  <th className={`${th} text-left`}>Payment Method</th>
+                  {([
+                    ['entityNo', `Nº ${viewMode === 'Customer' ? 'cliente' : 'proveedor'}`], ['entityName', 'Nombre'], ['postingDate', 'Posting Date'],
+                    ['documentType', 'Doc. Type'], ['documentNo', 'Document No.'], ['externalDocumentNo', 'Ext. Doc. No.'], ['currencyCode', 'Divisa'],
+                    ['originalAmount', 'Original Amt.', true], ['remainingAmount', 'Remaining Amt.', true], ['description', 'Description'], ['paymentMethodCode', 'Payment Method'],
+                  ] as [SortKey, string, boolean?][]).map(([key, label, right]) => (
+                    <th key={key} className={`${th} ${right ? 'text-right' : 'text-left'}`}>
+                      <button onClick={() => sortBy(key)} title="Ordenar" className={`inline-flex items-center gap-1 uppercase tracking-wider hover:text-gray-900 ${sort?.key === key ? 'text-gray-900' : ''}`}>
+                        {label}
+                        {sort?.key === key && (sort.dir === 1 ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
+                      </button>
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
