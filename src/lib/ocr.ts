@@ -690,11 +690,11 @@ function amazonRules(s: OcrSuggestion, text: string, vendorName: string, warning
 // Otros proveedores Amazon de la empresa (sucursales), primero los "Amazon EU SARL" (mismo formato de factura), sin los
 // de tarjeta, Business, Web Services ni Seller Central
 async function amazonSiblings(ctx: BcContext, exclude: string) {
-  return cached(`ocr:amazon-siblings:${ctx.companyName}`, 6 * HOUR, async () => {
+  return cached(`ocr:amazon-siblings2:${ctx.companyName}`, 6 * HOUR, async () => {
     const rows = await bcFetchAll(odataUrl(`${ctx.apiBase}/vendors`, {
       $filter: `contains(displayName,'mazon') or contains(displayName,'MAZON')`, $select: 'number,displayName,blocked',
     }), ctx.token);
-    return (rows as any[]).filter(v => !String(v.blocked || '').trim() && !/credit card|business|web services|seller|provisions|arvato/i.test(v.displayName))
+    return (rows as any[]).filter(v => !String(v.blocked || '').replace(/_x0020_/g, '').trim() && !/credit card|business|web services|seller|provisions|arvato/i.test(v.displayName))
       .map(v => ({ number: String(v.number), name: String(v.displayName) }))
       .sort((a, b) => Number(!/eu s\.?(?:a|à)\.? ?r/i.test(a.name)) - Number(!/eu s\.?(?:a|à)\.? ?r/i.test(b.name)));
   }).then(list => list.filter(v => v.number !== exclude));
