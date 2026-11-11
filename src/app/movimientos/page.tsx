@@ -15,8 +15,22 @@ export default function MovimientosPage() {
   const [selectedDocTypes, setSelectedDocTypes] = useState<string[]>([]);
   const [selectedPaymentMethods, setSelectedPaymentMethods] = useState<string[]>([]);
 
+  // Comentarios de la app por línea ('Customer:<entryNo>' / 'Vendor:<entryNo>')
+  const [comments, setComments] = useState<Record<string, { text: string; by?: string; at: string }>>({});
+  const loadComments = () => fetch('/api/ledger-entries/comments', { cache: 'no-store' }).then(r => r.json()).then(d => d.comments && setComments(d.comments)).catch(() => {});
+  const saveComment = async (key: string, text: string) => {
+    if ((comments[key]?.text || '') === text.trim()) return;
+    try {
+      const res = await fetch('/api/ledger-entries/comments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, text }) });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error);
+      setComments(d.comments);
+    } catch (e: any) { alert(`No se ha podido guardar el comentario: ${e.message}`); }
+  };
+
   const fetchEntries = async () => {
     setLoading(true);
+    loadComments();
     try {
       const res = await fetch('/api/ledger-entries', { cache: 'no-store' });
       const data = await res.json();
@@ -60,7 +74,8 @@ export default function MovimientosPage() {
   const changeNoAmazon = (v: boolean) => { setNoAmazon(v); try { localStorage.setItem('movimientos:sinAmazon', v ? '1' : '0'); } catch { /* sin almacenamiento */ } };
 
   // Orden por columna (clic en la cabecera: ascendente, descendente)
-  type SortKey = 'entityNo' | 'entityName' | 'postingDate' | 'documentType' | 'documentNo' | 'externalDocumentNo' | 'currencyCode' | 'originalAmount' | 'remainingAmount' | 'description' | 'paymentMethodCode';
+  type SortKey = 'entityNo' | 'entityName' | 'postingDate' | 'documentType' | 'documentNo' | 'externalDocumentNo' | 'currencyCode' | 'originalAmount' | 'remainingAmount' | 'description' | 'paymentMethodCode'
+    | 'salesReturnOrderNo' | 'messageToRecipient' | 'comment';
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 } | null>(null);
   const sortBy = (key: SortKey) => setSort(p => (p?.key === key ? (p.dir === 1 ? { key, dir: -1 } : null) : { key, dir: 1 }));
 
@@ -76,11 +91,13 @@ export default function MovimientosPage() {
     if (!sort) return list;
     const { key, dir } = sort;
     const num = key === 'originalAmount' || key === 'remainingAmount';
+    const val = (e: any) => (key === 'comment' ? comments[`${e.type}:${e.entryNo}`]?.text || '' : e[key]);
     return [...list].sort((a, b) => {
+      if (key === 'comment') return String(val(a)).localeCompare(String(val(b)), 'es', { sensitivity: 'base' }) * dir;
       if (num) return ((Number(a[key]) || 0) - (Number(b[key]) || 0)) * dir;
       return String(a[key] ?? '').localeCompare(String(b[key] ?? ''), 'es', { numeric: true, sensitivity: 'base' }) * dir;
     });
-  }, [entries, viewMode, selectedDocTypes, selectedPaymentMethods, noAmazon, sort]);
+  }, [entries, viewMode, selectedDocTypes, selectedPaymentMethods, noAmazon, sort, comments]);
   const amazonCount = useMemo(() => entries.filter(e => e.type === viewMode && /amazon/i.test(e.entityName || '')).length, [entries, viewMode]);
 
   // Clear filters when switching view modes
@@ -170,8 +187,10 @@ export default function MovimientosPage() {
                 <tr>
                   {([
                     ['entityNo', `Nº ${viewMode === 'Customer' ? 'cliente' : 'proveedor'}`], ['entityName', 'Nombre'], ['postingDate', 'Posting Date'],
-                    ['documentType', 'Doc. Type'], ['documentNo', 'Document No.'], ['externalDocumentNo', 'Ext. Doc. No.'], ['currencyCode', 'Divisa'],
-                    ['originalAmount', 'Original Amt.', true], ['remainingAmount', 'Remaining Amt.', true], ['description', 'Description'], ['paymentMethodCode', 'Payment Method'],
+                    ['documentType', 'Doc. Type'], ['documentNo', 'Document No.'], ['externalDocumentNo', 'Ext. Doc. No.'],
+                    ...(viewMode === 'Customer' ? [['salesReturnOrderNo', 'Sales Return Order No.']] : []), ['currencyCode', 'Divisa'],
+                    ['originalAmount', 'Original Amt.', true], ['remainingAmount', 'Remaining Amt.', true], ['description', 'Description'],
+                    ...(viewMode === 'Customer' ? [['messageToRecipient', 'Message to Recipient']] : []), ['paymentMethodCode', 'Payment Method'], ['comment', 'Comentario'],
                   ] as [SortKey, string, boolean?][]).map(([key, label, right]) => (
                     <th key={key} className={`${th} ${right ? 'text-right' : 'text-left'}`}>
                       <button onClick={() => sortBy(key)} title="Ordenar" className={`inline-flex items-center gap-1 uppercase tracking-wider hover:text-gray-900 ${sort?.key === key ? 'text-gray-900' : ''}`}>
@@ -196,11 +215,25 @@ export default function MovimientosPage() {
                       {entry.type === 'Vendor' && <DocPdfLink documentNo={entry.documentNo} kind={purchasePdfKind(entry.documentType)} />}
                     </td>
                     <td className="px-3 py-2 font-mono text-gray-600">{entry.externalDocumentNo || '—'}</td>
+                    {viewMode === 'Customer' && (
+                      <td className="px-3 py-2 font-mono whitespace-nowrap">
+                        {entry.salesReturnOrderNo
+                          ? <span className="text-gray-900">{entry.salesReturnOrderNo}</span>
+                          : entry.documentType === 'Refund'
+                            ? <span className="text-xs font-sans font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5" title="Los Refund deberían llevar el Sales Return Order No.">Falta</span>
+                            : <span className="text-gray-300">—</span>}
+                      </td>
+                    )}
                     <td className="px-3 py-2 text-gray-600">{entry.currencyCode || 'EUR'}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-gray-600 whitespace-nowrap">{nf(entry.originalAmount)}</td>
                     <td className={`px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap ${entry.remainingAmount < 0 ? 'text-red-600' : 'text-gray-900'}`}>{nf(entry.remainingAmount)}</td>
                     <td className="px-3 py-2 text-gray-700 min-w-[250px]">{entry.description}</td>
+                    {viewMode === 'Customer' && <td className="px-3 py-2 text-gray-700 min-w-[220px]">{entry.messageToRecipient || <span className="text-gray-300">—</span>}</td>}
                     <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{entry.paymentMethodCode || '—'}</td>
+                    <td className="px-2 py-1.5 min-w-[220px]">
+                      <CommentCell key={`${entry.type}:${entry.entryNo}:${comments[`${entry.type}:${entry.entryNo}`]?.at || ''}`}
+                        value={comments[`${entry.type}:${entry.entryNo}`]} onSave={t => saveComment(`${entry.type}:${entry.entryNo}`, t)} />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -209,5 +242,16 @@ export default function MovimientosPage() {
         )}
       </main>
     </div>
+  );
+}
+
+// Comentario editable de una línea: se guarda al salir del campo o con Enter (vacío = se borra)
+function CommentCell({ value, onSave }: { value?: { text: string; by?: string; at: string }; onSave: (t: string) => void }) {
+  const [text, setText] = useState(value?.text || '');
+  return (
+    <input value={text} onChange={e => setText(e.target.value)} onBlur={() => onSave(text)}
+      onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+      placeholder="Añadir comentario…" title={value ? `${value.by ? `${value.by} · ` : ''}${value.at.substring(0, 10)}` : undefined}
+      className={`w-full rounded px-2 py-1 text-sm border ${text ? 'border-indigo-200 bg-indigo-50/50 text-gray-900' : 'border-transparent hover:border-gray-200 text-gray-700'} focus:border-gray-400 focus:bg-white outline-none`} />
   );
 }

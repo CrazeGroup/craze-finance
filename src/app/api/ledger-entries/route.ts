@@ -32,6 +32,8 @@ function mapEntry(type: 'Customer' | 'Vendor', r: any) {
     remainingAmount: num(r.remainingAmount),
     description: str(r.description),
     paymentMethodCode: str(r.paymentMethodCode),
+    messageToRecipient: str(r.messageToRecipient),
+    salesReturnOrderNo: '',
   };
 }
 
@@ -47,8 +49,14 @@ export async function GET() {
       bcFetchAll(odataUrl(`${ctx.customApiBase}/vendorLedgerEntries`, { $filter: 'open eq true' }), ctx.token),
     ]);
     const keep = (r: any) => VALID_DOCUMENT_TYPES.includes(docType(r.documentType).toLowerCase());
+    // Sales Return Order No. (campo de extensión, solo en la página OData de movimientos de cliente); si la empresa no
+    // lo tiene, se queda vacío
+    const returnOrders = new Map<number, string>();
+    await bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Customer_Ledger_Entries_Excel`, {
+      $filter: 'Open eq true', $select: 'Entry_No,Sales_Return_Order_No_BCT',
+    }), ctx.token).then(rows => rows.forEach((x: any) => { if (str(x.Sales_Return_Order_No_BCT)) returnOrders.set(num(x.Entry_No), str(x.Sales_Return_Order_No_BCT)); })).catch(() => {});
     const entries = [
-      ...customers.filter(keep).map(r => mapEntry('Customer', r)),
+      ...customers.filter(keep).map(r => ({ ...mapEntry('Customer', r), salesReturnOrderNo: returnOrders.get(num(r.entryNo)) || '' })),
       ...vendors.filter(keep).map(r => mapEntry('Vendor', r)),
     ].sort((a, b) => (a.postingDate || '').localeCompare(b.postingDate || ''));
     return NextResponse.json(entries);
