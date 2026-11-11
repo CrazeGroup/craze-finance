@@ -262,7 +262,7 @@ export default function MagazineProfitabilityView() {
                         const v = data.validated?.[u.key];
                         return (
                           <tr key={u.key} className={v ? 'text-gray-400' : ''}>
-                            <td className="px-3 py-1.5">{u.reason}{u.pdf && <p className="text-amber-700">PDF: {u.pdf}</p>}</td>
+                            <td className="px-3 py-1.5">{u.reason}{u.pdf && <p className="text-amber-700">{u.pdf}</p>}</td>
                             <td className={td}><span className="text-gray-400 mr-1">{DOC_TYPE[u.kind].label}</span>{u.doc} <DocPdfLink documentNo={u.doc} kind={DOC_TYPE[u.kind].pdf} company={COMPANY} /></td>
                             <td className={td}>{dmy(u.date)}</td><td className={td}>{u.partner}</td><td className={td}>{u.no}</td>
                             <td className="px-3 py-1.5">{u.description}</td><td className={td}>{u.project}</td><td className={td}>{u.task}</td>
