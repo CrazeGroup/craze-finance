@@ -65,9 +65,9 @@ function addLocations(list: Magazine[]) {
   return Array.from(map.values()).sort((a, b) => b.soldQty - a.soldQty);
 }
 
-// MAGAZINES › ANALYSIS: beneficio de cada revista (ventas y devoluciones de D-FORCE por localización, Magazine Ads y
+// Magazine Profitability: beneficio de cada revista (ventas y devoluciones de D-FORCE por localización, Magazine Ads y
 // costes por proyecto y tarea)
-export default function MagazineAnalysisView() {
+export default function MagazineProfitabilityView() {
   const [data, setData] = useState<MagazineAnalysis | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -133,7 +133,7 @@ export default function MagazineAnalysisView() {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Motivo', 'Tipo doc.', 'Nº documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Project No.', 'Project Task No.', 'Cantidad', 'Importe'],
         ...data.unassigned.map(u => [u.reason, DOC_TYPE[u.kind].label, u.doc, u.date ? new Date(u.date) : '', u.partner, u.no, u.description, u.project, u.task, u.qty, u.amount])], { cellDates: true }), 'Sin asignar');
     }
-    XLSX.writeFile(wb, `Magazine_Analysis_${new Date().toISOString().substring(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `Magazine_Profitability_${new Date().toISOString().substring(0, 10)}.xlsx`);
   };
 
   const th = 'px-3 py-2 font-semibold whitespace-nowrap';
@@ -145,8 +145,7 @@ export default function MagazineAnalysisView() {
     <div className="space-y-4">
       <section className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-3">
         <div className="mr-auto">
-          <p className="font-semibold text-gray-900">Magazine Analysis</p>
-          <p className="text-xs text-gray-500">
+                    <p className="text-xs text-gray-500">
             Beneficio por revista: ventas y devoluciones a D-FORCE (artículos MAGAZINE -), Magazine Ads y costes por Project No. / Task No.
             {data && <> · Datos de BC de {new Date(data.generatedAt).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}</>}
           </p>
