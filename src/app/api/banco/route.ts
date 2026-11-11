@@ -20,12 +20,23 @@ async function company() {
 // Cuentas de banco y lotes del General Journal (con su cuenta de contrapartida) de la empresa
 export async function GET() {
   try {
-    const ctx = await getBcContext(await company());
-    const [banks, journals] = await Promise.all([
+    const companyId = await company();
+    const ctx = await getBcContext(companyId);
+    const [banks, journals, accounts, customers, vendors] = await Promise.all([
       bcFetchAll(odataUrl(`${ctx.apiBase}/bankAccounts`, { $select: 'number,displayName,iban,currencyCode,blocked' }), ctx.token),
       bcFetchAll(odataUrl(`${ctx.apiBase}/journals`, { $select: 'code,displayName,balancingAccountNumber' }), ctx.token),
+      bcFetchAll(odataUrl(`${ctx.apiBase}/accounts`, { $select: 'number,displayName' }), ctx.token).catch(() => []),
+      prisma.customer.findMany({ where: { companyId }, select: { bcId: true, name: true } }),
+      prisma.vendor.findMany({ where: { companyId }, select: { bcId: true, name: true } }),
     ]);
+    // Nombre de cada cuenta por tipo|número, para mostrarlo junto al nº en las líneas del diario
+    const names: Record<string, string> = {};
+    for (const a of accounts as any[]) names[`G/L Account|${a.number}`] = a.displayName;
+    for (const b of banks as any[]) names[`Bank Account|${b.number}`] = b.displayName;
+    for (const c of customers) if (c.bcId) names[`Customer|${c.bcId}`] = c.name;
+    for (const v of vendors) if (v.bcId) names[`Vendor|${v.bcId}`] = v.name;
     return NextResponse.json({
+      names,
       banks: banks.filter((b: any) => !b.blocked).map((b: any) => ({ number: b.number, name: b.displayName, iban: String(b.iban || '').replace(/\s/g, '').toUpperCase(), currency: b.currencyCode })),
       journals: journals.map((j: any) => ({ code: j.code, name: j.displayName, bankNo: j.balancingAccountNumber })),
     });

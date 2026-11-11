@@ -26,6 +26,7 @@ export default function BancoPage() {
   const { selectedCompany } = useCompany();
   const [banks, setBanks] = useState<Bank[]>([]);
   const [journals, setJournals] = useState<Journal[]>([]);
+  const [names, setNames] = useState<Record<string, string>>({});
   const [bankNo, setBankNo] = useState('');
   const [journalCode, setJournalCode] = useState('');
   const [file, setFile] = useState<File | null>(null);
@@ -49,6 +50,7 @@ export default function BancoPage() {
       if (d.error) throw new Error(d.error);
       setBanks(d.banks);
       setJournals(d.journals);
+      setNames(d.names || {});
       let saved = '';
       try { saved = localStorage.getItem('crz-banco-bank') || ''; } catch { /* sin almacenamiento */ }
       const first = d.banks.find((b: Bank) => b.number === saved) || d.banks.find((b: Bank) => d.journals.some((j: Journal) => j.bankNo === b.number)) || d.banks[0];
@@ -289,7 +291,7 @@ export default function BancoPage() {
                             ))}
                           </div>
                         ) : (
-                          <LinesEditor row={r} input={input} setLine={(i, p) => setLine(r.idx, i, p)}
+                          <LinesEditor row={r} input={input} names={names} setLine={(i, p) => setLine(r.idx, i, p)}
                             setDoc={v => update(r.idx, x => ({ ...x, documentNo: v }))}
                             addLine={() => update(r.idx, x => ({ ...x, lines: [...x.lines, { accountType: x.lines[0]?.accountType || '', accountNo: x.lines[0]?.accountNo || '', accountName: '', description: x.lines[0]?.description || '', amount: Math.round((x.amount - x.lines.reduce((t, l) => t + l.amount, 0)) * 100) / 100 }] }))}
                             removeLine={i => update(r.idx, x => ({ ...x, lines: x.lines.filter((_, j) => j !== i) }))} />
@@ -321,8 +323,8 @@ export default function BancoPage() {
   );
 }
 
-function LinesEditor({ row, input, setLine, setDoc, addLine, removeLine }: {
-  row: Row; input: string; setLine: (i: number, patch: Partial<SuggestedLine>) => void; setDoc: (v: string) => void;
+function LinesEditor({ row, input, names, setLine, setDoc, addLine, removeLine }: {
+  row: Row; input: string; names: Record<string, string>; setLine: (i: number, patch: Partial<SuggestedLine>) => void; setDoc: (v: string) => void;
   addLine: () => void; removeLine: (i: number) => void;
 }) {
   const s = row.suggestion;
@@ -336,7 +338,12 @@ function LinesEditor({ row, input, setLine, setDoc, addLine, removeLine }: {
             {TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
           </select>
           <input value={l.accountNo} onChange={e => setLine(i, { accountNo: e.target.value, accountName: '' })} placeholder="Nº cuenta"
-            title={l.accountName} className={`${input} w-24 ${!l.accountNo.trim() ? 'border-red-300' : ''}`} />
+            className={`${input} w-24 ${!l.accountNo.trim() ? 'border-red-300' : ''}`} />
+          {(() => {
+            const name = names[`${l.accountType}|${l.accountNo.trim()}`] || l.accountName;
+            const unknown = !name && (l.accountType === 'G/L Account' || l.accountType === 'Bank Account') && !!l.accountNo.trim() && Object.keys(names).length > 0;
+            return <span title={name} className={`w-44 truncate text-xs ${unknown ? 'text-red-600 font-semibold' : 'text-gray-600'}`}>{name || (unknown ? 'No existe en BC' : '')}</span>;
+          })()}
           <input value={l.description} onChange={e => setLine(i, { description: e.target.value })} maxLength={100} className={`${input} flex-1 min-w-0`} />
           {row.lines.length > 1 ? (
             <input type="number" step="0.01" value={l.amount} onChange={e => setLine(i, { amount: parseFloat(e.target.value) || 0 })} className={`${input} w-28 text-right`} />
@@ -352,7 +359,6 @@ function LinesEditor({ row, input, setLine, setDoc, addLine, removeLine }: {
         <input value={row.documentNo} onChange={e => setDoc(e.target.value)} placeholder="Nº documento (auto)" className={`${input} w-40 text-xs`} />
         <button onClick={addLine} className="flex items-center gap-1 font-semibold text-gray-600 hover:text-gray-900"><Plus size={12} /> Línea</button>
         {s?.source && <span className="bg-gray-100 text-gray-600 rounded px-1.5 py-0.5 font-semibold">{s.source}</span>}
-        {row.lines[0]?.accountName && <span className="text-gray-500">{row.lines[0].accountName}</span>}
         {s?.note && <span className={row.doubtful ? 'text-amber-700 font-semibold' : 'text-gray-500'}>{s.note}</span>}
         {cents(diff) !== 0 && <span className="text-red-700 font-semibold">Faltan {fmt(diff)}</span>}
       </div>
