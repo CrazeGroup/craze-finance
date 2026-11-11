@@ -124,7 +124,7 @@ export default function AmazonPage() {
             <>
               <Section title={`Amazon ${data.cur.year}`} source={`Facturas y abonos de venta registrados · logística (Logistic Costs) · Amazon Ads (${'AA-00015'}) por país${data.prev ? ` · vs mismo periodo ${data.prev.year}` : ''}`}>
                 <Grid cols={5}>
-                  {([['Ventas', 's'], ['Coste mercancía', 'c'], ['Coste logístico', 'l'], ['Amazon Ads', 'a']] as const).map(([label, k]) => (
+                  {([['Ventas', 's'], ['Product cost', 'c'], ['Coste logístico', 'l'], ['Amazon Ads', 'a']] as const).map(([label, k]) => (
                     <Kpi key={k} label={label} value={eur(view.total[k])}
                       sub={view.totalLy ? `${data.prev!.year}: ${eur(view.totalLy[k])}${k !== 's' && view.total.s ? ` · ${pct((view.total[k] / view.total.s) * 100)} s/ventas` : ''}` : k !== 's' && view.total.s ? `${pct((view.total[k] / view.total.s) * 100)} s/ventas` : undefined}
                       extra={view.totalLy ? <span className="text-xs font-semibold"><Delta fmt={fmt} cur={view.total[k]} prev={view.totalLy[k]} invert={k !== 's'} /></span> : undefined} />
@@ -135,7 +135,7 @@ export default function AmazonPage() {
                 </Grid>
                 <InventoryBreakdown fmt={fmt} an={view.analysis} kind="flow" opts={{
                   title: 'Margen Amazon por mes', dims: DIMS, sameDayLy: true,
-                  note: 'Margen = venta − coste (cantidad × Unit Cost de la línea) − coste logístico − Amazon Ads. El acumulado del año anterior llega hasta el mismo día; en el gráfico sus meses son completos.',
+                  note: 'Margen = venta − Product cost (cantidad × Unit Cost de la línea) − coste logístico − Amazon Ads. El acumulado del año anterior llega hasta el mismo día; en el gráfico sus meses son completos.',
                 }} />
               </Section>
 
@@ -154,7 +154,7 @@ export default function AmazonPage() {
                             <th className="py-2 px-2 text-left">Cliente / mes / documento</th>
                             <th className="py-2 px-2 text-left">País</th>
                             <th className="py-2 px-2 text-right">Ventas</th>
-                            <th className="py-2 px-2 text-right">Coste</th>
+                            <th className="py-2 px-2 text-right">Product cost</th>
                             <th className="py-2 px-2 text-right">Logística</th>
                             <th className="py-2 px-2 text-right">Ads</th>
                             <th className="py-2 px-2 text-right">Margen</th>
@@ -231,7 +231,7 @@ export default function AmazonPage() {
                       </table>
                     </div>
                     <div className="mt-3 space-y-1 text-[11px] text-gray-500">
-                      <p>Cliente = Sell-to de la factura (clientes cuyo nombre contiene «Amazon», sin «FBA Regularization»); importes en divisa local, sin IVA. Coste = cantidad × Unit Cost (LCY) de la línea.</p>
+                      <p>Cliente = Sell-to de la factura (clientes cuyo nombre contiene «Amazon», sin «FBA Regularization»); importes en divisa local, sin IVA. Product cost = cantidad × Unit Cost (LCY) de la línea.</p>
                       <p>Logística = Total Charges de Logistic Costs: su Order No. (nº de Warehouse Shipment) → envío registrado → pedido de venta → primera factura del pedido desde la fecha del envío, repartido entre sus líneas por importe.
                         {data.cur.logistic.unassigned ? ` Envíos a Amazon aún sin factura (o sin enlace): ${eur(data.cur.logistic.unassigned)} en ${data.cur.logistic.unassignedRows} envíos, no incluidos.` : ''}</p>
                       <p>Amazon Ads = artículo AA-00015 en facturas/abonos de compra de proveedores Amazon, por país del proveedor (Polonia con Alemania) y mes, repartido entre los clientes Amazon de ese país en proporción a la venta del mes.</p>
