@@ -126,7 +126,7 @@ export default function AmazonPage() {
                 <Grid cols={5}>
                   {([['Ventas', 's'], ['Coste mercancía', 'c'], ['Coste logístico', 'l'], ['Amazon Ads', 'a']] as const).map(([label, k]) => (
                     <Kpi key={k} label={label} value={eur(view.total[k])}
-                      sub={view.totalLy ? `${data.prev!.year}: ${eur(view.totalLy[k])}${view.total.s ? ` · ${pct((view.total[k] / view.total.s) * 100)} s/ventas` : ''}` : view.total.s && k !== 's' ? `${pct((view.total[k] / view.total.s) * 100)} s/ventas` : undefined}
+                      sub={view.totalLy ? `${data.prev!.year}: ${eur(view.totalLy[k])}${k !== 's' && view.total.s ? ` · ${pct((view.total[k] / view.total.s) * 100)} s/ventas` : ''}` : k !== 's' && view.total.s ? `${pct((view.total[k] / view.total.s) * 100)} s/ventas` : undefined}
                       extra={view.totalLy ? <span className="text-xs font-semibold"><Delta fmt={fmt} cur={view.total[k]} prev={view.totalLy[k]} invert={k !== 's'} /></span> : undefined} />
                   ))}
                   <Kpi label="Margen" value={eur(margin(view.total))} tone={margin(view.total) < 0 ? 'red' : 'main'} highlight
@@ -134,8 +134,8 @@ export default function AmazonPage() {
                     extra={view.totalLy ? <span className="text-xs font-semibold"><Delta fmt={fmt} cur={margin(view.total)} prev={margin(view.totalLy)} /></span> : undefined} />
                 </Grid>
                 <InventoryBreakdown fmt={fmt} an={view.analysis} kind="flow" opts={{
-                  title: 'Margen Amazon por mes', dims: DIMS,
-                  note: 'Margen = venta − coste (cantidad × Unit Cost de la línea) − coste logístico − Amazon Ads. Los meses del año anterior son completos.',
+                  title: 'Margen Amazon por mes', dims: DIMS, sameDayLy: true,
+                  note: 'Margen = venta − coste (cantidad × Unit Cost de la línea) − coste logístico − Amazon Ads. El acumulado del año anterior llega hasta el mismo día; en el gráfico sus meses son completos.',
                 }} />
               </Section>
 
@@ -303,7 +303,7 @@ function build({ cur, prev }: Data) {
       const d = prev.docs[l[0]];
       const c = cust(prev.customers[d[3]]);
       const month = `${cur.year}${d[2].substring(4, 7)}`;
-      rows.push([Number(d[2].substring(5, 7)) - 1, prevItems[l[1]], ci(c.no), margin({ s: l[3], c: l[4], l: l[5], a: l[6] }), l[2]]);
+      rows.push([Number(d[2].substring(5, 7)) - 1, prevItems[l[1]], ci(c.no), margin({ s: l[3], c: l[4], l: l[5], a: l[6] }), l[2], d[2] <= lyTo ? 1 : 0]);
       if (d[2] > lyTo) continue;
       addTo(c.ly, l); addTo(totalLy, l);
       if (month <= cur.to.substring(0, 7)) addTo(monthOf(c, month).ly, l);

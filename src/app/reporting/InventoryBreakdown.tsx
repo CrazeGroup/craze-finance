@@ -41,7 +41,7 @@ export type BreakdownKind = 'stock' | 'flow' | 'ads';
 const TITLE: Record<BreakdownKind, 'trendTitle' | 'purTrendTitle' | 'adsTrendTitle'> = { stock: 'trendTitle', flow: 'purTrendTitle', ads: 'adsTrendTitle' };
 const NOTE: Record<BreakdownKind, 'locNote' | 'purNote' | 'adsNote'> = { stock: 'locNote', flow: 'purNote', ads: 'adsNote' };
 
-type Group = { v: number[]; q: number[] };
+type Group = { v: number[]; q: number[]; p: number[] };
 
 // Grupo de una fila [fecha, artículo, location, …] según la característica elegida
 function keyFn(an: Analysis, dim: Dim, none: string) {
@@ -60,7 +60,9 @@ function keyFn(an: Analysis, dim: Dim, none: string) {
 
 // opts (otros informes con el mismo gráfico + detalle, p. ej. Amazon): título y nota propios y las características
 // que se ofrecen en "Detalle por" (la primera es la inicial)
-export type BreakdownOpts = { title?: string; note?: string; dims?: Dim[] };
+// sameDayLy: las filas llevan una 6ª columna (1 = dentro del mismo periodo del año anterior, hasta el mismo día) y el
+// acumulado del año anterior de la tabla suma solo esas (el gráfico sigue con los meses completos)
+export type BreakdownOpts = { title?: string; note?: string; dims?: Dim[]; sameDayLy?: boolean };
 
 // Valor de inventario: la tabla lleva además el nº de palets (uds del grupo por artículo ÷ uds por palet, hacia arriba)
 // y el Average Days in Stock del mes de cada grupo (adsData = filas del ADS)
@@ -86,9 +88,10 @@ export default function InventoryBreakdown({ fmt, an, kind = 'stock', adsData, o
     for (const r of an.rows) {
       const k = key(r);
       let g = map.get(k);
-      if (!g) { g = { v: new Array(an.dates.length).fill(0), q: new Array(an.dates.length).fill(0) }; map.set(k, g); }
+      if (!g) { g = { v: new Array(an.dates.length).fill(0), q: new Array(an.dates.length).fill(0), p: new Array(an.dates.length).fill(0) }; map.set(k, g); }
       g.v[r[0]] += r[3];
       g.q[r[0]] += r[4];
+      if (r[5]) g.p[r[0]] += r[3];
     }
     return map;
   }, [an, dim, t]);
@@ -144,7 +147,7 @@ export default function InventoryBreakdown({ fmt, an, kind = 'stock', adsData, o
   const lyTo = Math.min(monthNo, nPrev) - 1;
   const rowOf = (key: string, gs: Group[]) => stock
     ? { key, month: null as number | null, value: measure(gs, curIdx, curIdx), ref: refIdx >= 0 ? measure(gs, refIdx, refIdx) : null, qty: 0 }
-    : { key, month: measure(gs, curIdx, curIdx), value: measure(gs, nPrev, curIdx), ref: measure(gs, 0, lyTo), qty: gs.reduce((s, g) => s + sumRange(g.q, nPrev, curIdx), 0) };
+    : { key, month: measure(gs, curIdx, curIdx), value: measure(gs, nPrev, curIdx), ref: opts?.sameDayLy ? gs.reduce((s, g) => s + sumRange(g.p, 0, lyTo), 0) : measure(gs, 0, lyTo), qty: gs.reduce((s, g) => s + sumRange(g.q, nPrev, curIdx), 0) };
 
   // Filas de la tabla (días en stock: por uds que han salido en el año)
   const rows = Array.from(groups.entries())
