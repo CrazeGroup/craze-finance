@@ -138,6 +138,7 @@ export default function MagazineAnalysisView() {
 
   const th = 'px-3 py-2 font-semibold whitespace-nowrap';
   const td = 'px-3 py-1.5 whitespace-nowrap tabular-nums';
+  const th2 = 'px-2 py-2 font-semibold whitespace-nowrap align-bottom';
   const issues = (data?.unassigned.length || 0) + (data?.mismatches.length || 0);
 
   return (
@@ -258,60 +259,51 @@ export default function MagazineAnalysisView() {
           )}
 
           <section className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-[13px]">
               <thead className="bg-gray-50 text-xs text-gray-500 border-b border-gray-200">
                 <tr>
-                  <th className={`${th} text-left`}>Revista</th>
-                  <th className={`${th} text-left`}>Proyecto</th>
-                  <th className={`${th} text-right`}>On Sale</th>
-                  <th className={`${th} text-right`}>Tirada</th>
-                  <th className={`${th} text-right`}>Uds vendidas</th>
-                  <th className={`${th} text-right`}>Venta</th>
-                  <th className={`${th} text-right`}>Uds devueltas</th>
-                  <th className={`${th} text-right`}>Devoluciones</th>
-                  <th className={`${th} text-right`}>% devol.</th>
-                  <th className={`${th} text-right bg-gray-100`}>Venta neta</th>
-                  <th className={`${th} text-right`}>Magazine Ads</th>
-                  <th className={`${th} text-right`}>Distribución</th>
-                  <th className={`${th} text-right`}>Marketing</th>
-                  <th className={`${th} text-right`}>Costes revista</th>
-                  <th className={`${th} text-right bg-gray-100`}>Beneficio</th>
-                  <th className={`${th} text-right`}>Margen</th>
+                  <th className={`${th2} text-left`}>Revista</th>
+                  <th className={`${th2} text-left`}>Proyecto<br /><span className="font-normal">On Sale · Tirada</span></th>
+                  <th className={`${th2} text-right`}>Venta<br /><span className="font-normal">uds</span></th>
+                  <th className={`${th2} text-right`}>Devoluciones<br /><span className="font-normal">uds · %</span></th>
+                  <th className={`${th2} text-right bg-gray-100`}>Venta neta<br /><span className="font-normal">uds netas</span></th>
+                  <th className={`${th2} text-right`}>Magazine Ads</th>
+                  <th className={`${th2} text-right`}>Distribución</th>
+                  <th className={`${th2} text-right`}>Marketing</th>
+                  <th className={`${th2} text-right`}>Costes revista</th>
+                  <th className={`${th2} text-right bg-gray-100`}>Beneficio<br /><span className="font-normal">margen</span></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {rows.map(({ m, s }) => (
                   <Fragment key={m.item}>
-                    <tr className="hover:bg-gray-50 cursor-pointer" onClick={() => setOpen(o => ({ ...o, [m.item]: !o[m.item] }))}>
-                      <td className="px-3 py-1.5">
-                        <div className="flex items-center gap-1.5">
-                          {open[m.item] ? <ChevronDown size={14} className="text-gray-400 shrink-0" /> : <ChevronRight size={14} className="text-gray-400 shrink-0" />}
+                    <tr className="hover:bg-gray-50 cursor-pointer align-top" onClick={() => setOpen(o => ({ ...o, [m.item]: !o[m.item] }))}>
+                      <td className="px-2 py-1.5">
+                        <div className="flex items-start gap-1">
+                          {open[m.item] ? <ChevronDown size={14} className="text-gray-400 shrink-0 mt-0.5" /> : <ChevronRight size={14} className="text-gray-400 shrink-0 mt-0.5" />}
                           <div className="min-w-0">
                             <p className="font-medium text-gray-900 whitespace-nowrap">{m.title} {m.issue.substring(2)}/{m.issue.substring(0, 2)} <span className="text-gray-400 font-normal">{m.item}</span></p>
-                            <p className="text-xs text-gray-500 truncate max-w-[22rem]" title={m.description}>{m.description.replace(/^MAGAZINE\s*-\s*/i, '')}</p>
+                            <p className="text-xs text-gray-500 truncate max-w-[18rem]" title={m.description}>{m.description.replace(/^MAGAZINE\s*-\s*/i, '').replace(/^\S+\s+\d{2}\/\d{2}\s*/, '')}</p>
                           </div>
                         </div>
                       </td>
-                      <td className={`${td} text-gray-600`}>{m.project}{m.projects.length > 1 && <span className="text-xs text-amber-600" title={m.projects.join(', ')}> +{m.projects.length - 1}</span>}</td>
-                      <td className={`${td} text-right text-gray-600`}>{dmy(m.onSaleDate)}</td>
-                      <td className={`${td} text-right text-gray-600`}>{m.printRun ? qf.format(m.printRun) : ''}</td>
-                      <td className={`${td} text-right`}>{units(s.soldQty)}</td>
-                      <td className={`${td} text-right`}>{money(s.sold)}</td>
-                      <td className={`${td} text-right`}>{units(s.retQty)}</td>
-                      <td className={`${td} text-right`}>{money(s.returned)}</td>
-                      <td className={`${td} text-right text-gray-600`}>{pct(s.soldQty ? s.retQty / s.soldQty : null)}</td>
-                      <td className={`${td} text-right font-medium bg-gray-50 ${neg(s.netSales)}`}>{money(s.netSales)}</td>
-                      <td className={`${td} text-right`}>{money(s.ads + s.otherRevenue)}</td>
-                      <td className={`${td} text-right`}>{money(s.distribution)}</td>
-                      <td className={`${td} text-right`}>{money(s.marketing)}</td>
-                      <td className={`${td} text-right`}>{money(s.magazine + s.otherCost)}</td>
-                      <td className={`${td} text-right font-semibold bg-gray-50 ${s.profit < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{money(s.profit)}</td>
-                      <td className={`${td} text-right text-gray-600`}>{pct(s.revenue ? s.profit / s.revenue : null)}</td>
+                      <td className="px-2 py-1.5 whitespace-nowrap text-gray-700">
+                        {m.project}{m.projects.length > 1 && <span className="text-xs text-amber-600" title={`También: ${m.projects.filter(p => p !== m.project).join(', ')}`}> +{m.projects.length - 1}</span>}
+                        <p className="text-xs text-gray-400">{[dmy(m.onSaleDate), m.printRun ? `${qf.format(m.printRun)} uds` : ''].filter(Boolean).join(' · ')}</p>
+                      </td>
+                      <Two main={money(s.sold)} sub={units(s.soldQty)} />
+                      <Two main={money(s.returned)} sub={`${units(s.retQty)} · ${pct(s.soldQty ? s.retQty / s.soldQty : null)}`} />
+                      <Two main={money(s.netSales)} sub={units(s.soldQty - s.retQty)} className={`font-medium bg-gray-50 ${neg(s.netSales)}`} />
+                      <Two main={money(s.ads + s.otherRevenue)} />
+                      <Two main={money(s.distribution)} />
+                      <Two main={money(s.marketing)} />
+                      <Two main={money(s.magazine + s.otherCost)} />
+                      <Two main={money(s.profit)} sub={pct(s.revenue ? s.profit / s.revenue : null)} className={`font-semibold bg-gray-50 ${s.profit < 0 ? 'text-red-600' : 'text-emerald-700'}`} />
                     </tr>
                     {open[m.item] && (
                       <tr>
-                        <td colSpan={16} className="bg-gray-50/60 px-4 md:px-8 py-4">
-                          <div className="grid grid-cols-1 2xl:grid-cols-[3fr_2fr] gap-4 items-start">
+                        <td colSpan={10} className="bg-gray-50/60 px-3 md:px-6 py-4">
+                          <div className="grid grid-cols-1 xl:grid-cols-[3fr_2fr] gap-4 items-start">
                             <TaskTable m={m} taskNames={data.taskNames} openTask={openTask} toggle={k => setOpenTask(o => ({ ...o, [k]: !o[k] }))} />
                             <LocationTable title="Ventas y devoluciones por localización (Description 2)" locations={m.locations} />
                           </div>
@@ -320,25 +312,21 @@ export default function MagazineAnalysisView() {
                     )}
                   </Fragment>
                 ))}
-                {!rows.length && <tr><td colSpan={16} className="px-3 py-6 text-center text-gray-500">Ninguna revista con estos filtros.</td></tr>}
+                {!rows.length && <tr><td colSpan={10} className="px-3 py-6 text-center text-gray-500">Ninguna revista con estos filtros.</td></tr>}
               </tbody>
               {rows.length > 0 && (
                 <tfoot className="border-t-2 border-gray-300 font-semibold bg-gray-50">
-                  <tr>
-                    <td className="px-3 py-2">TOTAL <span className="font-normal text-gray-500">({rows.length} revistas)</span></td>
-                    <td /><td /><td />
-                    <td className={`${td} text-right`}>{units(total.soldQty)}</td>
-                    <td className={`${td} text-right`}>{money(total.sold)}</td>
-                    <td className={`${td} text-right`}>{units(total.retQty)}</td>
-                    <td className={`${td} text-right`}>{money(total.returned)}</td>
-                    <td className={`${td} text-right`}>{pct(total.soldQty ? total.retQty / total.soldQty : null)}</td>
-                    <td className={`${td} text-right bg-gray-100`}>{money(total.netSales)}</td>
-                    <td className={`${td} text-right`}>{money(total.ads + total.otherRevenue)}</td>
-                    <td className={`${td} text-right`}>{money(total.distribution)}</td>
-                    <td className={`${td} text-right`}>{money(total.marketing)}</td>
-                    <td className={`${td} text-right`}>{money(total.magazine + total.otherCost)}</td>
-                    <td className={`${td} text-right bg-gray-100 ${total.profit < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{money(total.profit)}</td>
-                    <td className={`${td} text-right`}>{pct(total.revenue ? total.profit / total.revenue : null)}</td>
+                  <tr className="align-top">
+                    <td className="px-2 py-2">TOTAL <span className="font-normal text-gray-500">({rows.length} revistas)</span></td>
+                    <td />
+                    <Two main={money(total.sold)} sub={units(total.soldQty)} />
+                    <Two main={money(total.returned)} sub={`${units(total.retQty)} · ${pct(total.soldQty ? total.retQty / total.soldQty : null)}`} />
+                    <Two main={money(total.netSales)} sub={units(total.soldQty - total.retQty)} className="bg-gray-100" />
+                    <Two main={money(total.ads + total.otherRevenue)} />
+                    <Two main={money(total.distribution)} />
+                    <Two main={money(total.marketing)} />
+                    <Two main={money(total.magazine + total.otherCost)} />
+                    <Two main={money(total.profit)} sub={pct(total.revenue ? total.profit / total.revenue : null)} className={`bg-gray-100 ${total.profit < 0 ? 'text-red-600' : 'text-emerald-700'}`} />
                   </tr>
                 </tfoot>
               )}
@@ -351,6 +339,15 @@ export default function MagazineAnalysisView() {
         </>
       )}
     </div>
+  );
+}
+
+// Celda numérica con una segunda línea pequeña (unidades, %)
+function Two({ main, sub, className = '' }: { main: string; sub?: string; className?: string }) {
+  return (
+    <td className={`px-2 py-1.5 text-right whitespace-nowrap tabular-nums ${className}`}>
+      {main}{sub != null && <p className="text-xs font-normal text-gray-500">{sub}</p>}
+    </td>
   );
 }
 
@@ -398,7 +395,7 @@ function TaskTable({ m, taskNames, openTask, toggle }: {
                           </span>
                         </td>
                         <td className={`${td} text-right`}>{t ? units(t.qty) : '—'}</td>
-                        <td className={`${td} text-right ${neg(t?.value || 0)}`}>{isRevenue(k) && t ? money(t.value) : '—'}</td>
+                        <td className={`${td} text-right ${isRevenue(k) ? neg(t?.value || 0) : ''}`}>{isRevenue(k) && t ? money(t.value) : '—'}</td>
                         <td className={`${td} text-right`}>{!isRevenue(k) && t ? money(-t.value) : '—'}</td>
                       </tr>
                       {openTask[ok] && (
