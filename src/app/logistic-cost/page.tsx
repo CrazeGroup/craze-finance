@@ -76,8 +76,10 @@ export default function LogisticCostPage() {
   const [byMonth, setByMonth] = useState(false);
   const [openMonths, setOpenMonths] = useState<Set<string>>(new Set());
   const [onlyInc, setOnlyInc] = useState(false);
+  const [hideClean, setHideClean] = useState(false);
 
-  useEffect(() => { const f = Number(store.get('logistic:factor')); if (f) setFactor(f); setByMonth(store.get('logistic:mes') === '1'); }, []);
+  useEffect(() => { const f = Number(store.get('logistic:factor')); if (f) setFactor(f); setByMonth(store.get('logistic:mes') === '1'); setHideClean(store.get('logistic:sinIncid') === '1'); }, []);
+  const changeHideClean = (v: boolean) => { setHideClean(v); store.set('logistic:sinIncid', v ? '1' : '0'); };
   const changeFactor = (f: number) => { setFactor(f); store.set('logistic:factor', String(f)); };
   const changeByMonth = (v: boolean) => { setByMonth(v); store.set('logistic:mes', v ? '1' : '0'); };
 
@@ -203,6 +205,13 @@ export default function LogisticCostPage() {
               </Section>
 
               <Section title="Por Customer Group" source="Clic en un grupo para ver sus facturas · los % son sobre la venta · pasa el ratón por un % para ver el importe">
+                <div className="flex flex-wrap items-center gap-3">
+                  <button onClick={() => changeHideClean(!hideClean)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-semibold ${hideClean ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}>
+                    <AlertTriangle size={14} /> {hideClean ? 'Mostrar todos los grupos' : 'Ocultar grupos sin incidencias'}
+                  </button>
+                  {hideClean && <span className="text-xs text-gray-500">{view.rows.filter(r => r.flagged.size).length} de {view.rows.length} grupos con incidencias · el total es de todos</span>}
+                </div>
                 <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 border-b border-gray-200">
@@ -222,7 +231,7 @@ export default function LogisticCostPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {view.rows.map(r => {
+                      {view.rows.filter(r => !hideClean || r.flagged.size).map(r => {
                         const open = openGroup === r.code;
                         const invs = (onlyInc ? r.invs.filter(i => r.flagged.has(i.no)) : r.invs);
                         const months = new Map<string, { agg: Agg; invs: Inv[] }>();
