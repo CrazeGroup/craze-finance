@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { AlertCircle, AlertTriangle, ChevronDown, ChevronRight, Download, RefreshCw, Search } from 'lucide-react';
+import { AlertCircle, AlertTriangle, ChevronDown, ChevronRight, Download, RefreshCw, Search, Wrench } from 'lucide-react';
 import DocPdfLink from '@/components/DocPdfLink';
 import type { MagEntry, Magazine, MagazineAnalysis, MagLocation } from '@/lib/magazineAnalysis';
 
@@ -78,6 +78,7 @@ export default function MagazineProfitabilityView() {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [openTask, setOpenTask] = useState<Record<string, boolean>>({});
   const [showIssues, setShowIssues] = useState(false);
+  const [showFixes, setShowFixes] = useState(false);
 
   const load = async (force = false) => {
     setLoading(true); setError(null);
@@ -133,19 +134,22 @@ export default function MagazineProfitabilityView() {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Motivo', 'Tipo doc.', 'Nº documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Project No.', 'Project Task No.', 'Cantidad', 'Importe'],
         ...data.unassigned.map(u => [u.reason, DOC_TYPE[u.kind].label, u.doc, u.date ? new Date(u.date) : '', u.partner, u.no, u.description, u.project, u.task, u.qty, u.amount])], { cellDates: true }), 'Sin asignar');
     }
+    if (data.corrections.length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Motivo', 'Tipo doc.', 'Nº documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Localización', 'Project No. en BC', 'Task No. en BC', 'Revista correcta', 'Tarea', 'Cantidad', 'Importe'],
+        ...data.corrections.map(c => [c.reason, DOC_TYPE[c.kind].label, c.doc, c.date ? new Date(c.date) : '', c.partner, c.no, c.description, c.location, c.bcProject, c.bcTask, c.magazine, c.task, c.qty, c.amount])], { cellDates: true }), 'Corregidas en la app');
+    }
     XLSX.writeFile(wb, `Magazine_Profitability_${new Date().toISOString().substring(0, 10)}.xlsx`);
   };
 
   const th = 'px-3 py-2 font-semibold whitespace-nowrap';
   const td = 'px-3 py-1.5 whitespace-nowrap tabular-nums';
   const th2 = 'px-2 py-2 font-semibold whitespace-nowrap align-bottom';
-  const issues = (data?.unassigned.length || 0) + (data?.mismatches.length || 0);
 
   return (
     <div className="space-y-4">
       <section className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-3">
         <div className="mr-auto">
-                    <p className="text-xs text-gray-500">
+          <p className="text-xs text-gray-500">
             Beneficio por revista: ventas y devoluciones a D-FORCE (artículos MAGAZINE -), Magazine Ads y costes por Project No. / Task No.
             {data && <> · Datos de BC de {new Date(data.generatedAt).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}</>}
           </p>
@@ -198,60 +202,76 @@ export default function MagazineProfitabilityView() {
             ))}
           </section>
 
-          {issues > 0 && (
+          {data.unassigned.length > 0 && (
             <section className="bg-amber-50 border border-amber-200 rounded-xl">
               <button onClick={() => setShowIssues(v => !v)} className="w-full px-4 py-2.5 flex items-center gap-2 text-sm text-amber-900 text-left">
                 <AlertTriangle size={16} />
-                <span className="font-semibold">{issues} líneas a revisar en BC</span>
-                <span className="text-amber-800">
-                  {data.unassigned.length > 0 && <> · {data.unassigned.length} sin Project No. / Task No.</>}
-                  {data.mismatches.length > 0 && <> · {data.mismatches.length} ventas/devoluciones con un proyecto de otra revista</>}
-                </span>
-                {showIssues ? <ChevronDown size={16} className="ml-auto" /> : <ChevronRight size={16} className="ml-auto" />}
+                <span className="font-semibold">{data.unassigned.length} líneas sin revista</span>
+                <span className="text-amber-800">· sin Project No. / Task No. en BC ni revista en el External Document No.; no cuentan en ninguna revista (almacenaje y handling sin proyecto no se listan)</span>
+                {showIssues ? <ChevronDown size={16} className="ml-auto shrink-0" /> : <ChevronRight size={16} className="ml-auto shrink-0" />}
               </button>
               {showIssues && (
-                <div className="px-4 pb-4 space-y-4 overflow-x-auto">
-                  {data.unassigned.length > 0 && (
-                    <div>
-                      <p className="text-xs text-amber-900 mb-1">No cuentan en ninguna revista: rellena Project No. y Project Task No. en BC. Importe: en ventas, + = ingreso; en compras, + = coste.</p>
-                      <table className="w-full text-xs bg-white rounded-lg border border-amber-200">
-                        <thead className="text-gray-500 bg-gray-50"><tr>
-                          {['Motivo', 'Documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Project No.', 'Task No.', 'Cantidad', 'Importe'].map(h =>
-                            <th key={h} className={`${th} ${['Cantidad', 'Importe'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>)}
-                        </tr></thead>
-                        <tbody className="divide-y divide-gray-100">
-                          {data.unassigned.map((u, i) => (
-                            <tr key={i}>
-                              <td className={td}>{u.reason}</td>
-                              <td className={td}><span className="text-gray-400 mr-1">{DOC_TYPE[u.kind].label}</span>{u.doc} <DocPdfLink documentNo={u.doc} kind={DOC_TYPE[u.kind].pdf} company={COMPANY} /></td>
-                              <td className={td}>{dmy(u.date)}</td><td className={td}>{u.partner}</td><td className={td}>{u.no}</td>
-                              <td className="px-3 py-1.5">{u.description}</td><td className={td}>{u.project}</td><td className={td}>{u.task}</td>
-                              <td className={`${td} text-right`}>{units(u.qty)}</td><td className={`${td} text-right`}>{money(u.amount)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                  {data.mismatches.length > 0 && (
-                    <div>
-                      <p className="text-xs text-amber-900 mb-1">Se cuentan en la revista del artículo (como pide el análisis), pero en BC llevan el proyecto de otra revista: el Project Card de BC no las muestra en su revista.</p>
-                      <table className="w-full text-xs bg-white rounded-lg border border-amber-200">
-                        <thead className="text-gray-500 bg-gray-50"><tr>
-                          {['Documento', 'Artículo', 'Project No. en BC', 'Localización', 'Cantidad', 'Importe'].map(h =>
-                            <th key={h} className={`${th} ${['Cantidad', 'Importe'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>)}
-                        </tr></thead>
-                        <tbody className="divide-y divide-gray-100">
-                          {data.mismatches.map((x, i) => (
-                            <tr key={i}>
-                              <td className={td}>{x.doc}</td><td className={td}>{x.item}</td><td className={`${td} text-red-600`}>{x.project}</td><td className={td}>{x.location}</td>
-                              <td className={`${td} text-right`}>{units(x.qty)}</td><td className={`${td} text-right`}>{money(x.amount)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                <div className="px-4 pb-4 overflow-x-auto">
+                  <p className="text-xs text-amber-900 mb-1">Rellena Project No. y Project Task No. en BC. Importe: en ventas, + = ingreso; en compras, + = coste.</p>
+                  <table className="w-full text-xs bg-white rounded-lg border border-amber-200">
+                    <thead className="text-gray-500 bg-gray-50"><tr>
+                      {['Motivo', 'Documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Project No.', 'Task No.', 'Cantidad', 'Importe'].map(h =>
+                        <th key={h} className={`${th} ${['Cantidad', 'Importe'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>)}
+                    </tr></thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {data.unassigned.map((u, i) => (
+                        <tr key={i}>
+                          <td className={td}>{u.reason}</td>
+                          <td className={td}><span className="text-gray-400 mr-1">{DOC_TYPE[u.kind].label}</span>{u.doc} <DocPdfLink documentNo={u.doc} kind={DOC_TYPE[u.kind].pdf} company={COMPANY} /></td>
+                          <td className={td}>{dmy(u.date)}</td><td className={td}>{u.partner}</td><td className={td}>{u.no}</td>
+                          <td className="px-3 py-1.5">{u.description}</td><td className={td}>{u.project}</td><td className={td}>{u.task}</td>
+                          <td className={`${td} text-right`}>{units(u.qty)}</td><td className={`${td} text-right`}>{money(u.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          )}
+
+          {data.corrections.length > 0 && (
+            <section className="bg-sky-50 border border-sky-200 rounded-xl">
+              <button onClick={() => setShowFixes(v => !v)} className="w-full px-4 py-2.5 flex items-center gap-2 text-sm text-sky-900 text-left">
+                <Wrench size={16} />
+                <span className="font-semibold">{data.corrections.length} líneas corregidas en la app</span>
+                <span className="text-sky-800">
+                  · {data.corrections.filter(c => c.bcProject).length} con el proyecto de otra revista, {data.corrections.filter(c => !c.bcProject).length} sin proyecto.
+                  Ya cuentan en la revista correcta; conviene corregir el Project No. en BC para que el Project Card coincida
+                </span>
+                {showFixes ? <ChevronDown size={16} className="ml-auto shrink-0" /> : <ChevronRight size={16} className="ml-auto shrink-0" />}
+              </button>
+              {showFixes && (
+                <div className="px-4 pb-4 overflow-x-auto">
+                  <p className="text-xs text-sky-900 mb-1">Ventas y devoluciones de D-FORCE: manda el artículo (su descripción dice la misma revista). Magazine Ads: manda la revista del External Document No. o, si no la dice, la fecha On Sale de la revista.</p>
+                  <table className="w-full text-xs bg-white rounded-lg border border-sky-200">
+                    <thead className="text-gray-500 bg-gray-50"><tr>
+                      {['Motivo', 'Documento', 'Fecha', 'Nº', 'Descripción', 'Localización', 'Project No. en BC', 'Revista correcta', 'Tarea', 'Cantidad', 'Importe'].map(h =>
+                        <th key={h} className={`${th} ${['Cantidad', 'Importe'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>)}
+                    </tr></thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {data.corrections.map((c, i) => {
+                        const right = data.magazines.find(m => m.item === c.magazine);
+                        return (
+                          <tr key={i}>
+                            <td className="px-3 py-1.5">{c.reason}</td>
+                            <td className={td}><span className="text-gray-400 mr-1">{DOC_TYPE[c.kind].label}</span>{c.doc} <DocPdfLink documentNo={c.doc} kind={DOC_TYPE[c.kind].pdf} company={COMPANY} /></td>
+                            <td className={td}>{dmy(c.date)}</td><td className={td}>{c.no}</td>
+                            <td className="px-3 py-1.5">{c.description}</td><td className={td}>{c.location}</td>
+                            <td className={`${td} text-red-600 line-through`}>{c.bcProject || '(vacío)'}</td>
+                            <td className={`${td} text-emerald-700 font-medium`}>{right?.project || c.magazine} <span className="text-gray-400 font-normal">{c.magazine}</span></td>
+                            <td className={td}>{c.task}</td>
+                            <td className={`${td} text-right`}>{units(c.qty)}</td><td className={`${td} text-right`}>{money(c.amount)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </section>
@@ -410,7 +430,7 @@ function TaskTable({ m, taskNames, openTask, toggle }: {
                                   <td className="px-2 py-1 whitespace-nowrap"><span className="text-gray-400 mr-1">{DOC_TYPE[e.kind].label}</span>{e.doc} <DocPdfLink documentNo={e.doc} kind={DOC_TYPE[e.kind].pdf} company={COMPANY} /></td>
                                   <td className="px-2 py-1 whitespace-nowrap">{dmy(e.date)}</td>
                                   <td className="px-2 py-1">{e.partner}</td><td className="px-2 py-1 whitespace-nowrap">{e.no}</td>
-                                  <td className="px-2 py-1">{e.description}</td><td className="px-2 py-1 whitespace-nowrap">{e.location}</td>
+                                  <td className="px-2 py-1">{e.description}{e.fixed && <p className="text-sky-700 flex items-center gap-1"><Wrench size={11} /> {e.fixed}</p>}</td><td className="px-2 py-1 whitespace-nowrap">{e.location}</td>
                                   <td className="px-2 py-1 text-right tabular-nums">{units(e.qty)}</td>
                                   <td className={`px-2 py-1 text-right tabular-nums ${neg(isRevenue(k) ? e.value : -e.value)}`}>{money(isRevenue(k) ? e.value : -e.value)}</td>
                                 </tr>

@@ -19,11 +19,18 @@ const MAGAZINE_DESC = /^MAGAZINE\s*-\s*/i;
 const ITEM_RE = /^0599\d_\d{4}$/;
 const TASK_SALES = '001.001';
 const TASK_RETURNS = '001.003';
+const TASK_ADS = '001.004';
 
 export type MagEntry = {
   task: string; qty: number; value: number;
   kind: 'salesInv' | 'salesCrMemo' | 'purchInv' | 'purchCrMemo';
   doc: string; date: string; partner: string; no: string; description: string; location: string;
+  fixed?: string;   // corrección hecha en la app (proyecto equivocado o sin proyecto)
+};
+// Línea que la app asigna a otra revista que la de su Project No. en BC (o que no lo tenía)
+export type Correction = {
+  reason: string; kind: MagEntry['kind']; doc: string; date: string; partner: string; no: string; description: string;
+  location: string; qty: number; amount: number; bcProject: string; bcTask: string; magazine: string; task: string;
 };
 export type MagLocation = { location: string; soldQty: number; soldAmount: number; retQty: number; retAmount: number };
 export type Magazine = {
@@ -38,7 +45,7 @@ export type MagazineAnalysis = {
   magazines: Magazine[];
   taskNames: Record<string, string>;
   unassigned: Unassigned[];
-  mismatches: { doc: string; item: string; project: string; location: string; qty: number; amount: number }[];
+  corrections: Correction[];
   generatedAt: string;
 };
 
@@ -54,6 +61,17 @@ export function magazineOfProject(project: string): string {
   return '';
 }
 
+// Revista escrita en un texto: "MAGAZINE - INKEE 01/25 ADS", "MAGAZINE - GALUPY 01/26 SPECIAL ADS", "(Magazine - Galupy 04/25)"
+export function magazineFromText(text: string): string {
+  const m = String(text || '').match(/MAGAZINE\s*-\s*(GALUPY|INKEE)\s*(SPECIAL\s*)?(\d{1,2})\s*\/\s*(\d{2})(\s*SPECIAL)?/i);
+  if (!m) return '';
+  const prefix = m[1].toUpperCase() === 'INKEE' ? '05993' : m[2] || m[5] ? '05994' : '05995';
+  return `${prefix}_${m[4]}${m[3].padStart(2, '0')}`;
+}
+const isAds = (description: string) => /magazine\s*ads?\b/i.test(description);
+// Almacenaje y handling sin proyecto son costes generales, no de una revista
+const isGeneralCost = (no: string, description: string) => /^AA-0000(9|10)$/.test(no) || /storage|handling/i.test(description);
+
 // Description 2 de D-FORCE con variantes de escritura → un nombre
 function normLocation(s: string) {
   const t = String(s || '').trim().replace(/\s+/g, ' ').replace(/^Grosso\s*-\s*/i, 'Grosso - ');
@@ -67,7 +85,7 @@ const n = (v: any) => (typeof v === 'number' ? v : parseFloat(v) || 0);
 
 async function readAll(ctx: BcContext) {
   const sel = 'documentNo,lineNo,type,no,description,description2,quantity,amount,postingDate';
-  const [salesInv, salesCr, purchInv, purchCr, tasks, projects, customers, vendors] = await Promise.all([
+  const [salesInv, salesCr, purchInv, purchCr, tasks, projects, customers, vendors, invHeads, crHeads] = await Promise.all([
     bcFetchAll(odataUrl(`${ctx.customApiBase}/salesInvoiceLines`, { $select: `${sel},sellToCustomerNo,aitJobNo,aitJobTaskNo` }), ctx.token),
     bcFetchAll(odataUrl(`${ctx.customApiBase}/salesCrMemoLines`, { $select: `${sel},sellToCustomerNo,aitJobNo,aitJobTaskNo,returnReasonCode` }), ctx.token),
     bcFetchAll(odataUrl(`${ctx.customApiBase}/purchInvLines`, { $select: `${sel},buyFromVendorNo,jobNo,jobTaskNo` }), ctx.token),
@@ -77,8 +95,12 @@ async function readAll(ctx: BcContext) {
       .catch(() => [] as any[]),
     bcFetchAll(odataUrl(`${ctx.apiBase}/customers`, { $select: 'number,displayName' }), ctx.token),
     bcFetchAll(odataUrl(`${ctx.apiBase}/vendors`, { $select: 'number,displayName' }), ctx.token),
+    // External Document No. de las facturas/abonos de venta: en los Magazine Ads dice la revista ("MAGAZINE - INKEE 01/25 ADS")
+    bcFetchAll(odataUrl(`${ctx.apiBase}/salesInvoices`, { $filter: `customerNumber ne '${CUSTOMER_NO}'`, $select: 'number,externalDocumentNumber' }), ctx.token),
+    bcFetchAll(odataUrl(`${ctx.apiBase}/salesCreditMemos`, { $filter: `customerNumber ne '${CUSTOMER_NO}'`, $select: 'number,externalDocumentNumber' }), ctx.token),
   ]);
-  return { salesInv, salesCr, purchInv, purchCr, tasks, projects, customers, vendors };
+  const extDoc = new Map<string, string>([...invHeads, ...crHeads].map((h: any) => [s(h.number), s(h.externalDocumentNumber)]));
+  return { salesInv, salesCr, purchInv, purchCr, tasks, projects, customers, vendors, extDoc };
 }
 
 // Las líneas de abono de compra no traen fecha: se toma de la cabecera
@@ -108,7 +130,9 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
   const addProject = (m: Magazine, project: string) => { if (project && !m.projects.includes(project)) m.projects.push(project); };
   const locs = new Map<string, Map<string, MagLocation>>();
   const unassigned: Unassigned[] = [];
-  const mismatches: MagazineAnalysis['mismatches'] = [];
+  const corrections: Correction[] = [];
+  // Magazine Ads sin revista en el proyecto ni en el External Document No. (IN-CE-00009…): se asignan después por fecha
+  const pendingAds: { base: Omit<MagEntry, 'task' | 'qty' | 'value' | 'location'>; qty: number; amount: number; project: string; task: string }[] = [];
 
   const push = (m: Magazine, e: MagEntry) => {
     m.entries.push(e);
@@ -135,12 +159,15 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
         const item = ITEM_RE.test(s(r.no)) ? s(r.no) : magazineOfProject(project) || s(r.no);
         const m = mag(item);
         if (!m.description) m.description = s(r.description);
-        addProject(m, project);
+        // Proyecto de otra revista: manda el artículo (en todas coincide con la revista de la descripción)
         const pm = magazineOfProject(project);
-        if (project && pm && pm !== item) mismatches.push({ doc: base.doc, item, project, location: normLocation(r.description2), qty, amount });
+        const wrong = !!project && !!pm && pm !== item;
+        if (!wrong) addProject(m, project);
         const t = task === TASK_SALES || task === TASK_RETURNS ? task : kind === 'salesInv' ? TASK_SALES : TASK_RETURNS;
         const location = normLocation(r.description2);
-        push(m, { ...base, task: t, qty: sign * qty, value: sign * amount, location });
+        const fixed = wrong ? `En BC con el proyecto ${project} (${pm}); se cuenta en ${item}, la revista del artículo` : undefined;
+        if (wrong) corrections.push({ reason: 'Proyecto de otra revista', ...base, location, qty: sign * qty, amount: sign * amount, bcProject: project, bcTask: task, magazine: item, task: t });
+        push(m, { ...base, task: t, qty: sign * qty, value: sign * amount, location, fixed });
         const byLoc = locs.get(item) || new Map<string, MagLocation>();
         locs.set(item, byLoc);
         const l = byLoc.get(location) || { location, soldQty: 0, soldAmount: 0, retQty: 0, retAmount: 0 };
@@ -150,10 +177,24 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
         continue;
       }
       if (!amount) continue;
-      // Resto de líneas de venta (Magazine Ads a CRAZE GmbH, costes de D-FORCE en sus documentos de venta): por proyecto
-      const item = magazineOfProject(project);
+      // Resto de líneas de venta (Magazine Ads a CRAZE GmbH, costes de D-FORCE en sus documentos de venta): por proyecto.
+      // Magazine Ads: la revista del External Document No. manda (corrige un proyecto equivocado o que falta).
+      const ads = isAds(base.description);
+      const fromText = ads ? magazineFromText(raw.extDoc.get(base.doc) || '') || magazineFromText(base.description) : '';
+      const pm = magazineOfProject(project);
+      const item = fromText || pm;
+      const lineTask = task || (ads ? TASK_ADS : '');
+      if (item && lineTask && (item !== pm || lineTask !== task)) {
+        const reason = !project ? 'Sin Project No.: revista del External Document No.' : item !== pm ? 'Proyecto de otra revista según el External Document No.' : 'Sin Project Task No.: Magazine Ads';
+        corrections.push({ reason, ...base, location: '', qty: sign * qty, amount: sign * amount, bcProject: project, bcTask: task, magazine: item, task: lineTask });
+        const m = mag(item);
+        push(m, { ...base, task: lineTask, qty: sign * qty, value: sign * amount, location: '', fixed: `${reason} (${raw.extDoc.get(base.doc) || base.description})` });
+        continue;
+      }
+      if (ads && !item) { pendingAds.push({ base, qty: sign * qty, amount: sign * amount, project, task }); continue; }
       if (!item || !task) {
-        // Solo interesan las de revistas: D-FORCE o con aspecto de anuncio / proyecto
+        // Solo interesan las de revistas: D-FORCE o con aspecto de anuncio / proyecto (almacenaje y handling sin proyecto no)
+        if (isGeneralCost(base.no, base.description) && !project) continue;
         if (isDforce || project || /magazine|galupy|inkee/i.test(s(r.description))) {
           unassigned.push({
             reason: !project ? 'Sin Project No.' : !item ? 'Proyecto que no es de revista' : 'Sin Project Task No.',
@@ -170,6 +211,30 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
   sales(raw.salesInv, 'salesInv');
   sales(raw.salesCr, 'salesCrMemo');
 
+  // Los Magazine Ads se facturan el día On Sale de su revista: la del mismo título (según la descripción) con la fecha
+  // On Sale más cercana (máx. 21 días), prefiriendo las que aún no tienen Ads
+  const onSale = new Map<string, string>();
+  raw.projects.forEach((p: any) => {
+    const item = magazineOfProject(s(p.No)), d = s(p.On_Sale_Date_BCT);
+    if (item && d && !d.startsWith('0001') && !onSale.has(item)) onSale.set(item, d);
+  });
+  const days = (a: string, b: string) => Math.abs(Date.parse(a) - Date.parse(b)) / 86400000;
+  for (const a of pendingAds.sort((x, y) => x.base.date.localeCompare(y.base.date))) {
+    const d = a.base.description;
+    const prefix = /inkee/i.test(d) ? '05993' : /special/i.test(d) ? '05994' : /galupy/i.test(d) ? '05995' : '';
+    const hasAds = (item: string) => Math.abs(mags.get(item)?.tasks[TASK_ADS]?.value || 0) > 0.01;
+    const best = Array.from(onSale.entries())
+      .filter(([item, date]) => item.startsWith(prefix) && prefix && a.base.date && days(date, a.base.date) <= 21)
+      .sort((x, y) => Number(hasAds(x[0])) - Number(hasAds(y[0])) || days(x[1], a.base.date) - days(y[1], a.base.date))[0];
+    if (!best) {
+      unassigned.push({ reason: 'Magazine Ads sin revista (ni proyecto ni External Document No.)', ...a.base, project: a.project, task: a.task, qty: a.qty, amount: a.amount });
+      continue;
+    }
+    const reason = `Sin revista en BC: On Sale ${best[1].split('-').reverse().join('/')} (External Document No. ${raw.extDoc.get(a.base.doc) || '—'})`;
+    corrections.push({ reason, ...a.base, location: '', qty: a.qty, amount: a.amount, bcProject: a.project, bcTask: a.task, magazine: best[0], task: TASK_ADS });
+    push(mag(best[0]), { ...a.base, task: TASK_ADS, qty: a.qty, value: a.amount, location: '', fixed: reason });
+  }
+
   // ---- Compras (facturas y abonos registrados) ----
   const projectVendors = new Set<string>();
   [...raw.purchInv, ...raw.purchCr].forEach((r: any) => { if (magazineOfProject(s(r.jobNo))) projectVendors.add(s(r.buyFromVendorNo)); });
@@ -185,6 +250,7 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
         kind, doc: s(r.documentNo), date: s(r.postingDate) || crDates.get(s(r.documentNo)) || '', partner: vendName.get(vendor) || vendor,
         no: s(r.no), description: s(r.description), location: '',
       };
+      if ((!item || !task) && isGeneralCost(base.no, base.description)) continue;
       if (!item || !task) {
         // Sin proyecto: solo se avisa de los proveedores que trabajan para las revistas (los que tienen otras líneas con proyecto)
         if (project || projectVendors.has(vendor)) {
@@ -247,7 +313,8 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
   });
   unassigned.splice(0, unassigned.length, ...unassigned.filter((_, i) => !used.has(i)));
 
-  return { magazines, taskNames, unassigned: unassigned.sort((a, b) => b.date.localeCompare(a.date)), mismatches, generatedAt: new Date().toISOString() };
+  return { magazines, taskNames, unassigned: unassigned.sort((a, b) => b.date.localeCompare(a.date)),
+    corrections: corrections.sort((a, b) => b.date.localeCompare(a.date)), generatedAt: new Date().toISOString() };
 }
 
 export async function magazineAnalysis(force = false) {
