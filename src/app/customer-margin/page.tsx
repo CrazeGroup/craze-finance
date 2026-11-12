@@ -47,6 +47,9 @@ export default function CustomerMarginPage() {
   const [reload, setReload] = useState({ n: 0, force: false });
   const [state, setState] = useState<{ data: Data | null; loading: boolean; error: string | null }>({ data: null, loading: true, error: null });
   const [asPct, setAsPct] = useState(false);
+  // Meses del año (1-12): desde / hasta; por defecto todo el año
+  const [fromM, setFromM] = useState(1);
+  const [toM, setToM] = useState(12);
   const [openG, setOpenG] = useState<Set<string>>(new Set());
   const [openC, setOpenC] = useState<Set<string>>(new Set());
 
@@ -72,9 +75,10 @@ export default function CustomerMarginPage() {
   const data = state.data;
   const view = useMemo(() => {
     if (!data) return null;
-    const cur = data.cur.docs.map(toDoc);
-    const cut = `${data.cur.year - 1}${data.cur.to.substring(4)}`;   // año anterior: mismo periodo
-    const prev = data.prev ? data.prev.docs.map(toDoc).filter(d => d.date <= cut) : [];
+    const inRange = (d: Doc) => { const m = Number(d.date.substring(5, 7)); return m >= fromM && m <= toM; };
+    const cur = data.cur.docs.map(toDoc).filter(inRange);
+    const cut = `${data.cur.year - 1}${data.cur.to.substring(4)}`;   // año anterior: mismo periodo (hasta el mismo día)
+    const prev = data.prev ? data.prev.docs.map(toDoc).filter(d => inRange(d) && d.date <= cut) : [];
     type G = { code: string; cur: Agg; prev: Agg; custs: Map<string, { cur: Agg; prev: Agg; docs: Doc[] }> };
     const groups = new Map<string, G>();
     const g = (code: string) => { if (!groups.has(code)) groups.set(code, { code, cur: zero(), prev: zero(), custs: new Map() }); return groups.get(code)!; };
@@ -84,7 +88,11 @@ export default function CustomerMarginPage() {
     for (const d of prev) { const gr = g(d.group); add(gr.prev, d); add(c(gr, d.cust).prev, d); add(total.prev, d); }
     const rows = [...groups.values()].filter(x => x.cur.n || x.prev.n).sort((a, b) => b.cur.sales - a.cur.sales);
     return { rows, total };
-  }, [data]);
+  }, [data, fromM, toM]);
+  const lastMonth = data ? Number(data.cur.to.substring(5, 7)) : 12;
+  const ymOf = (m: number) => `${year}-${String(m).padStart(2, '0')}`;
+  const periodText = data ? (fromM === 1 && toM >= lastMonth ? `${fmt.date(data.cur.from)} – ${fmt.date(data.cur.to)}`
+    : fromM === Math.min(toM, lastMonth) ? fmt.monthName(ymOf(fromM)) : `${fmt.monthCode(ymOf(fromM))} – ${fmt.monthCode(ymOf(Math.min(toM, lastMonth)))}`) : '…';
 
   const years = Array.from({ length: thisYear - FIRST_YEAR + 1 }, (_, i) => thisYear - i);
   const td = 'py-1.5 px-2 text-right font-mono tabular-nums whitespace-nowrap';
@@ -118,7 +126,7 @@ export default function CustomerMarginPage() {
             <div>
               <p className="font-bold text-gray-900 leading-tight">Customer Margin</p>
               <p className="text-xs text-gray-500">
-                {data ? `${fmt.date(data.cur.from)} – ${fmt.date(data.cur.to)}` : '…'} · CRAZE GmbH
+                {periodText} · CRAZE GmbH
                 {data && <> · calculado {new Date(data.cur.computedAt).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}</>}
               </p>
             </div>
@@ -129,6 +137,15 @@ export default function CustomerMarginPage() {
                 <button key={l} onClick={() => changeAsPct(v)} className={`px-3 py-1.5 font-semibold ${asPct === v ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>{l}</button>
               ))}
             </div>
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 hidden sm:inline">Meses</span>
+            <select value={fromM} onChange={e => { const v = Number(e.target.value); setFromM(v); if (v > toM) setToM(v); }} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-semibold bg-white" title="Desde">
+              {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={m}>{fmt.monthCode(ymOf(m))}</option>)}
+            </select>
+            <span className="text-gray-400">–</span>
+            <select value={toM} onChange={e => { const v = Number(e.target.value); setToM(v); if (v < fromM) setFromM(v); }} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-semibold bg-white" title="Hasta">
+              {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={m}>{fmt.monthCode(ymOf(m))}</option>)}
+            </select>
+            {(fromM !== 1 || toM !== 12) && <button onClick={() => { setFromM(1); setToM(12); }} className="text-xs text-gray-500 underline hover:text-gray-900">Todo el año</button>}
             <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 hidden sm:inline">Año</span>
             <select value={year} onChange={e => { setYear(Number(e.target.value)); setOpenG(new Set()); setOpenC(new Set()); }} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold bg-white">
               {years.map(y => <option key={y} value={y}>{y}</option>)}
@@ -147,7 +164,7 @@ export default function CustomerMarginPage() {
           : !data || !view ? <Loading text="Calculando el margen por cliente (la primera vez puede tardar un par de minutos)…" />
           : (
             <>
-              <Section title={`Customer Margin ${data.cur.year}`} source={`Facturas y abonos de venta (Documents LM Components) · condiciones de Conditions por grupo · logística de Logistic Cost${data.prev ? ` · vs mismo periodo ${data.prev.year}` : ''}`}>
+              <Section title={`Customer Margin ${fromM === 1 && toM >= lastMonth ? data.cur.year : periodText}`} source={`Facturas y abonos de venta (Documents LM Components) · condiciones de Conditions por grupo · logística de Logistic Cost${data.prev ? ` · vs mismo periodo ${data.prev.year}` : ''}`}>
                 <Grid cols={5}>
                   <Kpi label="Venta neta" value={eur(view.total.cur.sales)} sub={`facturas ${eur(view.total.cur.inv)} · abonos ${eur(view.total.cur.cr)}`} />
                   <Kpi label="Coste producto" value={eur(view.total.cur.cost)} sub={view.total.cur.sales ? pct((view.total.cur.cost / view.total.cur.sales) * 100) : undefined} />
