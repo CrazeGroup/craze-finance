@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
 import { ErrorBox, Loading, Section } from '../reporting/ui';
 import BwaAccountDrill, { type DrillSpec } from './BwaAccountDrill';
+import BwaResultBridge, { type Bridge, type BridgeItem } from './BwaResultBridge';
 import { parseDatev, type DatevFile } from './datevParse';
 
 // Controlling · BWA (Power BI): las páginas del Power BI "BWA" (Annual, Monthly, Annual - Detail, Exchg_Cur) leídas de
@@ -334,6 +335,63 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
     // Las 6 líneas con más diferencia y las cuentas que explican la mayor parte (hasta 4)
     return lines.slice(0, 6).map(x => ({ ...x, accounts: x.accounts.slice(0, 4) }));
   })();
+  // Resumen de por qué cambia el Net Income frente al año anterior (Annual, Annual vs DATEV, Detail: acumulado hasta el
+  // mes elegido; Monthly: el mes elegido abajo frente al mismo mes del año anterior)
+  const [bridgeMonth, setBridgeMonth] = useState(now.getMonth() === 0 ? 12 : now.getMonth());
+  const bridge: Bridge | null = (() => {
+    if (!d || page === 'fx') return null;
+    const scope = page === 'detail' ? CONSOL : company;
+    const curM = page === 'monthly' ? [ym(year, bridgeMonth)] : ytd(year);
+    const prevM = page === 'monthly' ? [ym(year - 1, bridgeMonth)] : ytd(year - 1);
+    const vCur = (accs: Account[]) => sum(scope, accs, curM);
+    const vPrev = (accs: Account[]) => (page === 'datev' ? datevSum(accs) : sum(scope, accs, prevM));
+    const byCode = new Map(d.lines.map(l => [l.code, l]));
+    const gmLine = d.lines.find(l => l.code === '1080');
+    const niLine = d.lines.find(l => l.code === '1380');
+    if (!salesLine || !gmLine || !niLine) return null;
+    const sAcc = lineAccounts(salesLine);
+    const sCur = vCur(sAcc), sPrev = vPrev(sAcc);
+    const gmCur = vCur(lineAccounts(gmLine)), gmPrev = vPrev(lineAccounts(gmLine));
+    const gmPctPrev = sPrev ? gmPrev / sPrev : null, gmPctCur = sCur ? gmCur / sCur : null;
+    const items: BridgeItem[] = [];
+    const accLabel = (a: Account) => `${a.account} ${a.description}`;
+    // Volumen: la variación de ventas con el margen bruto % del año anterior
+    if (gmPctPrev != null) items.push({
+      key: 'volume', label: 'Volumen de ventas', impact: (sCur - sPrev) * gmPctPrev,
+      detail: `Ventas ${sCur - sPrev >= 0 ? '+' : ''}${num(sCur - sPrev, 0)} € (${sPrev ? `${sCur - sPrev >= 0 ? '+' : ''}${num(((sCur - sPrev) / Math.abs(sPrev)) * 100, 1)} %` : 'nuevo'}) con el margen bruto de ${num(gmPctPrev * 100, 1)} % del año anterior`,
+    });
+    // Margen: cada cuenta de las líneas del margen bruto (salvo ventas) por lo que pesa ahora sobre la venta
+    const gmCodes = (gmLine.formula || []).filter(c => c !== salesLine.code);
+    const ratio = sPrev ? sCur / sPrev : 1;
+    const marginAccs = gmCodes.flatMap(c => accountsOf.get(c) || []).map(a => ({ a, impact: vCur([a]) - vPrev([a]) * ratio }))
+      .filter(x => Math.abs(x.impact) >= 1).sort((x, y) => Math.abs(y.impact) - Math.abs(x.impact));
+    items.push({
+      key: 'margin', label: gmPctCur != null && gmPctPrev != null && gmPctCur < gmPctPrev ? 'Menos margen bruto sobre la venta' : 'Margen bruto sobre la venta',
+      impact: marginAccs.reduce((t, x) => t + x.impact, 0),
+      detail: gmPctCur != null && gmPctPrev != null ? `Margen bruto ${num(gmPctPrev * 100, 1)} % → ${num(gmPctCur * 100, 1)} % (${gmPctCur - gmPctPrev >= 0 ? '+' : ''}${num((gmPctCur - gmPctPrev) * 100, 1)} p.p.) sobre ${num(sCur, 0)} € de ventas` : undefined,
+      accounts: marginAccs.slice(0, 5).map(x => ({ label: accLabel(x.a), impact: x.impact })),
+    });
+    // Resto de partidas del resultado
+    for (const code of (niLine.formula || []).filter(c => c !== salesLine.code && !gmCodes.includes(c))) {
+      const l = byCode.get(code);
+      if (!l) continue;
+      const accs = accountsOf.get(code) || [];
+      const c = vCur(accs), p = vPrev(accs);
+      const accDiffs = accs.map(a => ({ a, impact: vCur([a]) - vPrev([a]) })).filter(x => Math.abs(x.impact) >= 1).sort((x, y) => Math.abs(y.impact) - Math.abs(x.impact));
+      items.push({
+        key: code, label: lineName(l), impact: c - p,
+        detail: `${num(p, 0)} → ${num(c, 0)} €${sCur && sPrev ? ` · ${num((-p / sPrev) * 100, 1)} % → ${num((-c / sCur) * 100, 1)} % de las ventas` : ''}`,
+        accounts: accDiffs.slice(0, 3).map(x => ({ label: accLabel(x.a), impact: x.impact })),
+      });
+    }
+    const monthsTxt = page === 'monthly' ? `${MONTHS_ES[bridgeMonth - 1].toLowerCase()} ${year} vs ${MONTHS_ES[bridgeMonth - 1].toLowerCase()} ${year - 1}`
+      : `enero–${MONTHS_ES[toMonth - 1].toLowerCase()} ${year} vs ${page === 'datev' ? 'DATEV ' : ''}${year - 1}`;
+    return {
+      title: `${monthsTxt} · ${scope}`, cur: vCur(lineAccounts(niLine)), prev: vPrev(lineAccounts(niLine)), items,
+      salesCur: sCur, salesPrev: sPrev, gmPctCur, gmPctPrev,
+      margin: scope === 'CRAZE' || scope === CONSOL ? { year, fromM: page === 'monthly' ? bridgeMonth : 1, toM: page === 'monthly' ? bridgeMonth : toMonth } : undefined,
+    };
+  })();
   const pctChange = (cur: number, prev: number) => (prev ? `${cur - prev >= 0 ? '+' : ''}${num(((cur - prev) / Math.abs(prev)) * 100, 1)} %` : 'nuevo');
   const tone = (diff: number) => (diff > 0 ? 'text-emerald-700' : diff < 0 ? 'text-[#C0392B]' : 'text-gray-500');
 
@@ -572,6 +630,17 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
                   ))}
                 </div>
               </div>
+            )}
+            {bridge && (
+              <BwaResultBridge key={`${page}-${year}-${company}`} b={bridge} fmt={fmt}
+                extra={page === 'monthly' ? (
+                  <label className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 flex items-center gap-2">
+                    Mes a comparar
+                    <select value={bridgeMonth} onChange={e => setBridgeMonth(Number(e.target.value))} className="border border-gray-300 rounded-lg px-2 py-1 text-sm font-semibold bg-white normal-case tracking-normal text-gray-900">
+                      {MONTHS_ES.map((m, i) => <option key={m} value={i + 1}>{fmt.monthCode(ym(year, i + 1))}</option>)}
+                    </select>
+                  </label>
+                ) : undefined} />
             )}
           </>
         )}
