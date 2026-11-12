@@ -2,7 +2,7 @@
 
 import React, { Fragment, useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
-import { ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 import { useCompany } from '@/contexts/CompanyContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { makeT } from '../reporting/i18n';
@@ -108,6 +108,37 @@ export default function CustomerMarginPage() {
   const years = Array.from({ length: thisYear - FIRST_YEAR + 1 }, (_, i) => thisYear - i);
   const td = 'py-1.5 px-2 text-right font-mono tabular-nums whitespace-nowrap';
   const th = 'py-2 px-2 text-[11px] font-semibold uppercase tracking-wider text-gray-500 whitespace-nowrap text-right';
+  // Orden por columna (clic en la cabecera: descendente, ascendente, sin orden = venta neta descendente); se aplica a
+  // grupos, clientes y documentos
+  type SortKey = 'name' | 'inv' | 'cr' | ColKey | 'margin' | 'mpct' | 'lypct' | 'delta';
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 } | null>(null);
+  const sortBy = (key: SortKey) => setSort(p => (p?.key === key ? (p.dir === -1 ? { key, dir: 1 } : null) : { key, dir: key === 'name' ? 1 : -1 }));
+  const sortVal = (a: Agg, ly: Agg | null, name: string, key: SortKey): number | string => {
+    switch (key) {
+      case 'name': return name;
+      case 'margin': return margin(a);
+      case 'mpct': return mPct(a) ?? -Infinity;
+      case 'lypct': return ly && ly.n ? mPct(ly) ?? -Infinity : -Infinity;
+      case 'delta': { const x = mPct(a), y = ly && ly.n ? mPct(ly) : null; return x === null || y === null ? -Infinity : x - y; }
+      default: return asPct && key !== 'inv' && key !== 'cr' && key !== 'sales' ? (a.sales ? a[key] / a.sales : -Infinity) : a[key];
+    }
+  };
+  const sorted = <T,>(list: T[], get: (x: T) => { a: Agg; ly: Agg | null; name: string }) => {
+    if (!sort) return list;
+    return [...list].sort((x, y) => {
+      const gx = get(x), gy = get(y);
+      const vx = sortVal(gx.a, gx.ly, gx.name, sort.key), vy = sortVal(gy.a, gy.ly, gy.name, sort.key);
+      if (typeof vx === 'string' || typeof vy === 'string') return String(vx).localeCompare(String(vy), 'es', { numeric: true }) * sort.dir;
+      return (vx === vy ? 0 : vx < vy ? -1 : 1) * sort.dir;
+    });
+  };
+  const sh = (key: SortKey, label: React.ReactNode, left = false) => (
+    <th key={key} className={`${th} ${left ? 'text-left' : ''}`}>
+      <button onClick={() => sortBy(key)} title="Ordenar" className={`inline-flex items-center gap-1 uppercase tracking-wider hover:text-gray-900 ${sort?.key === key ? 'text-gray-900' : ''}`}>
+        {label}{sort?.key === key && (sort.dir === 1 ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
+      </button>
+    </th>
+  );
   const val = (a: Pick<Agg, ColKey>, k: ColKey) => (asPct ? (a.sales ? pct((a[k] / a.sales) * 100, 2) : '–') : eur(a[k]));
   const dpp = (a: Agg, b: Agg) => {
     const x = mPct(a); const y = mPct(b);
@@ -192,21 +223,22 @@ export default function CustomerMarginPage() {
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 border-b border-gray-200">
                       <tr>
-                        <th className={`${th} text-left`}>Customer Group / cliente</th>
-                        <th className={th}>Facturas</th>
-                        <th className={th}>Abonos</th>
-                        <th className={th}>Venta neta</th>
-                        {DEDUCT.map(([k, l]) => <th key={k} className={th}>{l}</th>)}
-                        <th className={th}>Margen</th>
-                        <th className={th}>Margen %</th>
-                        {data.prev && <th className={th}>Margen % {data.prev.year}</th>}
-                        {data.prev && <th className={th}>Δ</th>}
+                        {sh('name', 'Customer Group / cliente', true)}
+                        {sh('inv', 'Facturas')}
+                        {sh('cr', 'Abonos')}
+                        {sh('sales', 'Venta neta')}
+                        {DEDUCT.map(([k, l]) => sh(k, l))}
+                        {sh('margin', 'Margen')}
+                        {sh('mpct', 'Margen %')}
+                        {data.prev && sh('lypct', `Margen % ${data.prev.year}`)}
+                        {data.prev && sh('delta', 'Δ')}
                       </tr>
                     </thead>
                     <tbody>
-                      {view.rows.map(r => {
+                      {sorted(view.rows, r => ({ a: r.cur, ly: r.prev, name: r.code })).map(r => {
                         const open = openG.has(r.code);
-                        const custs = [...r.custs.entries()].filter(([, x]) => x.cur.n || x.prev.n).sort((a, b) => b[1].cur.sales - a[1].cur.sales);
+                        const custs = sorted([...r.custs.entries()].filter(([, x]) => x.cur.n || x.prev.n).sort((a, b) => b[1].cur.sales - a[1].cur.sales),
+                          ([no, x]) => ({ a: x.cur, ly: x.prev, name: data.cur.customers[no] || data.prev?.customers[no] || no }));
                         return (
                           <Fragment key={r.code || '—'}>
                             <tr className={`border-t border-gray-100 cursor-pointer hover:bg-gray-50 ${open ? 'bg-gray-50' : ''}`} onClick={() => toggle(setOpenG, r.code)}>
@@ -227,7 +259,7 @@ export default function CustomerMarginPage() {
                                     </td>
                                     {cells(x.cur, x.prev)}
                                   </tr>
-                                  {co && x.docs.map(d => {
+                                  {co && sorted(x.docs, d => ({ a: { ...d, inv: d.credit ? 0 : d.sales, cr: d.credit ? d.sales : 0, n: 1 }, ly: null, name: d.no })).map(d => {
                                     const lo = openDocs.has(d.no);
                                     const ls = docLines[d.no];
                                     return (
