@@ -265,6 +265,15 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
     return months && baseLine ? div(sum(company, lineAccounts(l), months), sum(company, lineAccounts(baseLine), months)) : null;
   };
   const showPct = (l: Line) => page === 'monthly' && MONTHLY_PCT_LINES.includes(l.code);
+  // Todas las páginas: COGS (1060) en % sobre Net Turnover (1051), en positivo, en cada columna de importes
+  const netLine = d?.lines.find(l => l.code === '1051');
+  const showCogsPct = (l: Line) => l.code === '1060' && !!netLine;
+  const cogsPct = (c: Col, l: Line): number | null => {
+    if (!netLine || c.kind !== 'money') return null;
+    if (c.drill) return div(-sum(c.drill.scope, lineAccounts(l), c.drill.months), sum(c.drill.scope, lineAccounts(netLine), c.drill.months));
+    if (page === 'datev' && c.key === 'prev') return div(-datevSum(lineAccounts(l)), datevSum(lineAccounts(netLine)));
+    return null;
+  };
 
   const cell = (c: Col, accs: Account[], line: Line | null) => {
     const v = c.value(accs, line);
@@ -279,6 +288,11 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
       const row: Record<string, string | number | null> = { 'BWA Group': lineName(l), 'No.': '', Level: '', Description: '' };
       columns.forEach(c => { row[`${c.label}${c.sub ? ` ${c.sub}` : ''}`] = c.value(accs, l); });
       rows.push(row);
+      if (showCogsPct(l)) {
+        const cr: Record<string, string | number | null> = { 'BWA Group': `% ${lineName(l)} s/ ${lineName(netLine!)}`, 'No.': '', Level: '', Description: '' };
+        columns.forEach(c => { cr[`${c.label}${c.sub ? ` ${c.sub}` : ''}`] = cogsPct(c, l); });
+        rows.push(cr);
+      }
       if (showPct(l)) {
         const pr: Record<string, string | number | null> = { 'BWA Group': `% ${lineName(l)} s/ ${pctBase}`, 'No.': '', Level: '', Description: '' };
         columns.forEach(c => { pr[`${c.label}${c.sub ? ` ${c.sub}` : ''}`] = monthlyPct(c, l); });
@@ -465,6 +479,12 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
                             <td key={c.key} style={frozenTop} className={`${td} ${frozen} ${c.red?.(accs, l) ? 'bg-[#FFBABD] text-[#80292E]' : ''} ${c.kind === 'pct' && !l.highlight ? 'text-[#2B408E]' : ''}`}>{cell(c, accs, l)}</td>
                           ))}
                         </tr>
+                        {showCogsPct(l) && (
+                          <tr className="border-b border-gray-100 text-[12px] italic text-[#2B408E] bg-[#F5F7FC]">
+                            <td className="py-1 px-2 pl-6 whitespace-nowrap">% COGS s/ {lineName(netLine!)}</td>
+                            {columns.map(c => <td key={c.key} className={`${td} py-1`}>{pctTxt(cogsPct(c, l))}</td>)}
+                          </tr>
+                        )}
                         {showPct(l) && (
                           <tr className="border-b border-gray-100 text-[12px] italic text-[#2B408E] bg-[#F5F7FC]">
                             <td className="py-1 px-2 pl-6 whitespace-nowrap">% s/ {pctBase}</td>
