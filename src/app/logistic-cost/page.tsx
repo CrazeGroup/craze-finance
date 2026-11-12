@@ -212,7 +212,7 @@ export default function LogisticCostPage() {
                   </button>
                   {hideClean && <span className="text-xs text-gray-500">{view.rows.filter(r => r.flagged.size).length} de {view.rows.length} grupos con incidencias · el total es de todos</span>}
                 </div>
-                <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+                <div className="bg-white rounded-xl border border-gray-200 table-scroll">
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 border-b border-gray-200">
                       <tr>

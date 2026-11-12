@@ -326,7 +326,7 @@ export default function LicenseSalesView({ fmt, company: globalCompany }: { fmt:
               </Grid>
             )}
 
-            <div className="rpt-card bg-white rounded-xl border border-gray-200 overflow-x-auto">
+            <div className="rpt-card bg-white rounded-xl border border-gray-200 table-scroll">
               <table className="w-full text-[13px]">
                 <thead>
                   <tr className="border-b border-gray-200 bg-gray-50">

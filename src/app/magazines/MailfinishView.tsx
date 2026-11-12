@@ -169,7 +169,7 @@ export default function MailfinishView() {
               <h2 className="text-sm font-bold text-gray-900">Assembly Orders sugeridas</h2>
               <p className="text-xs text-gray-500">Una orden por gadget, location y revista (Quantity per 1). Puedes cambiar la cantidad y la revista; ★ = usada en recuperaciones anteriores de ese gadget.</p>
             </div>
-            <div className="overflow-x-auto">
+            <div className="table-scroll">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-500">
                   <tr>
@@ -259,7 +259,7 @@ export default function MailfinishView() {
 
           <details className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <summary className="px-4 py-3 cursor-pointer text-sm font-bold text-gray-900">Stock de revistas a {dmy(data.date)} ({data.stock.length} revista × location)</summary>
-            <div className="overflow-x-auto">
+            <div className="table-scroll">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-500">
                   <tr><th className={`${th} text-left`}>Revista</th><th className={`${th} text-left`}>Descripción</th><th className={`${th} text-left`}>Location</th>

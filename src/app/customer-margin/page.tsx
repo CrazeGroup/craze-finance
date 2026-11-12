@@ -188,7 +188,7 @@ export default function CustomerMarginPage() {
               </Section>
 
               <Section title="Por Customer Group" source="Clic en un grupo para ver sus clientes y en un cliente para ver sus facturas y abonos · pasa el ratón por un importe para ver su % (o al revés)">
-                <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+                <div className="bg-white rounded-xl border border-gray-200 table-scroll">
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 border-b border-gray-200">
                       <tr>

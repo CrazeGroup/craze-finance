@@ -150,7 +150,7 @@ export default function AmazonPage() {
                 </button>
                 {tableOpen && (
                   <Card>
-                    <div className="overflow-x-auto">
+                    <div className="table-scroll">
                       <table className="w-full text-[13px]">
                         <thead>
                           <tr className="border-b border-gray-200 text-[10px] font-semibold uppercase tracking-wider text-gray-500 font-mono">

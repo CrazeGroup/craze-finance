@@ -28,8 +28,8 @@ body {
    con la fila de títulos fija arriba, como inmovilizar la primera fila en Excel */
 @layer components {
   .table-scroll { max-height: calc(100vh - var(--table-offset, 90px)); overflow: auto; }
-  /* :where = sin especificidad, para que las clases de Tailwind de cada celda (p. ej. el mes actual) manden */
-  .table-scroll :where(thead th) { position: sticky; top: 0; z-index: 10; background-color: rgb(249 250 251); box-shadow: inset 0 -1px 0 rgb(229 231 235); }
+  /* Solo la cabecera de la tabla principal (no las de los desgloses anidados); :where = sin especificidad, para que las clases de Tailwind de cada celda manden */
+  :where(.table-scroll > table > thead) th { position: sticky; top: 0; z-index: 10; background-color: rgb(249 250 251); box-shadow: inset 0 -1px 0 rgb(229 231 235); }
 }
 
 /* Reporting: exportación a PDF (imprimir → Guardar como PDF) */
@@ -41,6 +41,7 @@ body {
   .rpt-root { background: #fff !important; padding-bottom: 0 !important; }
   .rpt-header { position: static !important; border: 0 !important; }
   .rpt-noprint { display: none !important; }
+  .table-scroll { max-height: none !important; overflow: visible !important; }
   .app-menu-toggle { display: none !important; }
   .rpt-card, .rpt-section > div { break-inside: avoid; }
   .rpt-section { break-before: page; }

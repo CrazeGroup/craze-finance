@@ -134,7 +134,7 @@ export default function PurchaseItemsView({ fmt, company: globalCompany }: { fmt
               <Kpi highlight tone="main" label="Neto (divisa del documento)" value={num(d.items.reduce((s, i) => s + i.net, 0))} sub="Suma de importes sin IVA" />
             </Grid>
 
-            <div className="rpt-card bg-white rounded-xl border border-gray-200 overflow-x-auto">
+            <div className="rpt-card bg-white rounded-xl border border-gray-200 table-scroll">
               <table className="w-full text-[13px]">
                 <thead>
                   <tr className="border-b border-gray-200 text-left">

@@ -230,7 +230,7 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                   <Kpi label="Abierto próximamente" value={num(sum(current, 'openLater'), 0)} sub={`${num(sum(current, 'openNextSameYear'), 0)} este año · ${num(sum(current, 'openNextYear'), 0)} el año siguiente`} />
                 </Grid>
 
-                <div className="rpt-card bg-white rounded-xl border border-gray-200 overflow-x-auto">
+                <div className="rpt-card bg-white rounded-xl border border-gray-200 table-scroll">
                   <table className="text-[13px]" style={{ tableLayout: 'fixed', width: widths.mes + years.reduce((t, y) => t + (y.year === year
                     ? ['billed', 'intake', 'pct', 'ya', 'rdd', 'rddPrev', 'same', 'next'] : ['billed', 'intake', 'pct']).reduce((a, r) => a + colW(y.year, r), 0), 0), minWidth: '100%' }}>
                     <colgroup>

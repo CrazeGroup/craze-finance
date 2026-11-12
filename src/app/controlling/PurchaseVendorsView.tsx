@@ -212,7 +212,7 @@ export default function PurchaseVendorsView({ fmt, company: globalCompany }: { f
               <Kpi label="Proveedores con más de un artículo" value={num(vendors.filter(v => v.items.length > 1).length)} sub="Para revisar si todos los artículos son los esperados" />
               <Kpi highlight tone="main" label="Neto (divisa del documento)" value={num(vendors.reduce((s, v) => s + v.net, 0))} sub={d.cancelledPairs ? `${num(d.cancelledPairs)} facturas anuladas por su abono no se muestran` : 'Suma de importes sin IVA'} />
             </Grid>
-            <div className="rpt-card bg-white rounded-xl border border-gray-200 overflow-x-auto">
+            <div className="rpt-card bg-white rounded-xl border border-gray-200 table-scroll">
               <table className="w-full text-[13px]">
                 <thead>
                   <tr className="border-b border-gray-200 text-left">

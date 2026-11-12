@@ -209,7 +209,7 @@ export default function BWAPage() {
               </div>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="table-scroll">
               <table className="w-full text-left text-sm whitespace-nowrap">
                 <thead className="bg-gray-100 text-gray-600 font-bold uppercase text-xs tracking-wider border-b border-gray-200">
                   <tr>

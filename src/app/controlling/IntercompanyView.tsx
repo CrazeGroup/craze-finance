@@ -299,7 +299,7 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
               {!rows.length && <p className="text-sm text-gray-500 p-4">Sin facturas intercompañía con estos filtros.</p>}
             </div>
             {d.orphanPurchases.length > 0 && (
-              <div className="rpt-card bg-white rounded-xl border border-gray-200 overflow-x-auto">
+              <div className="rpt-card bg-white rounded-xl border border-gray-200 table-scroll">
                 <p className="px-4 pt-3 font-bold text-gray-900">Compras a empresas del grupo sin factura de venta en el periodo</p>
                 <table className="w-full text-[12px] mt-2">
                   <thead><tr className="border-b border-gray-200 bg-gray-50">

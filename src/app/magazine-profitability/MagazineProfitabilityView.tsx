@@ -490,7 +490,7 @@ export default function MagazineProfitabilityView() {
 
           {newFixes > 0 && fixesBlock}
 
-          <section className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+          <section className="bg-white rounded-xl border border-gray-200 table-scroll">
             <table className="w-full text-[13px]">
               <thead className="bg-gray-50 text-xs text-gray-500 border-b border-gray-200">
                 <tr>

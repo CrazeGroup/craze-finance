@@ -1019,7 +1019,7 @@ export default function CashflowPage() {
               <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-teal-400"></div>
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="table-scroll">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-gray-200 text-sm font-medium text-gray-700 font-semibold bg-gray-50">

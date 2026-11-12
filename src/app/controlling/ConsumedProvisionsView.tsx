@@ -259,7 +259,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
               <Kpi highlight tone="main" label="Pendiente" value={num(totals.provision - totals.consumed)} sub="Provisionado − consumido" />
             </Grid>
 
-            <div className="rpt-card bg-white rounded-xl border border-gray-200 overflow-x-auto">
+            <div className="rpt-card bg-white rounded-xl border border-gray-200 table-scroll">
               <table className="w-full text-[13px]">
                 <thead>
                   <tr className="border-b border-gray-200 text-left">
@@ -345,7 +345,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
             </div>
 
             <Card title="Calculado por la LM y consumido por Customer Group" sub="Calculado: Documents LM Components (60000, sin Main Item); Markant = Provision Accounting Partner (parte de Conditions). Consumido: facturas y abonos de compra de proveedores que son clientes del grupo (por CIF o nombre) en las cuentas PROV-*; las facturas de Markant se reparten en proporción al Markant calculado de cada grupo. Pincha un grupo para ver sus documentos.">
-              <div className="overflow-x-auto">
+              <div className="table-scroll">
                 <table className="w-full text-[12px]">
                   <thead>
                     <tr className="border-b border-gray-200 text-left">

@@ -62,7 +62,7 @@ export default function LogsPage() {
               No hay acciones registradas aún.
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="table-scroll">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-gray-50 text-gray-600 text-sm font-semibold uppercase tracking-wider">

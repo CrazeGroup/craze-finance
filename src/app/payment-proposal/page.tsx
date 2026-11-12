@@ -196,7 +196,7 @@ function ProposalTable({ title, subtitle, entries, currencies, lcy, groupByPendi
         <h2 className="text-sm font-bold text-gray-900">{title}</h2>
         <span className="text-xs text-gray-500">{subtitle} · haz clic en un proveedor para ver sus facturas</span>
       </div>
-      <div className="overflow-x-auto">
+      <div className="table-scroll">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-500">
             <tr>

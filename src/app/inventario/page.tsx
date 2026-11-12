@@ -146,7 +146,7 @@ export default function InventarioPage() {
 
         {results.length > 0 && (
           <div className="shadow-sm border border-gray-100 bg-white rounded-xl overflow-hidden mt-6">
-            <div className="overflow-x-auto">
+            <div className="table-scroll">
               <table className="w-full text-left text-sm text-gray-600">
                 <thead className="bg-gray-50 text-gray-700 border-b border-gray-200 text-xs uppercase font-semibold">
                   <tr>
