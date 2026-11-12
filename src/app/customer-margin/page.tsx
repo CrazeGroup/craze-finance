@@ -55,6 +55,17 @@ export default function CustomerMarginPage() {
 
   useEffect(() => { setAsPct(store.get('margin:pct') === '1'); }, []);
   const changeAsPct = (v: boolean) => { setAsPct(v); store.set('margin:pct', v ? '1' : '0'); };
+  // Líneas de una factura / abono, cargadas al abrirla
+  type DocLine = { no: string; description: string; component: boolean; qty: number; unitPrice: number; listPrice: number; discount: number; amount: number; unitCost: number; cost: number };
+  const [openDocs, setOpenDocs] = useState<Set<string>>(new Set());
+  const [docLines, setDocLines] = useState<Record<string, { lines: DocLine[] } | { error: string }>>({});
+  const toggleDoc = (no: string) => {
+    setOpenDocs(p => { const n = new Set(p); if (n.has(no)) n.delete(no); else n.add(no); return n; });
+    if (docLines[no] && !('error' in docLines[no])) return;
+    fetch(`/api/customer-margin/lines?doc=${encodeURIComponent(no)}`).then(r => r.json())
+      .then(d => setDocLines(p => ({ ...p, [no]: d.error ? { error: d.error } : { lines: d.lines } })))
+      .catch(e => setDocLines(p => ({ ...p, [no]: { error: e.message } })));
+  };
   const toggle = (set: React.Dispatch<React.SetStateAction<Set<string>>>, k: string) => set(p => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; });
 
   const isGmbh = selectedCompany === 'CRAZE';
@@ -216,15 +227,65 @@ export default function CustomerMarginPage() {
                                     </td>
                                     {cells(x.cur, x.prev)}
                                   </tr>
-                                  {co && x.docs.map(d => (
-                                    <tr key={d.no} className="border-t border-gray-100 bg-white">
-                                      <td className="py-1 px-2 pl-14 whitespace-nowrap text-xs">
-                                        <span className="font-mono text-gray-900">{d.no}</span>
-                                        <span className="text-gray-500"> · {fmt.date(d.date)}{d.credit ? ' · abono' : ''}</span>
-                                      </td>
-                                      {cells({ ...d, inv: d.credit ? 0 : d.sales, cr: d.credit ? d.sales : 0, n: 1 }, null, true)}
-                                    </tr>
-                                  ))}
+                                  {co && x.docs.map(d => {
+                                    const lo = openDocs.has(d.no);
+                                    const ls = docLines[d.no];
+                                    return (
+                                      <Fragment key={d.no}>
+                                        <tr className="border-t border-gray-100 bg-white cursor-pointer hover:bg-gray-50" onClick={() => toggleDoc(d.no)}>
+                                          <td className="py-1 px-2 pl-14 whitespace-nowrap text-xs">
+                                            <span className="inline-flex items-center gap-1">{lo ? <ChevronDown size={12} /> : <ChevronRight size={12} />}<span className="font-mono text-gray-900">{d.no}</span></span>
+                                            <span className="text-gray-500"> · {fmt.date(d.date)}{d.credit ? ' · abono' : ''}</span>
+                                          </td>
+                                          {cells({ ...d, inv: d.credit ? 0 : d.sales, cr: d.credit ? d.sales : 0, n: 1 }, null, true)}
+                                        </tr>
+                                        {lo && (
+                                          <tr className="bg-gray-50/70">
+                                            <td colSpan={99} className="pl-20 pr-2 py-2">
+                                              {!ls ? <span className="text-xs text-gray-500">Cargando líneas…</span>
+                                                : 'error' in ls ? <span className="text-xs text-red-600">{ls.error}</span>
+                                                : !ls.lines.length ? <span className="text-xs text-gray-500">Sin líneas</span>
+                                                : (
+                                                  <table className="text-xs bg-white border border-gray-200 rounded">
+                                                    <thead className="text-[10px] uppercase tracking-wider text-gray-500 bg-gray-50">
+                                                      <tr>
+                                                        <th className="px-2 py-1 text-left">Artículo</th>
+                                                        <th className="px-2 py-1 text-left">Descripción</th>
+                                                        <th className="px-2 py-1 text-right">Cantidad</th>
+                                                        <th className="px-2 py-1 text-right">Precio unit.</th>
+                                                        <th className="px-2 py-1 text-right">Dto. %</th>
+                                                        <th className="px-2 py-1 text-right">Importe</th>
+                                                        <th className="px-2 py-1 text-right">Coste unit.</th>
+                                                        <th className="px-2 py-1 text-right">Coste</th>
+                                                        <th className="px-2 py-1 text-right">Margen bruto %</th>
+                                                      </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                      {ls.lines.map((l, i) => {
+                                                        const gm = l.amount ? ((l.amount - l.cost) / l.amount) * 100 : null;
+                                                        return (
+                                                          <tr key={i} className="border-t border-gray-100">
+                                                            <td className="px-2 py-1 font-mono whitespace-nowrap">{l.no}{l.component && <span className="ml-1 text-[10px] text-gray-400 font-sans">comp.</span>}</td>
+                                                            <td className="px-2 py-1 max-w-[340px] truncate" title={l.description}>{l.description}</td>
+                                                            <td className="px-2 py-1 text-right tabular-nums">{num(l.qty)}</td>
+                                                            <td className="px-2 py-1 text-right tabular-nums" title={l.listPrice ? `Precio de tarifa ${eur(l.listPrice, 4)}` : undefined}>{eur(l.unitPrice, 4)}</td>
+                                                            <td className="px-2 py-1 text-right tabular-nums">{l.discount ? num(l.discount, 2) : ''}</td>
+                                                            <td className="px-2 py-1 text-right tabular-nums">{eur(l.amount, 2)}</td>
+                                                            <td className="px-2 py-1 text-right tabular-nums">{eur(l.unitCost, 4)}</td>
+                                                            <td className="px-2 py-1 text-right tabular-nums">{eur(l.cost, 2)}</td>
+                                                            <td className={`px-2 py-1 text-right tabular-nums ${gm !== null && gm < 0 ? 'text-[#C0392B] font-semibold' : ''}`}>{gm === null ? '–' : pct(gm, 1)}</td>
+                                                          </tr>
+                                                        );
+                                                      })}
+                                                    </tbody>
+                                                  </table>
+                                                )}
+                                            </td>
+                                          </tr>
+                                        )}
+                                      </Fragment>
+                                    );
+                                  })}
                                 </Fragment>
                               );
                             })}
