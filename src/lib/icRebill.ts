@@ -73,6 +73,28 @@ export async function planIc(ce: BcContext, gm: BcContext, input: IcInput): Prom
   };
 }
 
+// Al poner Project No. BC recalcula el Direct Unit Cost (vuelve al coste del artículo): se vuelve a poner el del plan
+async function fixCosts(ce: BcContext, entity: string, linesEntity: string, id: string, lines: PlanLine[]) {
+  const cur = (await bcFetchAll(`${ce.apiBase}/${entity}(${id})/${linesEntity}`, ce.token))
+    .filter((l: any) => s(l.lineType) === 'Item').sort((a: any, b: any) => n(a.sequence) - n(b.sequence));
+  const pending = [...lines];
+  const changed: string[] = [];
+  for (const l of cur) {
+    const i = pending.findIndex(p => p.no === s(l.lineObjectNumber));
+    if (i < 0) continue;
+    const p = pending.splice(i, 1)[0];
+    const body: Record<string, number> = {};
+    if (Math.abs(n(l.quantity) - p.qty) > 1e-9) body.quantity = p.qty;
+    if (Math.abs(n(l.unitCost) - p.unitCost) > 1e-9) body.unitCost = p.unitCost;
+    if (n(l.discountPercent)) body.discountPercent = 0;
+    if (Object.keys(body).length) {
+      await bcRequest('PATCH', `${ce.apiBase}/${entity}(${id})/${linesEntity}(${l.id})`, ce.token, body);
+      changed.push(`${p.no}: ${n(l.unitCost)} → ${p.unitCost}`);
+    }
+  }
+  return changed;
+}
+
 async function createDoc(ce: BcContext, kind: 'cm' | 'inv', plan: IcPlan, piId: string) {
   const d = kind === 'cm' ? plan.creditMemo : plan.invoice;
   const entity = kind === 'cm' ? 'purchaseCreditMemos' : 'purchaseInvoices';
@@ -96,12 +118,30 @@ async function createDoc(ce: BcContext, kind: 'cm' | 'inv', plan: IcPlan, piId: 
       if (l.project) extras.set(Number(created.sequence), { project: l.project, task: l.task });
     }
     warnings.push(...await setLineExtras(ce, 'purchase', s(head.number), extras));
+    await fixCosts(ce, entity, linesEntity, head.id, d.lines);
   } catch (e) {
     await bcRequest('DELETE', base, ce.token).catch(() => {});
     throw e;
   }
   const after = await bcRequest('GET', base, ce.token);
   return { no: s(head.number), total: n(after?.totalAmountExcludingTax), warnings };
+}
+
+// Documentos ya creados: cantidades y costes del plan (sin tocar proyecto ni tarea)
+export async function repairIc(input: IcInput) {
+  const [ce, gm] = await Promise.all([getBcContext('Craze Entertainment'), getBcContext('CRAZE')]);
+  const plan = await planIc(ce, gm, input);
+  const out: Record<string, unknown> = { plan };
+  for (const [kind, entity, linesEntity] of [['creditMemo', 'purchaseCreditMemos', 'purchaseCreditMemoLines'], ['invoice', 'purchaseInvoices', 'purchaseInvoiceLines']] as const) {
+    const d = plan[kind];
+    if (!d.existing) { out[kind] = { error: 'no existe' }; continue; }
+    const [h] = await bcFetchAll(odataUrl(`${ce.apiBase}/${entity}`, { $filter: `number eq '${q(d.existing)}'`, $select: 'id,status' }), ce.token);
+    if (!h || s(h.status) !== 'Draft') { out[kind] = { no: d.existing, error: 'no está en borrador' }; continue; }
+    const changed = await fixCosts(ce, entity, linesEntity, h.id, d.lines);
+    const [after] = await bcFetchAll(odataUrl(`${ce.apiBase}/${entity}`, { $filter: `number eq '${q(d.existing)}'`, $select: 'totalAmountExcludingTax' }), ce.token);
+    out[kind] = { no: d.existing, changed, total: n(after?.totalAmountExcludingTax), expected: d.total };
+  }
+  return out;
 }
 
 export async function runIc(input: IcInput, dryRun: boolean) {
