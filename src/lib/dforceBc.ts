@@ -37,7 +37,7 @@ export async function existingDocs(ctx: BcContext, kind: Exclude<DForceKind, 'jo
 
 // ---------- Campos de línea fuera de la API v2 ----------
 
-type Extras = { project: string; task: string; task2?: string; returnReason?: string };
+export type Extras = { project: string; task: string; task2?: string; returnReason?: string };
 // Ventas: el proyecto va en los campos de la extensión AIT (AIT_Job_No, AIT_Job_Task_No, AIT_Job_Task_No_2), como en
 // todas las facturas y abonos de D-FORCE registrados; el Job No. estándar de las líneas de venta queda vacío.
 // Compras: los estándar (Job_No, Job_Task_No).
@@ -90,7 +90,7 @@ async function lineServiceNames(ctx: BcContext, kind: Exclude<DForceKind, 'journ
 }
 
 // Pone en las líneas ya creadas los campos que la API v2 no tiene. byLine: Line No. → valores. Devuelve avisos.
-async function setLineExtras(ctx: BcContext, kind: Exclude<DForceKind, 'journal'>, docNo: string, byLine: Map<number, Extras>) {
+export async function setLineExtras(ctx: BcContext, kind: Exclude<DForceKind, 'journal'>, docNo: string, byLine: Map<number, Extras>) {
   const side = DOCS[kind].side;
   const wanted = new Set<keyof Extras>();
   byLine.forEach(e => (Object.keys(e) as (keyof Extras)[]).forEach(k => { if (e[k]) wanted.add(k); }));
