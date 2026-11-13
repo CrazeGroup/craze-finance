@@ -1,5 +1,5 @@
 import { bcFetchAll, BcContext, getBcContext, odataUrl } from '@/lib/bcClient';
-import { bcRequest } from '@/lib/bcWrite';
+import { attachFile, bcRequest } from '@/lib/bcWrite';
 import { setLineExtras, type Extras } from '@/lib/dforceBc';
 
 // Refacturación intercompany (CRAZE GmbH → CRAZE Entertainment): por cada factura de venta de GmbH refacturada, en
@@ -175,4 +175,22 @@ export async function runIc(input: IcInput, dryRun: boolean) {
   out.creditMemo = plan.creditMemo.existing ? { no: plan.creditMemo.existing, existing: true } : await createDoc(ce, 'cm', plan, pi.id);
   out.invoice = plan.invoice.existing ? { no: plan.invoice.existing, existing: true } : await createDoc(ce, 'inv', plan, pi.id);
   return { plan, ...out };
+}
+
+// PDF impreso (BC) de la factura nueva de GmbH, adjunto a su factura de compra en Entertainment (como se hace siempre)
+export async function attachGmbhPdf(gmbhInvoice: string) {
+  const [ce, gm] = await Promise.all([getBcContext('Craze Entertainment'), getBcContext('CRAZE')]);
+  const [si] = await bcFetchAll(odataUrl(`${gm.apiBase}/salesInvoices`, { $filter: `number eq '${q(gmbhInvoice)}'`, $select: 'id,number' }), gm.token);
+  if (!si) throw new Error(`No existe ${gmbhInvoice} en CRAZE GmbH`);
+  const [pi] = await bcFetchAll(odataUrl(`${ce.apiBase}/purchaseInvoices`, { $filter: `vendorInvoiceNumber eq '${q(gmbhInvoice)}'`, $select: 'id,number,status' }), ce.token);
+  if (!pi) throw new Error(`No hay factura de compra con Vendor Invoice No. ${gmbhInvoice} en CRAZE Entertainment`);
+  const name = `${gmbhInvoice}.pdf`;
+  const existing = await bcFetchAll(odataUrl(`${ce.apiBase}/documentAttachments`, { $filter: `parentId eq ${pi.id}`, $select: 'fileName' }), ce.token);
+  if (existing.some((a: any) => s(a.fileName) === name)) return { purchaseInvoice: s(pi.number), file: name, existing: true };
+  const res = await fetch(`${gm.apiBase}/salesInvoices(${si.id})/pdfDocument/pdfDocumentContent`, { headers: { Authorization: `Bearer ${gm.token}` } });
+  if (!res.ok) throw new Error(`BC no ha generado el PDF de ${gmbhInvoice}: HTTP ${res.status} ${(await res.text()).substring(0, 200)}`);
+  const data = new Uint8Array(await res.arrayBuffer());
+  if (data.length < 500 || String.fromCharCode(...data.slice(0, 4)) !== '%PDF') throw new Error(`El PDF de ${gmbhInvoice} no es válido (${data.length} bytes)`);
+  await attachFile(ce, pi.id, { name, data }, 'Purchase Invoice');
+  return { purchaseInvoice: s(pi.number), file: name, bytes: data.length };
 }
