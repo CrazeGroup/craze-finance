@@ -177,6 +177,23 @@ const headerOf = (h: any) => {
   return head;
 };
 
+// Al cambiar el IVA BC recalcula el precio de las líneas del abono (pierde el descuento): se vuelven a poner el precio y el
+// descuento de cada línea de la factura original (emparejadas en orden por artículo y cantidad)
+export async function restorePrices(ctx: BcContext, invoiceId: string, cmId: string) {
+  const [src, cl] = await Promise.all([
+    bcFetchAll(`${ctx.apiBase}/salesInvoices(${invoiceId})/salesInvoiceLines`, ctx.token),
+    bcFetchAll(`${ctx.apiBase}/salesCreditMemos(${cmId})/salesCreditMemoLines`, ctx.token),
+  ]);
+  const pending = src.filter((l: any) => s(l.lineType) && s(l.lineType) !== 'Comment').sort((a: any, b: any) => n(a.sequence) - n(b.sequence));
+  for (const l of cl.filter((x: any) => s(x.lineType) && s(x.lineType) !== 'Comment').sort((a: any, b: any) => n(a.sequence) - n(b.sequence))) {
+    const i = pending.findIndex((o: any) => s(o.lineObjectNumber) === s(l.lineObjectNumber) && n(o.quantity) === n(l.quantity));
+    if (i < 0) continue;
+    const o = pending.splice(i, 1)[0];
+    if (n(o.unitPrice) !== n(l.unitPrice) || n(o.discountPercent) !== n(l.discountPercent))
+      await bcRequest('PATCH', `${ctx.apiBase}/salesCreditMemos(${cmId})/salesCreditMemoLines(${l.id})`, ctx.token, { unitPrice: n(o.unitPrice), discountPercent: n(o.discountPercent) });
+  }
+}
+
 export async function runRebill(ctx: BcContext, company: string, no: string, markup: number) {
   const plan = await planRebill(ctx, company, no, markup);
   if (plan.blockers.length) throw new Error(`No se crea nada para ${no}: ${plan.blockers.join(' · ')}`);
@@ -206,6 +223,7 @@ export async function runRebill(ctx: BcContext, company: string, no: string, mar
           // Según la configuración de IVA, BC acepta primero la cabecera o primero las líneas
           try { await setVatBus(ctx, 'credit', done.creditMemo, FALLBACK_VAT_BUS); await fixLines(); }
           catch { await fixLines(); await setVatBus(ctx, 'credit', done.creditMemo, FALLBACK_VAT_BUS); }
+          await restorePrices(ctx, h.id, cmId);
         }
       } catch (e: any) {
         // Factura ya cerrada (cobrada / liquidada): BC no hace el abono corrector; se crea una copia del abono sin liquidar
