@@ -17,7 +17,9 @@ const q = (v: string) => v.replace(/'/g, "''");
 export const FOILBAG_ITEM = 'AA-00049';
 const isFoilbag = (l: any) => /foil\s*bag/i.test(s(l.description));
 
-export type IcInput = { purchaseInvoice: string; gmbhCreditMemo: string; gmbhInvoice: string };
+// invoiceProject: Project No. correcto para la factura nueva cuando la compra original estaba en otra revista (el abono
+// mantiene el de la compra que anula)
+export type IcInput = { purchaseInvoice: string; gmbhCreditMemo: string; gmbhInvoice: string; invoiceProject?: string };
 type PlanLine = { no: string; description: string; qty: number; unitCost: number; amount: number; locationCode: string; taxCode: string; project: string; task: string; uom: string };
 export type IcPlan = {
   purchaseInvoice: string; vendor: string; status: string; applyTo: boolean;
@@ -64,6 +66,7 @@ export async function planIc(ce: BcContext, gm: BcContext, input: IcInput): Prom
     bcFetchAll(odataUrl(`${ce.apiBase}/purchaseInvoices`, { $filter: `vendorInvoiceNumber eq '${q(input.gmbhInvoice)}'`, $select: 'number' }), ce.token),
   ]);
   const cmLines = build(cm.lines, input.gmbhCreditMemo, true), invLines = build(inv.lines, input.gmbhInvoice);
+  if (input.invoiceProject) for (const l of invLines) l.project = input.invoiceProject;
   const r2 = (v: number) => Math.round(v * 100) / 100;
   return {
     purchaseInvoice: input.purchaseInvoice, vendor: s(pi.vendorNumber), status: s(pi.status), applyTo: s(pi.status) === 'Open',
@@ -147,6 +150,13 @@ export async function repairIc(input: IcInput) {
     if (!d.existing) { out[kind] = { error: 'no existe' }; continue; }
     const [h] = await bcFetchAll(odataUrl(`${ce.apiBase}/${entity}`, { $filter: `number eq '${q(d.existing)}'`, $select: 'id,status' }), ce.token);
     if (!h || s(h.status) !== 'Draft') { out[kind] = { no: d.existing, error: 'no está en borrador' }; continue; }
+    // Proyecto y tarea del plan en las líneas (si alguna no los tiene así) y después, otra vez, los costes
+    if (kind === 'invoice' && input.invoiceProject) {
+      const cur = (await bcFetchAll(`${ce.apiBase}/${entity}(${h.id})/${linesEntity}`, ce.token)).filter((l: any) => s(l.lineType) === 'Item');
+      const extras = new Map<number, Extras>();
+      for (const l of cur) { const p = d.lines.find(x => x.no === s(l.lineObjectNumber)); if (p?.project) extras.set(Number(l.sequence), { project: p.project, task: p.task }); }
+      out.projectWarnings = await setLineExtras(ce, 'purchase', d.existing, extras);
+    }
     const changed = await fixCosts(ce, entity, linesEntity, h.id, d.lines);
     await fixDocDate(ce, entity, h.id, kind === 'creditMemo' ? 'creditMemoDate' : 'invoiceDate', d.documentDate, d.postingDate);
     const [after] = await bcFetchAll(odataUrl(`${ce.apiBase}/${entity}`, { $filter: `number eq '${q(d.existing)}'`, $select: 'totalAmountExcludingTax' }), ce.token);

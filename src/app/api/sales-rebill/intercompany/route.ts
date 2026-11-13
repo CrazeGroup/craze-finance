@@ -10,7 +10,7 @@ export const maxDuration = 300;
 export async function POST(req: Request) {
   try {
     const b = await req.json();
-    const input = { purchaseInvoice: String(b?.purchaseInvoice || ''), gmbhCreditMemo: String(b?.gmbhCreditMemo || ''), gmbhInvoice: String(b?.gmbhInvoice || '') };
+    const input = { purchaseInvoice: String(b?.purchaseInvoice || ''), gmbhCreditMemo: String(b?.gmbhCreditMemo || ''), gmbhInvoice: String(b?.gmbhInvoice || ''), ...(b?.invoiceProject ? { invoiceProject: String(b.invoiceProject) } : {}) };
     if (!input.purchaseInvoice || !input.gmbhCreditMemo || !input.gmbhInvoice) return NextResponse.json({ error: 'Parámetros no válidos' }, { status: 400 });
     if (b.repair) return NextResponse.json(await repairIc(input));
     const result = await runIc(input, !!b.dryRun);
