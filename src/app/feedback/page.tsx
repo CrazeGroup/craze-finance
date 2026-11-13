@@ -9,6 +9,7 @@ import { companyLabel } from '@/contexts/CompanyContext';
 type Item = {
   id: string; at: string; by: string; company: string; area: 'ocr' | 'banco'; kind: 'auto' | 'manual';
   title: string; message: string; changes: string[]; context: unknown; hasPdf: boolean; pdfName?: string;
+  images?: { name: string; type: string }[];
   status: 'pending' | 'applied' | 'dismissed'; resolution?: string; resolvedBy?: string; resolvedAt?: string;
 };
 type StatusFilter = 'pending' | 'applied' | 'dismissed' | 'all';
@@ -113,6 +114,16 @@ function Card({ i, patch }: { i: Item; patch: (id: string, body: { status?: Item
           <ul className="space-y-0.5 text-xs text-gray-700">
             {i.changes.map((c, k) => <li key={k} className="font-mono break-words">• {c}</li>)}
           </ul>
+        )}
+        {i.images && i.images.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {i.images.map((img, n) => (
+              <a key={n} href={`/api/feedback/image?id=${encodeURIComponent(i.id)}&n=${n}`} target="_blank" rel="noreferrer" title="Abrir la captura">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={`/api/feedback/image?id=${encodeURIComponent(i.id)}&n=${n}`} alt={img.name} className="h-24 max-w-[200px] object-cover rounded-md border border-gray-200 hover:border-gray-500" />
+              </a>
+            ))}
+          </div>
         )}
         <div className="flex flex-wrap items-center gap-4 text-xs">
           {i.hasPdf && (

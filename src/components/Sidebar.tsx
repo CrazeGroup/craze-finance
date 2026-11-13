@@ -41,6 +41,14 @@ const COLLAPSED_KEY = 'crz-menu-collapsed';
 
 export default function Sidebar({ permissions = [], username = '', authEnabled = true }: { permissions: string[], username: string, authEnabled?: boolean }) {
   const pathname = usePathname();
+  // Casos de feedback pendientes (se recarga al cambiar de página y cada 5 minutos)
+  const [feedbackPending, setFeedbackPending] = useState(0);
+  useEffect(() => {
+    const load = () => fetch('/api/feedback?count=1', { cache: 'no-store' }).then(r => r.json()).then(d => setFeedbackPending(Number(d.pending) || 0)).catch(() => {});
+    load();
+    const t = setInterval(load, 5 * 60 * 1000);
+    return () => clearInterval(t);
+  }, [pathname]);
   const router = useRouter();
   const { selectedCompany, setSelectedCompany } = useCompany();
   const { lang, setLang } = useLanguage();
@@ -131,7 +139,11 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
     { href: '/settings/logs', label: 'Auditoría', module: 'auditoria' },
     { href: '/settings', label: 'Configuración', module: 'configuracion' },
   ];
-  const menuItems = baseItems.map(i => ({ ...i, label: TEXT[lang][i.href] ?? i.label }));
+  const menuItems = baseItems.map(i => {
+    const label = TEXT[lang][i.href] ?? i.label;
+    // Feedback OCR / Banco: casos pendientes entre paréntesis
+    return i.href === '/feedback' && feedbackPending ? { ...i, label: `${label} (${feedbackPending})` } : { ...i, label };
+  });
 
   const handleLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' });

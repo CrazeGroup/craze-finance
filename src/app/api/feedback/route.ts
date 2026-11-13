@@ -1,18 +1,19 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getSession } from '@/lib/auth';
-import { getFeedback, listFeedback, saveFeedback, savePdf, type Feedback, type FeedbackStatus } from '@/lib/feedback';
+import { getFeedback, listFeedback, saveFeedback, saveImage, savePdf, type Feedback, type FeedbackStatus } from '@/lib/feedback';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const user = async () => ((await getSession().catch(() => null)) as any)?.username || '';
 
-// GET: todos los casos (?status=pending para los pendientes; ?area=ocr|banco)
+// GET: todos los casos (?status=pending para los pendientes; ?area=ocr|banco); ?count=1 → { pending } (menú)
 export async function GET(req: Request) {
   try {
     const p = new URL(req.url).searchParams;
     let items = await listFeedback();
+    if (p.get('count')) return NextResponse.json({ pending: items.filter(f => f.status === 'pending').length });
     if (p.get('status')) items = items.filter(f => f.status === p.get('status'));
     if (p.get('area')) items = items.filter(f => f.area === p.get('area'));
     return NextResponse.json({ items });
@@ -21,7 +22,8 @@ export async function GET(req: Request) {
   }
 }
 
-// POST multipart: data = { area, kind, title, message, changes, context }, pdf = el PDF (opcional, ≤ 4 MB)
+// POST multipart: data = { area, kind, title, message, changes, context }, pdf = el PDF (opcional, ≤ 4 MB),
+// images = capturas de pantalla (opcional, hasta 6, ≤ 2 MB cada una; la página las reduce antes de enviarlas)
 export async function POST(req: Request) {
   try {
     const form = await req.formData();
@@ -30,16 +32,19 @@ export async function POST(req: Request) {
     if (!area) return NextResponse.json({ error: 'Área no válida' }, { status: 400 });
     const kind = data.kind === 'auto' ? 'auto' : 'manual';
     const message = String(data.message || '').trim().slice(0, 4000);
-    if (kind === 'manual' && !message) return NextResponse.json({ error: 'Escribe qué está mal.' }, { status: 400 });
+    if (kind === 'manual' && !message && !form.getAll('images').length) return NextResponse.json({ error: 'Escribe qué está mal o adjunta una captura.' }, { status: 400 });
     const pdf = form.get('pdf');
     const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
     const hasPdf = pdf instanceof File && pdf.size > 0 && pdf.size <= 4 * 1024 * 1024;
     if (hasPdf) await savePdf(id, Buffer.from(await (pdf as File).arrayBuffer()));
+    const imgs = form.getAll('images').filter((x): x is File => x instanceof File && x.size > 0 && x.size <= 2 * 1024 * 1024 && /^image\//.test(x.type)).slice(0, 6);
+    for (let n = 0; n < imgs.length; n++) await saveImage(id, n, imgs[n].type, Buffer.from(await imgs[n].arrayBuffer()));
     const f: Feedback = {
       id, at: new Date().toISOString(), by: await user(), company: (await cookies()).get('craze_selected_company')?.value || 'CRAZE',
       area, kind, title: String(data.title || '').slice(0, 300), message,
       changes: Array.isArray(data.changes) ? data.changes.map(String).slice(0, 50) : [],
-      context: data.context ?? null, hasPdf, pdfName: hasPdf ? (pdf as File).name : undefined, status: 'pending',
+      context: data.context ?? null, hasPdf, pdfName: hasPdf ? (pdf as File).name : undefined,
+      images: imgs.length ? imgs.map(x => ({ name: x.name, type: x.type })) : undefined, status: 'pending',
     };
     await saveFeedback(f);
     return NextResponse.json({ ok: true, id });
@@ -72,7 +77,7 @@ export async function DELETE(req: Request) {
   try {
     const id = new URL(req.url).searchParams.get('id') || '';
     const prisma = (await import('@/lib/prisma')).default;
-    await prisma.apiConfig.deleteMany({ where: { key: { in: [`feedback:${id}`, `feedback-pdf:${id}`] } } });
+    await prisma.apiConfig.deleteMany({ where: { OR: [{ key: { in: [`feedback:${id}`, `feedback-pdf:${id}`] } }, { key: { startsWith: `feedback-img:${id}:` } }] } });
     return NextResponse.json({ ok: true });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
