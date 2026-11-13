@@ -23,6 +23,8 @@ export type RebillPlan = {
   invoice: string; customer: string; customerName: string; currency: string; externalDocumentNumber: string;
   oldNet: number; newNet: number; lines: RebillLine[]; warnings: string[];
   done?: { creditMemo?: string; invoice?: string };
+  // Lo que impide crear los documentos (artículos o cliente bloqueados, grupos de IVA que no existen…)
+  blockers: string[];
 };
 
 const HEADER_FIELDS = [
@@ -64,12 +66,44 @@ export async function planRebill(ctx: BcContext, company: string, no: string, ma
       oldNet, newNet: newPrice !== null ? Math.round(newPrice * qty * 100) / 100 : oldNet,
     };
   });
-  const done = await readSetting<{ creditMemo?: string; invoice?: string }>(`rebill:${company}:${no}`, {});
+  // Lo creado antes solo cuenta si sigue en BC sin registrar (si se ha borrado, se vuelve a crear)
+  const saved = await readSetting<{ creditMemo?: string; invoice?: string }>(`rebill:${company}:${no}`, {});
+  const done: { creditMemo?: string; invoice?: string } = {};
+  if (saved.creditMemo) {
+    const x = await bcFetchAll(odataUrl(`${ctx.apiBase}/salesCreditMemos`, { $filter: `number eq '${q(saved.creditMemo)}' and status eq 'Draft'`, $select: 'number' }), ctx.token).catch(() => []);
+    if (x.length) done.creditMemo = saved.creditMemo;
+  }
+  if (saved.invoice) {
+    const x = await bcFetchAll(odataUrl(`${ctx.apiBase}/salesInvoices`, { $filter: `number eq '${q(saved.invoice)}' and status eq 'Draft'`, $select: 'number' }), ctx.token).catch(() => []);
+    if (x.length) done.invoice = saved.invoice;
+  }
+  if ((saved.creditMemo || saved.invoice) && (saved.creditMemo !== done.creditMemo || saved.invoice !== done.invoice)) await writeSetting(`rebill:${company}:${no}`, done);
+  // Comprobaciones previas: cliente, artículos y grupos de IVA de las líneas
+  const blockers: string[] = [];
+  const itemNos = [...new Set(lines.filter(l => l.type === 'Item' && l.no).map(l => l.no))];
+  const [cust, items, taxGroups] = await Promise.all([
+    bcFetchAll(odataUrl(`${ctx.apiBase}/customers`, { $filter: `number eq '${q(s(h.customerNumber))}'`, $select: 'number,blocked' }), ctx.token),
+    itemNos.length ? bcFetchAll(odataUrl(`${ctx.apiBase}/items`, { $filter: itemNos.map(x => `number eq '${q(x)}'`).join(' or '), $select: 'number,blocked,taxGroupCode' }), ctx.token) : Promise.resolve([]),
+    bcFetchAll(odataUrl(`${ctx.apiBase}/taxGroups`, { $select: 'code' }), ctx.token).catch(() => [] as any[]),
+  ]);
+  if (s(cust[0]?.blocked) && !/^\s*$|^_x0020_$/.test(s(cust[0]?.blocked))) blockers.push(`cliente ${h.customerNumber} bloqueado (${cust[0].blocked})`);
+  for (const no2 of itemNos) {
+    const it = items.find((x: any) => s(x.number) === no2);
+    if (!it) blockers.push(`artículo ${no2} no existe`);
+    else if (it.blocked === true) blockers.push(`artículo ${no2} bloqueado`);
+  }
+  const codes = new Set(taxGroups.map((x: any) => s(x.code)));
+  for (const t of new Set(v2Lines.map((l: any) => s(l.taxCode)).filter(Boolean))) {
+    if (codes.size && !codes.has(t as string)) {
+      const defaults = [...new Set(items.map((x: any) => s(x.taxGroupCode)).filter(Boolean))];
+      blockers.push(`el grupo de IVA ${t} de la factura ya no existe en BC (el de los artículos es ${defaults.join(', ') || '—'})`);
+    }
+  }
   return {
     invoice: no, customer: s(h.customerNumber), customerName: s(h.customerName), currency: s(h.currencyCode),
     externalDocumentNumber: s(h.externalDocumentNumber), oldNet: n(h.totalAmountExcludingTax),
     newNet: Math.round(lines.reduce((t, l) => t + l.newNet, 0) * 100) / 100, lines, warnings,
-    done: done.creditMemo || done.invoice ? done : undefined,
+    done: done.creditMemo || done.invoice ? done : undefined, blockers,
   };
 }
 
@@ -122,6 +156,7 @@ const headerOf = (h: any) => {
 
 export async function runRebill(ctx: BcContext, company: string, no: string, markup: number) {
   const plan = await planRebill(ctx, company, no, markup);
+  if (plan.blockers.length) throw new Error(`No se crea nada para ${no}: ${plan.blockers.join(' · ')}`);
   const key = `rebill:${company}:${no}`;
   const done: { creditMemo?: string; invoice?: string } = { ...(plan.done || {}) };
   const warnings = [...plan.warnings];
