@@ -1,6 +1,26 @@
 import { bcFetchAll, BcContext, odataUrl } from '@/lib/bcClient';
 import { bcRequest } from '@/lib/bcWrite';
 import { readSetting, writeSetting } from '@/lib/reporting/cache';
+import { editUrl, odataGet, salesHeaderServices } from '@/lib/dforceBc';
+
+// Combinación de IVA de la factura bloqueada o que ya no existe (NO VAT…): VAT Bus. NAC y VAT Prod. OHNE MWST
+export const FALLBACK_VAT_BUS = 'NAC';
+export const FALLBACK_VAT_PROD = 'OHNE MWST';
+
+// VAT Bus. Posting Group de la cabecera (no está en v2): por la página 43/44 publicada en OData
+async function setVatBus(ctx: BcContext, kind: 'invoice' | 'credit', no: string, group: string) {
+  const tried: string[] = [];
+  for (const name of await salesHeaderServices(ctx, kind)) {
+    try {
+      const row = (await odataGet(ctx, odataUrl(`${ctx.odataCompanyBase}/${name}`, { $filter: `No eq '${q(no)}'` }))).value?.[0];
+      const field = row && Object.keys(row).find(k => /^vat_?bus_?posting_?group$/i.test(k));
+      if (!row || !field) { tried.push(`${name}: ${row ? 'sin el campo VAT Bus. Posting Group' : `no encuentra ${no}`}`); continue; }
+      if (row[field] !== group) await bcRequest('PATCH', editUrl(ctx, row['@odata.editLink']), ctx.token, { [field]: group });
+      return;
+    } catch (e: any) { tried.push(`${name}: ${String(e?.message).substring(0, 160)}`); }
+  }
+  throw new Error(`no se ha podido poner VAT Bus. Posting Group ${group} en ${no} (${tried.join(' · ') || 'no hay página de cabecera de venta publicada'})`);
+}
 
 // Refacturación por precio: por cada factura de venta registrada, sin registrar nada:
 //  1) Sales Credit Memo corrector (acción estándar de BC "Create Corrective Credit Memo", v2
@@ -25,6 +45,7 @@ export type RebillPlan = {
   done?: { creditMemo?: string; invoice?: string };
   // Lo que impide crear los documentos (artículos o cliente bloqueados, grupos de IVA que no existen…)
   blockers: string[];
+  vatFallback?: boolean;
 };
 
 const HEADER_FIELDS = [
@@ -95,12 +116,13 @@ export async function planRebill(ctx: BcContext, company: string, no: string, ma
   const codes = new Set(taxGroups.map((x: any) => s(x.code)));
   for (const t of new Set(v2Lines.map((l: any) => s(l.taxCode)).filter(Boolean))) {
     if (codes.size && !codes.has(t as string)) {
-      const defaults = [...new Set(items.map((x: any) => s(x.taxGroupCode)).filter(Boolean))];
-      blockers.push(`el grupo de IVA ${t} de la factura ya no existe en BC (el de los artículos es ${defaults.join(', ') || '—'})`);
+      if (!codes.has(FALLBACK_VAT_PROD)) blockers.push(`el grupo de IVA ${t} no existe en BC y tampoco ${FALLBACK_VAT_PROD}`);
+      else warnings.push(`IVA ${t} bloqueado o inexistente: abono y factura nueva con ${FALLBACK_VAT_BUS} / ${FALLBACK_VAT_PROD}.`);
     }
   }
+  const vatFallback = warnings.some(w => w.includes(FALLBACK_VAT_PROD));
   return {
-    invoice: no, customer: s(h.customerNumber), customerName: s(h.customerName), currency: s(h.currencyCode),
+    vatFallback, invoice: no, customer: s(h.customerNumber), customerName: s(h.customerName), currency: s(h.currencyCode),
     externalDocumentNumber: s(h.externalDocumentNumber), oldNet: n(h.totalAmountExcludingTax),
     newNet: Math.round(lines.reduce((t, l) => t + l.newNet, 0) * 100) / 100, lines, warnings,
     done: done.creditMemo || done.invoice ? done : undefined, blockers,
@@ -122,7 +144,7 @@ async function postPruned(ctx: BcContext, url: string, body: Record<string, unkn
 }
 
 // Copia las líneas de la factura original en un documento nuevo (price: precio nuevo por línea, o el original)
-async function copyLines(ctx: BcContext, srcId: string, base: string, linesEntity: string, price: (l: any) => { unitPrice: number; discountPercent: number }) {
+async function copyLines(ctx: BcContext, srcId: string, base: string, linesEntity: string, price: (l: any) => { unitPrice: number; discountPercent: number }, vatFallback = false) {
   const auto = await bcRequest('GET', `${base}/${linesEntity}?$select=id`, ctx.token);
   for (const l of auto?.value || []) await bcRequest('DELETE', `${base}/${linesEntity}(${l.id})`, ctx.token);
   const src = await bcFetchAll(`${ctx.apiBase}/salesInvoices(${srcId})/salesInvoiceLines`, ctx.token);
@@ -133,7 +155,8 @@ async function copyLines(ctx: BcContext, srcId: string, base: string, linesEntit
     if (type && type !== 'Comment') {
       Object.assign(body, { lineObjectNumber: s(l.lineObjectNumber), quantity: n(l.quantity), ...price(l) });
       if (s(l.unitOfMeasureCode)) body.unitOfMeasureCode = s(l.unitOfMeasureCode);
-      if (s(l.taxCode)) body.taxCode = s(l.taxCode);
+      if (vatFallback) body.taxCode = FALLBACK_VAT_PROD;
+      else if (s(l.taxCode)) body.taxCode = s(l.taxCode);
       if (s(l.locationId) && s(l.locationId) !== '00000000-0000-0000-0000-000000000000') body.locationId = s(l.locationId);
     }
     try {
@@ -171,15 +194,27 @@ export async function runRebill(ctx: BcContext, company: string, no: string, mar
     } else {
       try {
         await bcRequest('POST', `${ctx.apiBase}/salesInvoices(${h.id})/Microsoft.NAV.makeCorrectiveCreditMemo`, ctx.token);
-        const created = await bcFetchAll(odataUrl(`${ctx.apiBase}/salesCreditMemos`, { $filter: `invoiceNumber eq '${q(no)}' and status eq 'Draft'`, $select: 'number' }), ctx.token);
+        const created = await bcFetchAll(odataUrl(`${ctx.apiBase}/salesCreditMemos`, { $filter: `invoiceNumber eq '${q(no)}' and status eq 'Draft'`, $select: 'id,number' }), ctx.token);
         done.creditMemo = s(created[created.length - 1]?.number) || '(creado)';
+        if (plan.vatFallback && created.length) {
+          const cmId = created[created.length - 1].id || (await bcFetchAll(odataUrl(`${ctx.apiBase}/salesCreditMemos`, { $filter: `number eq '${q(done.creditMemo)}'`, $select: 'id' }), ctx.token))[0]?.id;
+          const fixLines = async () => {
+            const cl = await bcFetchAll(`${ctx.apiBase}/salesCreditMemos(${cmId})/salesCreditMemoLines`, ctx.token);
+            for (const l of cl) if (s(l.lineType) && s(l.lineType) !== 'Comment' && s(l.taxCode) !== FALLBACK_VAT_PROD)
+              await bcRequest('PATCH', `${ctx.apiBase}/salesCreditMemos(${cmId})/salesCreditMemoLines(${l.id})`, ctx.token, { taxCode: FALLBACK_VAT_PROD });
+          };
+          // Según la configuración de IVA, BC acepta primero la cabecera o primero las líneas
+          try { await setVatBus(ctx, 'credit', done.creditMemo, FALLBACK_VAT_BUS); await fixLines(); }
+          catch { await fixLines(); await setVatBus(ctx, 'credit', done.creditMemo, FALLBACK_VAT_BUS); }
+        }
       } catch (e: any) {
         // Factura ya cerrada (cobrada / liquidada): BC no hace el abono corrector; se crea una copia del abono sin liquidar
         if (!/invoice is closed/i.test(String(e?.message))) throw e;
         const cm = await postPruned(ctx, `${ctx.apiBase}/salesCreditMemos`, headerOf(h));
         const base = `${ctx.apiBase}/salesCreditMemos(${cm.id})`;
         try {
-          await copyLines(ctx, h.id, base, 'salesCreditMemoLines', l => ({ unitPrice: n(l.unitPrice), discountPercent: n(l.discountPercent) }));
+          if (plan.vatFallback) await setVatBus(ctx, 'credit', s(cm.number), FALLBACK_VAT_BUS);
+          await copyLines(ctx, h.id, base, 'salesCreditMemoLines', l => ({ unitPrice: n(l.unitPrice), discountPercent: n(l.discountPercent) }), plan.vatFallback);
         } catch (err) { await bcRequest('DELETE', base, ctx.token).catch(() => {}); throw err; }
         done.creditMemo = s(cm.number);
         warnings.push(`${no} ya está cerrada en BC: el abono ${done.creditMemo} es una copia sin liquidar contra la factura (aplícalo a mano si hace falta).`);
@@ -194,10 +229,11 @@ export async function runRebill(ctx: BcContext, company: string, no: string, mar
     const base = `${ctx.apiBase}/salesInvoices(${inv.id})`;
     const bySeq = new Map(plan.lines.map(l => [l.sequence, l]));
     try {
+      if (plan.vatFallback) await setVatBus(ctx, 'invoice', s(inv.number), FALLBACK_VAT_BUS);
       await copyLines(ctx, h.id, base, 'salesInvoiceLines', l => {
         const p = bySeq.get(n(l.sequence));
         return p?.newPrice != null ? { unitPrice: p.newPrice, discountPercent: 0 } : { unitPrice: n(l.unitPrice), discountPercent: n(l.discountPercent) };
-      });
+      }, plan.vatFallback);
     } catch (e) {
       await bcRequest('DELETE', base, ctx.token).catch(() => {});
       throw e;

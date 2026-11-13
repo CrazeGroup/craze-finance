@@ -58,12 +58,12 @@ const FIELD_PATTERNS: Record<'sales' | 'purchase', Record<keyof Extras, RegExp>>
 const FIELD_LABEL: Record<keyof Extras, string> = { project: 'Project No.', task: 'Project Task No.', task2: 'Project Task No.2', returnReason: 'Return Reason Code' };
 
 // URL de @odata.editLink: BC la da relativa a la raíz del servicio, ya con Company('…'), o absoluta
-function editUrl(ctx: BcContext, link: string) {
+export function editUrl(ctx: BcContext, link: string) {
   if (/^https?:/.test(link)) return link;
   return /^Company\(/i.test(link) ? `${ctx.odataCompanyBase.replace(/\/Company\(.*$/, '')}/${link}` : `${ctx.odataCompanyBase}/${link}`;
 }
 
-async function odataGet(ctx: BcContext, url: string) {
+export async function odataGet(ctx: BcContext, url: string) {
   const res = await fetch(url, { headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json;odata.metadata=full' } });
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).substring(0, 200)}`);
   return res.json();
@@ -157,7 +157,7 @@ async function setLineExtras(ctx: BcContext, kind: Exclude<DForceKind, 'journal'
 // una página de cabecera de venta publicada en OData que lo tenga (ajuste dforceSalesHeaderService o por nombre).
 const IGNORE_QTY = /ignore_?custom_?qty/i;
 
-async function salesHeaderServices(ctx: BcContext, kind: 'invoice' | 'credit') {
+export async function salesHeaderServices(ctx: BcContext, kind: 'invoice' | 'credit') {
   const configured = await readSetting<Record<string, string>>('dforceSalesHeaderService', {});
   if (configured[kind]) return [configured[kind]];
   const root = ctx.odataCompanyBase.replace(/\/Company\(.*$/, '');
