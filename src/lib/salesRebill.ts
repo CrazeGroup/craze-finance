@@ -1,7 +1,7 @@
 import { bcFetchAll, BcContext, odataUrl } from '@/lib/bcClient';
 import { bcRequest } from '@/lib/bcWrite';
 import { readSetting, writeSetting } from '@/lib/reporting/cache';
-import { editUrl, odataGet, salesHeaderServices } from '@/lib/dforceBc';
+import { editUrl, ignoreCustomQty, odataGet, salesHeaderServices } from '@/lib/dforceBc';
 
 // Combinación de IVA de la factura bloqueada o que ya no existe (NO VAT…): VAT Bus. NAC y VAT Prod. OHNE MWST
 export const FALLBACK_VAT_BUS = 'NAC';
@@ -204,39 +204,45 @@ export async function runRebill(ctx: BcContext, company: string, no: string, mar
 
   // 1) Abono corrector (copia de la factura, liquidado contra ella)
   if (!done.creditMemo) {
-    const existing = await bcFetchAll(odataUrl(`${ctx.apiBase}/salesCreditMemos`, { $filter: `invoiceNumber eq '${q(no)}' and status eq 'Draft'`, $select: 'number' }), ctx.token).catch(() => [] as any[]);
-    if (existing.length) {
-      done.creditMemo = s(existing[0].number);
-      warnings.push(`Ya había un abono sin registrar para ${no}: ${done.creditMemo}.`);
-    } else {
+    const drafts = () => bcFetchAll(odataUrl(`${ctx.apiBase}/salesCreditMemos`, { $filter: `invoiceNumber eq '${q(no)}' and status eq 'Draft'`, $select: 'id,number' }), ctx.token).catch(() => [] as any[]);
+    let cm = (await drafts())[0];
+    if (cm) warnings.push(`Ya había un abono sin registrar para ${no}: ${s(cm.number)} (se revisa).`);
+    else {
       try {
         await bcRequest('POST', `${ctx.apiBase}/salesInvoices(${h.id})/Microsoft.NAV.makeCorrectiveCreditMemo`, ctx.token);
-        const created = await bcFetchAll(odataUrl(`${ctx.apiBase}/salesCreditMemos`, { $filter: `invoiceNumber eq '${q(no)}' and status eq 'Draft'`, $select: 'id,number' }), ctx.token);
-        done.creditMemo = s(created[created.length - 1]?.number) || '(creado)';
-        if (plan.vatFallback && created.length) {
-          const cmId = created[created.length - 1].id || (await bcFetchAll(odataUrl(`${ctx.apiBase}/salesCreditMemos`, { $filter: `number eq '${q(done.creditMemo)}'`, $select: 'id' }), ctx.token))[0]?.id;
-          const fixLines = async () => {
-            const cl = await bcFetchAll(`${ctx.apiBase}/salesCreditMemos(${cmId})/salesCreditMemoLines`, ctx.token);
-            for (const l of cl) if (s(l.lineType) && s(l.lineType) !== 'Comment' && s(l.taxCode) !== FALLBACK_VAT_PROD)
-              await bcRequest('PATCH', `${ctx.apiBase}/salesCreditMemos(${cmId})/salesCreditMemoLines(${l.id})`, ctx.token, { taxCode: FALLBACK_VAT_PROD });
-          };
-          // Según la configuración de IVA, BC acepta primero la cabecera o primero las líneas
-          try { await setVatBus(ctx, 'credit', done.creditMemo, FALLBACK_VAT_BUS); await fixLines(); }
-          catch { await fixLines(); await setVatBus(ctx, 'credit', done.creditMemo, FALLBACK_VAT_BUS); }
-          await restorePrices(ctx, h.id, cmId);
-        }
+        const created = await drafts();
+        cm = created[created.length - 1];
       } catch (e: any) {
         // Factura ya cerrada (cobrada / liquidada): BC no hace el abono corrector; se crea una copia del abono sin liquidar
         if (!/invoice is closed/i.test(String(e?.message))) throw e;
-        const cm = await postPruned(ctx, `${ctx.apiBase}/salesCreditMemos`, headerOf(h));
-        const base = `${ctx.apiBase}/salesCreditMemos(${cm.id})`;
+        const head = await postPruned(ctx, `${ctx.apiBase}/salesCreditMemos`, headerOf(h));
+        const base = `${ctx.apiBase}/salesCreditMemos(${head.id})`;
         try {
-          if (plan.vatFallback) await setVatBus(ctx, 'credit', s(cm.number), FALLBACK_VAT_BUS);
+          // Sin "Ignore Custom Qty. Fields" BC exige el múltiplo de venta del artículo (p. ej. 2000)
+          await ignoreCustomQty(ctx, 'credit', s(head.number));
+          if (plan.vatFallback) await setVatBus(ctx, 'credit', s(head.number), FALLBACK_VAT_BUS);
           await copyLines(ctx, h.id, base, 'salesCreditMemoLines', l => ({ unitPrice: n(l.unitPrice), discountPercent: n(l.discountPercent) }), plan.vatFallback);
         } catch (err) { await bcRequest('DELETE', base, ctx.token).catch(() => {}); throw err; }
-        done.creditMemo = s(cm.number);
+        done.creditMemo = s(head.number);
         warnings.push(`${no} ya está cerrada en BC: el abono ${done.creditMemo} es una copia sin liquidar contra la factura (aplícalo a mano si hace falta).`);
       }
+    }
+    // Abono corrector (nuevo o el que ya había): IVA NAC / OHNE MWST si hace falta y precios de la factura original
+    if (cm && !done.creditMemo) {
+      const cmNo = s(cm.number);
+      await ignoreCustomQty(ctx, 'credit', cmNo);
+      if (plan.vatFallback) {
+        const fixLines = async () => {
+          const cl = await bcFetchAll(`${ctx.apiBase}/salesCreditMemos(${cm.id})/salesCreditMemoLines`, ctx.token);
+          for (const l of cl) if (s(l.lineType) && s(l.lineType) !== 'Comment' && s(l.taxCode) !== FALLBACK_VAT_PROD)
+            await bcRequest('PATCH', `${ctx.apiBase}/salesCreditMemos(${cm.id})/salesCreditMemoLines(${l.id})`, ctx.token, { taxCode: FALLBACK_VAT_PROD });
+        };
+        // Según la configuración de IVA, BC acepta primero la cabecera o primero las líneas
+        try { await setVatBus(ctx, 'credit', cmNo, FALLBACK_VAT_BUS); await fixLines(); }
+        catch { await fixLines(); await setVatBus(ctx, 'credit', cmNo, FALLBACK_VAT_BUS); }
+      }
+      await restorePrices(ctx, h.id, cm.id);
+      done.creditMemo = cmNo;
     }
     await writeSetting(key, done);
   }
@@ -247,6 +253,7 @@ export async function runRebill(ctx: BcContext, company: string, no: string, mar
     const base = `${ctx.apiBase}/salesInvoices(${inv.id})`;
     const bySeq = new Map(plan.lines.map(l => [l.sequence, l]));
     try {
+      await ignoreCustomQty(ctx, 'invoice', s(inv.number));
       if (plan.vatFallback) await setVatBus(ctx, 'invoice', s(inv.number), FALLBACK_VAT_BUS);
       await copyLines(ctx, h.id, base, 'salesInvoiceLines', l => {
         const p = bySeq.get(n(l.sequence));

@@ -168,7 +168,7 @@ export async function salesHeaderServices(ctx: BcContext, kind: 'invoice' | 'cre
   return list.filter(n => /^sales_?(invoice|cr(edit)?_?memo)/i.test(n) && own.test(n) && !/line|posted|archiv/i.test(n));
 }
 
-async function ignoreCustomQty(ctx: BcContext, kind: 'invoice' | 'credit', no: string) {
+export async function ignoreCustomQty(ctx: BcContext, kind: 'invoice' | 'credit', no: string) {
   const tried: string[] = [];
   for (const name of await salesHeaderServices(ctx, kind)) {
     const base = `${ctx.odataCompanyBase}/${name}`;
