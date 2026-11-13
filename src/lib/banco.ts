@@ -12,6 +12,8 @@ import * as XLSX from 'xlsx';
 export type Movement = {
   idx: number; date: string; valueDate: string; text: string; purpose: string; name: string; iban: string;
   endToEnd: string; amount: number; pending: boolean; account: string;
+  // Saldo de la cuenta tras el movimiento, si el extracto lo trae (columna Saldo / Kontostand)
+  balance?: number;
   // Pago colectivo (Acrevis "Belast. E-Banking (3 Transaktionen)" y debajo una fila por pago, "1. Westhive…"): el detalle
   // lleva el idx de la fila del total
   group?: number;
@@ -32,6 +34,8 @@ export type MovementResult = Movement & {
   matched: { docNo: string; date: string; description: string; balType: string; balNo: string; amount: number }[];
   suggestion: Suggestion | null;
   doubtful?: boolean;
+  // Sin movimiento de banco que cuadre, pero BC tiene el mismo saldo que el extracto en una fecha posterior o igual
+  byBalance?: boolean;
 };
 export type OpenEntry = { side: 'Customer' | 'Vendor'; no: string; name: string; docType: string; docNo: string; extDocNo: string; remaining: number };
 export type Party = { side: 'Customer' | 'Vendor'; no: string; name: string };
@@ -107,6 +111,7 @@ const COLUMNS = {
   debit: ['cargo', 'cargos', 'debe', 'soll', 'debit', 'ausgang', 'belastung', 'lastschrift'],
   credit: ['abono', 'abonos', 'haber', 'haben', 'credit', 'eingang', 'gutschrift'],
   info: ['info', 'estado', 'status'],
+  balance: ['saldo', 'kontostand', 'saldo nach buchung', 'balance', 'running balance'],
 };
 const normHead = (v: unknown) => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[:*]+$/, '').replace(/\s+/g, ' ').trim();
 
@@ -143,6 +148,7 @@ function parseBankRows(rows: unknown[][]): Movement[] {
     if (part) lines.splice(0, 1, '', part[1]);
     const multi = lines.length > 1;
     const amount = cols.amount >= 0 ? cellNumber(row[cols.amount]) : (cellNumber(row[cols.credit]) || 0) - Math.abs(cellNumber(row[cols.debit]) || 0);
+    const balance = cols.balance >= 0 ? cellNumber(row[cols.balance]) : NaN;
     const purpose = [get(row, cols.purpose), ...(multi ? lines.slice(1) : []), ...extras.map(j => get(row, j))].filter(Boolean).join(' ');
     return {
       idx, date: cellDate(row[cols.date]), valueDate: cellDate(row[cols.value]), text: multi ? lines[0] : get(row, cols.text),
@@ -150,6 +156,7 @@ function parseBankRows(rows: unknown[][]): Movement[] {
       iban: ownIban ? '' : get(row, cols.iban).replace(/\s/g, '').toUpperCase(),
       endToEnd: get(row, cols.e2e), amount, pending: /vorgemerkt|pendiente/i.test(get(row, cols.info)),
       account: (get(row, cols.account) || ownIban || above).replace(/\s/g, '').toUpperCase(),
+      ...(Number.isFinite(balance) ? { balance } : {}),
     };
   }).filter(m => m.date && Number.isFinite(m.amount) && m.amount !== 0).map((m, idx) => ({ ...m, idx }))
     .map((m, i, all) => {
@@ -208,6 +215,33 @@ export async function bankLedgerEntries(ctx: BcContext, bankNo: string, from: st
     entryNo: r.Entry_No, date: r.Posting_Date, docNo: String(r.Document_No || ''), description: String(r.Description || ''),
     amount: Number(r.Amount) || 0, balType: String(r.Bal_Account_Type || ''), balNo: String(r.Bal_Account_No || ''), reversed: !!r.Reversed,
   }));
+}
+
+// Saldo de la cuenta en BC antes de una fecha (suma de todos sus movimientos anteriores)
+export async function bankBalanceBefore(ctx: BcContext, bankNo: string, date: string): Promise<number> {
+  const rows = await bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Bank_Account_Ledger_Entries_Excel`, {
+    $filter: `Bank_Account_No eq '${q(bankNo)}' and Posting_Date lt ${date}`, $select: 'Amount',
+  }), ctx.token);
+  return rows.reduce((t: number, r: any) => t + (Number(r.Amount) || 0), 0);
+}
+
+// Cuadre por saldo: la última fecha del extracto en la que el saldo del banco (al cierre del día) es igual al de BC.
+// Hasta esa fecha todo está registrado en BC, aunque sea con otra fecha, otro importe o agrupado.
+// history: todos los movimientos de BC desde start (incluidos los anulados, que se compensan con su anulación)
+export function balanceCutoff(movements: Movement[], history: LedgerEntry[], opening: number, start: string) {
+  const withBal = movements.filter(m => m.balance != null && !m.pending);
+  if (!withBal.length) return null;
+  // Orden cronológico (los extractos suelen venir del más nuevo al más antiguo)
+  const chrono = movements[0].date > movements[movements.length - 1].date ? [...withBal].reverse() : withBal;
+  const eod = new Map<string, number>();
+  for (const m of chrono) eod.set(m.date, m.balance!);
+  const sorted = [...history].sort((a, b) => a.date.localeCompare(b.date));
+  const bcAt = (d: string) => r2(opening + sorted.filter(e => e.date <= d).reduce((t, e) => t + e.amount, 0));
+  const dates = Array.from(eod.keys()).filter(d => d >= start).sort().reverse();
+  if (!dates.length) return null;
+  const last = { date: dates[0], bank: r2(eod.get(dates[0])!), bc: bcAt(dates[0]) };
+  const until = dates.find(d => cents(eod.get(d)!) === cents(bcAt(d)));
+  return { until: until || '', balance: until ? r2(eod.get(until)!) : 0, last };
 }
 
 export async function openEntries(ctx: BcContext): Promise<OpenEntry[]> {

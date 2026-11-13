@@ -50,7 +50,7 @@ export default function BancoPage() {
   const [journalCode, setJournalCode] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
-  const [info, setInfo] = useState<{ warning: string; entries: number; from: string; held: { date: string; valueDate: string; name: string; purpose: string; amount: number }[] } | null>(null);
+  const [info, setInfo] = useState<{ warning: string; entries: number; from: string; cutoff: { until: string; balance: number; last: { date: string; bank: number; bc: number } } | null; held: { date: string; valueDate: string; name: string; purpose: string; amount: number }[] } | null>(null);
   const [filter, setFilter] = useState<Filter>('new');
   const [loading, setLoading] = useState('');
   const [error, setError] = useState('');
@@ -124,7 +124,7 @@ export default function BancoPage() {
       }
       const d = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
       if (!res.ok) throw new Error(d.error || 'Error al analizar el extracto');
-      setInfo({ warning: d.warning, entries: d.entries, from: d.from, held: d.held || [] });
+      setInfo({ warning: d.warning, entries: d.entries, from: d.from, cutoff: d.cutoff || null, held: d.held || [] });
       setAmazonInfo(d.amazon || null);
       setRows(d.movements.map((m: MovementResult) => {
         const row: Row = { ...m, selected: false, documentNo: m.suggestion?.documentNo || '', lines: m.suggestion?.lines.map(l => ({ ...l })) || [] };
@@ -274,6 +274,10 @@ export default function BancoPage() {
               <p className="text-xs text-gray-500">
                 Cuadrado con {info?.entries} Bank Ledger Entries de {bankNo} desde el {info && fdate(info.from)}
                 {journalCode ? ` y con las líneas pendientes del lote ${journalCode}` : ''}.
+                {info?.cutoff?.until && <> Saldo de BC = extracto hasta el <b>{fdate(info.cutoff.until)}</b> ({fmt(info.cutoff.balance)}): lo anterior se da por registrado.</>}
+                {info?.cutoff && info.cutoff.last.date !== info.cutoff.until && (
+                  <span className="text-amber-700"> Al {fdate(info.cutoff.last.date)}: extracto {fmt(info.cutoff.last.bank)}, BC {fmt(info.cutoff.last.bc)} (dif. {fmt(info.cutoff.last.bank - info.cutoff.last.bc)}).</span>
+                )}
               </p>
               {filter === 'new' && counts.new > 0 && (
                 <button onClick={() => setRows(rs => { const all = rs.filter(r => r.status === 'new').every(r => r.selected); return rs.map(r => (r.status === 'new' ? { ...r, selected: !all } : r)); })}
@@ -311,6 +315,7 @@ export default function BancoPage() {
                         {r.status !== 'new' ? (
                           <div className="space-y-0.5 text-xs text-gray-600">
                             {r.status === 'batch' && <p className="font-semibold text-sky-700">En el lote {journalCode}, sin registrar</p>}
+                            {r.byBalance && <p className="text-emerald-700">Cuadrado por saldo: BC tiene el mismo saldo que el banco el {info?.cutoff && fdate(info.cutoff.until)} (registrado con otra fecha, importe o agrupado)</p>}
                             {r.matched.map((e, i) => (
                               <p key={i}>{e.docNo} · {fdate(e.date)} · {e.balType ? `${e.balType} ${e.balNo} · ` : ''}{e.description}{r.matched.length > 1 ? ` · ${fmt(e.amount)}` : ''}</p>
                             ))}

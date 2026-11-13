@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import prisma from '@/lib/prisma';
 import { bcFetchAll, getBcContext, odataUrl } from '@/lib/bcClient';
 import {
-  bankLedgerEntries, batchLines, journalByCode, matchBatch, matchMovements, openEntries, parseBankFile, collapseGroups, suggest,
+  bankBalanceBefore, balanceCutoff, bankLedgerEntries, batchLines, journalByCode, matchBatch, matchMovements, openEntries, parseBankFile, collapseGroups, suggest,
   type MovementResult, type Party,
 } from '@/lib/banco';
 
@@ -70,13 +70,17 @@ export async function POST(req: Request) {
     const journal = journalCode ? await journalByCode(ctx, journalCode) : null;
     // Para cuadrar, desde 10 días antes del extracto; para sugerir, los últimos 12 meses (o desde el extracto si es anterior)
     const yearAgo = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
-    const [history, open, inBatch, customers, vendors] = await Promise.all([
-      bankLedgerEntries(ctx, bankNo, from < yearAgo ? from : yearAgo),
+    const start = from < yearAgo ? from : yearAgo;
+    const [history, open, inBatch, customers, vendors, opening] = await Promise.all([
+      bankLedgerEntries(ctx, bankNo, start),
       openEntries(ctx).catch(() => []),
       journal ? batchLines(ctx, journal.id, bankNo) : Promise.resolve([]),
       prisma.customer.findMany({ where: { companyId }, select: { bcId: true, name: true } }),
       prisma.vendor.findMany({ where: { companyId }, select: { bcId: true, name: true } }),
+      bankBalanceBefore(ctx, bankNo, start).catch(() => null),
     ]);
+    // Si el extracto trae saldo: hasta la última fecha en que el saldo de BC es igual, no hay nada que registrar
+    const cutoff = opening == null ? null : balanceCutoff(parsed, history, opening, start);
     const parties: Party[] = [
       ...customers.filter(c => c.bcId).map(c => ({ side: 'Customer' as const, no: c.bcId!, name: c.name })),
       ...vendors.filter(v => v.bcId).map(v => ({ side: 'Vendor' as const, no: v.bcId!, name: v.name })),
@@ -96,6 +100,7 @@ export async function POST(req: Request) {
       if (es) return { ...m, status: 'posted', matched: es.map(e => ({ docNo: e.docNo, date: e.date, description: e.description, balType: e.balType, balNo: e.balNo, amount: e.amount })), suggestion: null };
       const b = batched.get(m.idx);
       if (b) return { ...m, status: 'batch', matched: [{ docNo: b.docNo, date: b.date, description: b.description, balType: '', balNo: '', amount: b.bankAmount }], suggestion: null };
+      if (cutoff?.until && m.date <= cutoff.until) return { ...m, status: 'posted', matched: [], suggestion: null, byBalance: true };
       const s = suggestions.get(m.idx) || null;
       // Movimientos de banco sin cuadrar de la misma cuenta y fechas cercanas: puede que ya esté registrado con otro importe
       const accounts = new Set(s?.lines.map(l => l.accountNo).filter(Boolean));
@@ -112,7 +117,7 @@ export async function POST(req: Request) {
     const warning = bankIban && fileAccount && bankIban !== fileAccount ? `El extracto es de la cuenta ${fileAccount} y la cuenta ${bankNo} de BC tiene el IBAN ${bankIban}.` : '';
 
     return NextResponse.json({
-      bankNo, journalCode: journal?.code || '', from, warning, entries: entries.length, movements: results,
+      bankNo, journalCode: journal?.code || '', from, warning, cutoff, entries: entries.length, movements: results,
       held: held.map(m => ({ date: m.date, valueDate: m.valueDate, name: m.name, purpose: m.purpose, amount: m.amount })),
     });
   } catch (error: any) {
