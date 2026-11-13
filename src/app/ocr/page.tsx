@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, Eye, EyeOff, FileText, Paperclip, Plus, RefreshCw, ScanText, Search, Trash2, Upload, X } from 'lucide-react';
 import DocPdfLink from '@/components/DocPdfLink';
+import FeedbackButton, { sendFeedback } from '@/components/FeedbackButton';
 import { useCompany } from '@/contexts/CompanyContext';
 import { ACCEPT, droppedFiles, expandFiles, isPdf, pickInvoice } from './emailFiles';
 import { ocrPdf } from './tesseract';
@@ -38,6 +39,25 @@ type Attachment = { file: File; target: string; done?: string; error?: string };
 type Row = { id: number; invoice: File | null; attachments: File[] };
 const emptyRow = (): Row => ({ id: Date.now() + Math.random(), invoice: null, attachments: [] });
 
+// Lo que el usuario cambió de la propuesta al enviarla a BC (feedback automático; sin las descripciones, que se
+// retocan a menudo sin que la propuesta esté mal)
+function formChanges(detected: string | undefined, d: Doc, sent: Form): string[] {
+  const out: string[] = [];
+  if (detected !== undefined && detected !== (d.vendor?.number || '')) out.push(`Proveedor: propuesto ${detected || '(ninguno)'} → enviado ${d.vendor?.number} ${d.vendor?.name}`);
+  const p = toForm(d.suggestion);
+  const fields: [keyof Form, string][] = [['invoiceNo', 'Nº factura'], ['invoiceDate', 'Fecha factura'], ['dueDate', 'Vencimiento'], ['vatBusPostingGroup', 'VAT Bus. Posting Group'], ['currency', 'Divisa']];
+  for (const [k, label] of fields) if (String(p[k] || '').trim() !== String(sent[k] || '').trim()) out.push(`${label}: propuesto "${p[k] || ''}" → enviado "${sent[k] || ''}"`);
+  const fmtLine = (l: FormLine) => `${l.lineType} ${l.number || '—'} · ${toNum(l.quantity)} × ${toNum(l.unitCost)} · ${l.taxCode || '—'}`;
+  const n = Math.max(p.lines.length, sent.lines.length);
+  for (let i = 0; i < n; i++) {
+    const a = p.lines[i], b = sent.lines[i];
+    if (!a) out.push(`Línea ${i + 1} añadida: ${fmtLine(b)}`);
+    else if (!b) out.push(`Línea ${i + 1} quitada: ${fmtLine(a)}`);
+    else if (fmtLine(a) !== fmtLine(b)) out.push(`Línea ${i + 1}: propuesta ${fmtLine(a)} → enviada ${fmtLine(b)}`);
+  }
+  return out;
+}
+
 const toForm = (s: Suggestion | null): Form => ({
   invoiceNo: s?.invoiceNo || '', invoiceDate: s?.invoiceDate || '', postingDate: s?.postingDate || '', dueDate: s?.dueDate || '',
   postingDescription: s?.postingDescription || '', vatBusPostingGroup: s?.vatBusPostingGroup || '', currency: s?.currency || '',
@@ -63,6 +83,8 @@ export default function OcrPage() {
 
   // Texto leído con Tesseract de cada PDF sin texto (para no volver a leerlo al cambiar de proveedor)
   const ocrTexts = useRef<Record<string, string>>({});
+  // Proveedor reconocido en la primera lectura de cada PDF (para el feedback si se cambia a mano)
+  const detected = useRef<Record<string, string>>({});
   // Un PDF por llamada (límite de 4,5 MB por petición en Vercel), dos a la vez. Si el PDF no trae texto (captura,
   // escaneo), se lee la imagen con Tesseract aquí y se manda otra vez con el texto
   const parse = async (file: File, vendor?: string) => {
@@ -84,6 +106,7 @@ export default function OcrPage() {
         ocrTexts.current[file.name] = await ocrPdf(file).catch(() => '');
         json = await post(ocrTexts.current[file.name]);
       }
+      if (!vendor && detected.current[file.name] == null) detected.current[file.name] = json.vendor?.number || '';
       setDocs(l => l.map(d => (d.file === file.name ? { ...json, file: file.name, loading: false } : d)));
       setForms(f => ({ ...f, [file.name]: toForm(json.suggestion) }));
       setStatus(s => ({ ...s, [file.name]: {} }));
@@ -202,6 +225,12 @@ export default function OcrPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Error al crear la factura');
       setStatus(s => ({ ...s, [d.file]: { created: json, warnings: json.warnings } }));
+      // Feedback automático: lo que se cambió de la propuesta (para corregir la lógica del OCR)
+      const changes = formChanges(detected.current[d.file], d, f);
+      if (changes.length) sendFeedback({
+        area: 'ocr', kind: 'auto', title: `${d.file} · ${d.vendor.number} ${d.vendor.name} → ${json.no}`, changes, pdf,
+        context: { file: d.file, detectedVendor: detected.current[d.file], vendor: d.vendor, created: json.no, suggestion: d.suggestion, sent: f, warnings: d.warnings },
+      }).catch(() => { /* el feedback no impide crear la factura */ });
       await uploadAttachments(d.file, json.id);
       setSelected(prev => { const n = new Set(prev); n.delete(d.file); return n; });
     } catch (e: any) {
@@ -355,6 +384,13 @@ function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRem
         <button onClick={togglePdf} className={`${s ? '' : 'ml-auto '}inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg border ${pdfUrl ? 'border-indigo-300 bg-indigo-50 text-indigo-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}>
           {pdfUrl ? <EyeOff size={14} /> : <Eye size={14} />} {pdfUrl ? 'Ocultar PDF' : 'Ver PDF'}
         </button>
+      )}
+      {!d.loading && (
+        <FeedbackButton build={() => ({
+          area: 'ocr', title: `${d.file} · ${d.vendor ? `${d.vendor.number} ${d.vendor.name}` : 'proveedor sin reconocer'}`, pdf,
+          changes: f ? formChanges(undefined, d, f) : [],
+          context: { file: d.file, vendor: d.vendor, candidates: d.candidates.slice(0, 5), suggestion: d.suggestion, current: f, warnings: d.warnings, existing: d.existing, error: d.error, created: st.created?.no },
+        })} />
       )}
       <button onClick={onRemove} title="Quitar de la lista (no se envía a BC)" className={`${s || pdf ? '' : 'ml-auto '}p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50`}><X size={16} /></button>
     </div>

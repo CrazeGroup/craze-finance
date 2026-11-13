@@ -91,7 +91,8 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
   if (pathname === '/login') return null;
 
   const hasPermission = (module: string) => {
-    return permissions.includes('configuracion') || permissions.includes('admin') || permissions.includes(module);
+    // 'ocr|banco': con cualquiera de los dos
+    return permissions.includes('configuracion') || permissions.includes('admin') || module.split('|').some(m => permissions.includes(m));
   };
 
   const baseItems: MenuItem[] = [
@@ -118,6 +119,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
     { href: '/notas-compra', label: 'Notas de compra', module: 'notas_compra' },
     { href: '/aduanas', label: 'Aduanas', module: 'aduanas' },
     { href: '/ocr', label: 'OCR', module: 'ocr' },
+    { href: '/feedback', label: 'Feedback OCR / Banco', module: 'ocr|banco' },
     // Solo para Craze Entertainment
     ...(selectedCompany === 'Craze Entertainment' ? [
       { href: '/magazines', label: 'D-FORCE/MF', module: 'dforce' },

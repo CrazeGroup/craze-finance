@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, ChevronDown, FileText, Loader2, Plus, Send, Trash2, Upload } from 'lucide-react';
 import { companyLabel, useCompany } from '@/contexts/CompanyContext';
+import FeedbackButton, { sendFeedback } from '@/components/FeedbackButton';
 import type { AccountType, MovementResult, SuggestedLine } from '@/lib/banco';
 
 // BANCO: sube el extracto del banco (CSV o Excel), cuadra los movimientos con las Bank Account Ledger Entries de la cuenta elegida
@@ -19,6 +20,17 @@ const TYPES: { value: AccountType; label: string }[] = [
 const fmt = (v: number) => v.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fdate = (d: string) => d.split('-').reverse().join('.');
 const cents = (v: number) => Math.round(v * 100);
+// Feedback: la línea propuesta y la enviada, para ver qué se ha corregido
+const lineText = (l: SuggestedLine) => `${l.accountType || '—'} ${l.accountNo || '—'}${l.appliesToDocNo ? ` liq. ${l.appliesToDocNo}` : ''} ${fmt(l.amount)}`;
+const rowChange = (r: Row) => {
+  const proposed = (r.suggestion?.lines || []).filter(l => l.accountNo);
+  if (!proposed.length) return null;
+  const a = proposed.map(lineText).join(' + '), b = r.lines.map(lineText).join(' + ');
+  return a === b ? null : `${fdate(r.date)} · ${(r.name || r.purpose).slice(0, 60)} · ${fmt(r.amount)}: propuesto ${a} (${r.suggestion?.source || 'sin origen'}) → enviado ${b}`;
+};
+const movementContext = (r: Row) => ({
+  date: r.date, name: r.name, purpose: r.purpose, text: r.text, iban: r.iban, amount: r.amount, suggestion: r.suggestion, doubtful: r.doubtful, sent: r.lines, documentNo: r.documentNo,
+});
 const linesOk = (r: Row) => r.lines.length > 0 && r.lines.every(l => l.accountType && l.accountNo.trim() && l.amount)
   && cents(r.lines.reduce((t, l) => t + l.amount, 0)) === cents(r.amount);
 
@@ -152,6 +164,12 @@ export default function BancoPage() {
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'Error al enviar a BC');
       setSent(d);
+      // Feedback automático: los movimientos en los que se cambió la cuenta o el reparto propuestos
+      const changed = toSend.filter(r => rowChange(r));
+      if (changed.length) sendFeedback({
+        area: 'banco', kind: 'auto', title: `${bankNo} → lote ${journalCode}: ${changed.length} de ${toSend.length} movimientos corregidos`,
+        changes: changed.map(r => rowChange(r)!), context: { bankNo, journalCode, movements: changed.map(movementContext) },
+      }).catch(() => { /* el feedback no impide el envío */ });
       const done = new Set(toSend.map(r => r.idx));
       setRows(rs => rs.map(r => (done.has(r.idx) ? { ...r, status: 'batch', selected: false } : r)));
     } catch (e: any) {
@@ -298,7 +316,7 @@ export default function BancoPage() {
                             ))}
                           </div>
                         ) : (
-                          <LinesEditor row={r} input={input} names={names} lists={accountLists} setLine={(i, p) => setLine(r.idx, i, p)}
+                          <LinesEditor row={r} bankNo={bankNo} input={input} names={names} lists={accountLists} setLine={(i, p) => setLine(r.idx, i, p)}
                             setDoc={v => update(r.idx, x => ({ ...x, documentNo: v }))}
                             addLine={() => update(r.idx, x => ({ ...x, lines: [...x.lines, { accountType: x.lines[0]?.accountType || '', accountNo: x.lines[0]?.accountNo || '', accountName: '', description: x.lines[0]?.description || '', amount: Math.round((x.amount - x.lines.reduce((t, l) => t + l.amount, 0)) * 100) / 100 }] }))}
                             removeLine={i => update(r.idx, x => ({ ...x, lines: x.lines.filter((_, j) => j !== i) }))} />
@@ -330,8 +348,8 @@ export default function BancoPage() {
   );
 }
 
-function LinesEditor({ row, input, names, lists, setLine, setDoc, addLine, removeLine }: {
-  row: Row; input: string; names: Record<string, string>; lists: Record<string, [string, string][]>; setLine: (i: number, patch: Partial<SuggestedLine>) => void; setDoc: (v: string) => void;
+function LinesEditor({ row, bankNo, input, names, lists, setLine, setDoc, addLine, removeLine }: {
+  row: Row; bankNo: string; input: string; names: Record<string, string>; lists: Record<string, [string, string][]>; setLine: (i: number, patch: Partial<SuggestedLine>) => void; setDoc: (v: string) => void;
   addLine: () => void; removeLine: (i: number) => void;
 }) {
   const s = row.suggestion;
@@ -368,6 +386,10 @@ function LinesEditor({ row, input, names, lists, setLine, setDoc, addLine, remov
         {s?.source && <span className="bg-gray-100 text-gray-600 rounded px-1.5 py-0.5 font-semibold">{s.source}</span>}
         {s?.note && <span className={row.doubtful ? 'text-amber-700 font-semibold' : 'text-gray-500'}>{s.note}</span>}
         {cents(diff) !== 0 && <span className="text-red-700 font-semibold">Faltan {fmt(diff)}</span>}
+        <FeedbackButton className="ml-auto" build={() => ({
+          area: 'banco', title: `${bankNo} · ${fdate(row.date)} · ${(row.name || row.purpose).slice(0, 60)} · ${fmt(row.amount)}`,
+          changes: [rowChange(row)].filter((c): c is string => !!c), context: { bankNo, movement: movementContext(row) },
+        })} />
       </div>
     </div>
   );
