@@ -73,6 +73,20 @@ export async function planRebill(ctx: BcContext, company: string, no: string, ma
   };
 }
 
+// POST quitando los campos que esa entidad de v2 no tiene (los abonos no llevan dirección de envío…)
+async function postPruned(ctx: BcContext, url: string, body: Record<string, unknown>) {
+  const b = { ...body };
+  for (let i = 0; i < 15; i++) {
+    try { return await bcRequest('POST', url, ctx.token, b); } catch (e: any) {
+      const m = String(e?.message).match(/property '(\w+)' does not exist|Control '(\w+)' is read-only/);
+      const f = m?.[1] || m?.[2];
+      if (!f || !(f in b)) throw e;
+      delete b[f];
+    }
+  }
+  throw new Error('No se ha podido crear el documento');
+}
+
 // Copia las líneas de la factura original en un documento nuevo (price: precio nuevo por línea, o el original)
 async function copyLines(ctx: BcContext, srcId: string, base: string, linesEntity: string, price: (l: any) => { unitPrice: number; discountPercent: number }) {
   const auto = await bcRequest('GET', `${base}/${linesEntity}?$select=id`, ctx.token);
@@ -88,9 +102,18 @@ async function copyLines(ctx: BcContext, srcId: string, base: string, linesEntit
       if (s(l.taxCode)) body.taxCode = s(l.taxCode);
       if (s(l.locationId) && s(l.locationId) !== '00000000-0000-0000-0000-000000000000') body.locationId = s(l.locationId);
     }
-    await bcRequest('POST', `${base}/${linesEntity}`, ctx.token, body);
+    try {
+      await bcRequest('POST', `${base}/${linesEntity}`, ctx.token, body);
+    } catch (e: any) {
+      // Grupo de IVA de la factura que ya no existe (NO VAT): el que BC ponga por defecto al artículo
+      if (!body.taxCode || !/VAT Prod\. Posting Group/i.test(String(e?.message))) throw e;
+      delete body.taxCode;
+      await bcRequest('POST', `${base}/${linesEntity}`, ctx.token, body);
+      notes.add(`el grupo de IVA ${s(l.taxCode)} de la factura original ya no existe: las líneas llevan el IVA por defecto del artículo, revísalo`);
+    }
   }
 }
+const notes = new Set<string>();
 const headerOf = (h: any) => {
   const head: Record<string, unknown> = {};
   for (const f of HEADER_FIELDS) if (h[f] !== undefined && h[f] !== null && h[f] !== '' && h[f] !== '00000000-0000-0000-0000-000000000000') head[f] = h[f];
@@ -118,7 +141,7 @@ export async function runRebill(ctx: BcContext, company: string, no: string, mar
       } catch (e: any) {
         // Factura ya cerrada (cobrada / liquidada): BC no hace el abono corrector; se crea una copia del abono sin liquidar
         if (!/invoice is closed/i.test(String(e?.message))) throw e;
-        const cm = await bcRequest('POST', `${ctx.apiBase}/salesCreditMemos`, ctx.token, headerOf(h));
+        const cm = await postPruned(ctx, `${ctx.apiBase}/salesCreditMemos`, headerOf(h));
         const base = `${ctx.apiBase}/salesCreditMemos(${cm.id})`;
         try {
           await copyLines(ctx, h.id, base, 'salesCreditMemoLines', l => ({ unitPrice: n(l.unitPrice), discountPercent: n(l.discountPercent) }));
@@ -132,7 +155,7 @@ export async function runRebill(ctx: BcContext, company: string, no: string, mar
 
   // 2) Factura nueva con el precio = coste + markup
   if (!done.invoice) {
-    const inv = await bcRequest('POST', `${ctx.apiBase}/salesInvoices`, ctx.token, headerOf(h));
+    const inv = await postPruned(ctx, `${ctx.apiBase}/salesInvoices`, headerOf(h));
     const base = `${ctx.apiBase}/salesInvoices(${inv.id})`;
     const bySeq = new Map(plan.lines.map(l => [l.sequence, l]));
     try {
@@ -147,5 +170,7 @@ export async function runRebill(ctx: BcContext, company: string, no: string, mar
     done.invoice = s(inv.number);
     await writeSetting(key, done);
   }
+  warnings.push(...[...notes].map(x => `${no}: ${x}.`));
+  notes.clear();
   return { ...plan, done, warnings };
 }
