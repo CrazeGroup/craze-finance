@@ -247,6 +247,10 @@ export default function OcrPage() {
   const toggle = (file: string) => setSelected(prev => { const n = new Set(prev); if (n.has(file)) n.delete(file); else n.add(file); return n; });
   const valid = docs.filter(ready);
   const allSelected = valid.length > 0 && valid.every(d => selected.has(d.file));
+  // Desmarcar de una vez las marcadas que ya existen en BC o que traen avisos
+  const selectedExisting = toSend.filter(d => d.existing.length);
+  const selectedWarned = toSend.filter(d => d.warnings.length || status[d.file]?.error);
+  const unselect = (list: Doc[]) => setSelected(prev => { const n = new Set(prev); for (const d of list) n.delete(d.file); return n; });
 
   return (
     <div className="min-h-screen bg-[#F3F4F7] pb-24">
@@ -340,6 +344,18 @@ export default function OcrPage() {
                   <input type="checkbox" checked={allSelected} onChange={() => setSelected(allSelected ? new Set() : new Set(valid.map(d => d.file)))} />
                   Marcar todas
                 </label>
+                {selectedExisting.length > 0 && (
+                  <button onClick={() => unselect(selectedExisting)} title={selectedExisting.map(d => forms[d.file]?.invoiceNo || d.file).join(', ')}
+                    className="text-sm font-semibold text-amber-800 border border-amber-200 bg-amber-50 rounded-lg px-3 py-2 hover:bg-amber-100">
+                    Desmarcar las que ya existen en BC ({selectedExisting.length})
+                  </button>
+                )}
+                {selectedWarned.length > 0 && (
+                  <button onClick={() => unselect(selectedWarned)} title={selectedWarned.map(d => d.file).join(', ')}
+                    className="text-sm font-semibold text-gray-700 border border-gray-300 rounded-lg px-3 py-2 hover:bg-gray-50">
+                    Desmarcar las que tienen avisos ({selectedWarned.length})
+                  </button>
+                )}
                 <button onClick={createSelected} disabled={!toSend.length || Object.values(status).some(s => s.saving)}
                   className="inline-flex items-center gap-2 bg-indigo-600 text-white text-sm font-semibold px-4 py-2.5 rounded-lg hover:bg-indigo-700 disabled:opacity-40">
                   Enviar seleccionadas a BC ({toSend.length})
