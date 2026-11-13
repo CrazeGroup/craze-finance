@@ -44,14 +44,18 @@ export async function planIc(ce: BcContext, gm: BcContext, input: IcInput): Prom
     .filter((l: any) => s(l.type) === 'Item').sort((a: any, b: any) => n(a.lineNo) - n(b.lineNo));
   for (const t of tpl) if (!s(t.jobNo) || !s(t.jobTaskNo)) issues.push(`${input.purchaseInvoice} ${s(t.no)}: sin Project No. o Project Task No.`);
   const [cm, inv] = await Promise.all([gmbhDoc(gm, 'cm', input.gmbhCreditMemo), gmbhDoc(gm, 'inv', input.gmbhInvoice)]);
-  const build = (lines: any[], doc: string): PlanLine[] => lines.map(l => {
+  // copyTpl: el abono copia el importe de la línea de la factura de compra que anula (si se subió mal, se anula tal cual
+  // y la factura nueva deja el importe bueno); la factura nueva, el de GmbH
+  const build = (lines: any[], doc: string, copyTpl = false): PlanLine[] => lines.map(l => {
     const foil = isFoilbag(l);
     const t = tpl.find((x: any) => (foil ? s(x.no) === FOILBAG_ITEM : s(x.no) === s(l.no)));
     if (!t) issues.push(`${doc} ${s(l.no)}: no hay línea equivalente en ${input.purchaseInvoice}`);
-    const amount = n(l.amount);
+    const useTpl = copyTpl && t;
+    const amount = useTpl ? n(t.amount) : n(l.amount);
     return {
-      no: foil ? FOILBAG_ITEM : s(l.no), description: s(t?.description) || s(l.description), qty: foil ? 1 : n(l.quantity),
-      unitCost: foil ? amount : n(l.unitPrice) * (1 - n(l.lineDiscount) / 100), amount,
+      no: foil ? FOILBAG_ITEM : s(l.no), description: s(t?.description) || s(l.description),
+      qty: useTpl ? n(t.quantity) : foil ? 1 : n(l.quantity),
+      unitCost: useTpl ? n(t.directUnitCost) * (1 - n(t.lineDiscount) / 100) : foil ? amount : n(l.unitPrice) * (1 - n(l.lineDiscount) / 100), amount,
       locationCode: s(t?.locationCode), taxCode: s(t?.vatProdPostingGroup), project: s(t?.jobNo), task: s(t?.jobTaskNo), uom: foil ? '' : s(t?.unitOfMeasureCode),
     };
   });
@@ -59,7 +63,7 @@ export async function planIc(ce: BcContext, gm: BcContext, input: IcInput): Prom
     bcFetchAll(odataUrl(`${ce.apiBase}/purchaseCreditMemos`, { $filter: `vendorCreditMemoNumber eq '${q(input.gmbhCreditMemo)}'`, $select: 'number' }), ce.token),
     bcFetchAll(odataUrl(`${ce.apiBase}/purchaseInvoices`, { $filter: `vendorInvoiceNumber eq '${q(input.gmbhInvoice)}'`, $select: 'number' }), ce.token),
   ]);
-  const cmLines = build(cm.lines, input.gmbhCreditMemo), invLines = build(inv.lines, input.gmbhInvoice);
+  const cmLines = build(cm.lines, input.gmbhCreditMemo, true), invLines = build(inv.lines, input.gmbhInvoice);
   const r2 = (v: number) => Math.round(v * 100) / 100;
   return {
     purchaseInvoice: input.purchaseInvoice, vendor: s(pi.vendorNumber), status: s(pi.status), applyTo: s(pi.status) === 'Open',
