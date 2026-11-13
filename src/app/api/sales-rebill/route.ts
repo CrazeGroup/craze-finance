@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { bcFetchAll, getBcContext, odataUrl } from '@/lib/bcClient';
-import { planRebill, restorePrices, runRebill, setOriginalCosts, setOriginalDates } from '@/lib/salesRebill';
+import { planRebill, restorePrices, runRebill, setApplFrom, setOriginalCosts, setOriginalDates } from '@/lib/salesRebill';
 import { readSetting } from '@/lib/reporting/cache';
 import { logAction } from '@/lib/logger';
 
@@ -30,6 +30,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ fixed: after });
     }
     // Fechas de la factura original en el abono y la factura nueva ya creados
+    if (body.fixAppl) {
+      const done = await readSetting<{ creditMemo?: string; invoice?: string }>(`rebill:${company}:${invoice}`, {});
+      const appl = await setApplFrom(ctx, invoice, done.creditMemo);
+      return NextResponse.json({ appl, costs: await setOriginalCosts(ctx, invoice, done) });
+    }
     if (body.fixCosts) {
       const done = await readSetting<{ creditMemo?: string; invoice?: string }>(`rebill:${company}:${invoice}`, {});
       return NextResponse.json({ costs: await setOriginalCosts(ctx, invoice, done) });

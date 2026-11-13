@@ -212,6 +212,35 @@ export async function setOriginalDates(ctx: BcContext, no: string, done: { credi
   return out;
 }
 
+// Appl.-from Item Entry de cada línea del abono = el movimiento de producto de la venta original (el abono corrector de
+// BC lo trae, pero se pierde al cambiar el IVA y no está en las copias de facturas cerradas): así el abono devuelve al
+// stock exactamente el coste de esa venta (FIFO) y el valor del inventario no cambia.
+export async function setApplFrom(ctx: BcContext, no: string, creditMemo?: string) {
+  if (!creditMemo) return [] as string[];
+  const ve = await bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/ValueEntries`, { $filter: `Document_No eq '${q(no)}'` }), ctx.token);
+  const entries = ve.filter((v: any) => n(v.Item_Ledger_Entry_No) && n(v.Item_Ledger_Entry_Quantity) < 0)
+    .map((v: any) => ({ item: s(v.Item_No), ile: n(v.Item_Ledger_Entry_No), qty: -n(v.Item_Ledger_Entry_Quantity) }));
+  const uniq = [...new Map(entries.map(e => [e.ile, e])).values()];
+  const out: string[] = [];
+  for (const name of (await salesHeaderServices(ctx, 'credit')).map(x => `${x}SalesLines`)) {
+    let rows: any[];
+    try { rows = (await odataGet(ctx, odataUrl(`${ctx.odataCompanyBase}/${name}`, { $filter: `Document_No eq '${q(creditMemo)}'` }))).value || []; } catch { continue; }
+    const pending = [...uniq];
+    for (const r of rows.filter((x: any) => s(x.No) && s(x.Type) === 'Item')) {
+      const i = pending.findIndex(e => e.item === s(r.No) && Math.abs(e.qty - n(r.Quantity)) < 1e-6);
+      if (i < 0) { out.push(`${creditMemo} ${r.No}: no encuentro el movimiento de la venta original`); continue; }
+      const e = pending.splice(i, 1)[0];
+      if (n(r.Appl_from_Item_Entry) === e.ile) continue;
+      try {
+        await bcRequest('PATCH', editUrl(ctx, r['@odata.editLink']), ctx.token, { Appl_from_Item_Entry: e.ile });
+        out.push(`${creditMemo} ${r.No}: Appl.-from Item Entry ${e.ile}`);
+      } catch (err: any) { out.push(`${creditMemo} ${r.No}: no se ha podido poner Appl.-from Item Entry ${e.ile} (${String(err?.message).replace(/^BC PATCH [^:]*: /, '').substring(0, 160)})`); }
+    }
+    return out;
+  }
+  return [`${creditMemo}: no hay página de líneas de abono publicada`];
+}
+
 // Unit Cost (LCY) de cada línea del abono y de la factura nueva = el de la factura original (BC pone el coste actual del
 // artículo, o el ajustado del movimiento liquidado). Se cambia por la página 43/44 publicada en OData (v2 no lo tiene).
 export async function setOriginalCosts(ctx: BcContext, no: string, done: { creditMemo?: string; invoice?: string }) {
@@ -315,6 +344,7 @@ export async function runRebill(ctx: BcContext, company: string, no: string, mar
     done.invoice = s(inv.number);
     await writeSetting(key, done);
   }
+  try { warnings.push(...(await setApplFrom(ctx, no, done.creditMemo)).filter(x => x.includes('no ')) ); } catch (e: any) { warnings.push(`${no}: no se ha podido enlazar el abono con la venta original (${String(e?.message).substring(0, 160)}).`); }
   try { warnings.push(...(await setOriginalCosts(ctx, no, done)).filter(x => x.includes('no se ha podido') || x.includes('no hay página'))); } catch (e: any) { warnings.push(`${no}: no se ha podido poner el coste unitario de la factura original (${String(e?.message).substring(0, 160)}).`); }
   try { await setOriginalDates(ctx, no, done); } catch (e: any) { warnings.push(`${no}: no se ha podido poner la fecha de la factura original (${String(e?.message).substring(0, 160)}).`); }
   warnings.push(...[...notes].map(x => `${no}: ${x}.`));
