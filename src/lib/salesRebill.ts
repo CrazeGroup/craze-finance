@@ -28,7 +28,7 @@ export type RebillPlan = {
 const HEADER_FIELDS = [
   'customerNumber', 'billToCustomerNumber', 'shipToName', 'shipToContact', 'shipToAddressLine1', 'shipToAddressLine2', 'shipToCity',
   'shipToCountry', 'shipToState', 'shipToPostCode', 'currencyCode', 'paymentTermsId', 'shipmentMethodId', 'salesperson',
-  'externalDocumentNumber', 'pricesIncludeTax', 'customerPurchaseOrderReference', 'phoneNumber', 'email',
+  'externalDocumentNumber', 'customerPurchaseOrderReference', 'phoneNumber', 'email',
 ];
 
 async function invoiceOf(ctx: BcContext, no: string) {
@@ -73,6 +73,30 @@ export async function planRebill(ctx: BcContext, company: string, no: string, ma
   };
 }
 
+// Copia las líneas de la factura original en un documento nuevo (price: precio nuevo por línea, o el original)
+async function copyLines(ctx: BcContext, srcId: string, base: string, linesEntity: string, price: (l: any) => { unitPrice: number; discountPercent: number }) {
+  const auto = await bcRequest('GET', `${base}/${linesEntity}?$select=id`, ctx.token);
+  for (const l of auto?.value || []) await bcRequest('DELETE', `${base}/${linesEntity}(${l.id})`, ctx.token);
+  const src = await bcFetchAll(`${ctx.apiBase}/salesInvoices(${srcId})/salesInvoiceLines`, ctx.token);
+  for (const l of src.sort((a: any, b: any) => n(a.sequence) - n(b.sequence))) {
+    const type = s(l.lineType);
+    const body: Record<string, unknown> = { lineType: type || 'Comment', description: s(l.description) };
+    if (s(l.description2)) body.description2 = s(l.description2);
+    if (type && type !== 'Comment') {
+      Object.assign(body, { lineObjectNumber: s(l.lineObjectNumber), quantity: n(l.quantity), ...price(l) });
+      if (s(l.unitOfMeasureCode)) body.unitOfMeasureCode = s(l.unitOfMeasureCode);
+      if (s(l.taxCode)) body.taxCode = s(l.taxCode);
+      if (s(l.locationId) && s(l.locationId) !== '00000000-0000-0000-0000-000000000000') body.locationId = s(l.locationId);
+    }
+    await bcRequest('POST', `${base}/${linesEntity}`, ctx.token, body);
+  }
+}
+const headerOf = (h: any) => {
+  const head: Record<string, unknown> = {};
+  for (const f of HEADER_FIELDS) if (h[f] !== undefined && h[f] !== null && h[f] !== '' && h[f] !== '00000000-0000-0000-0000-000000000000') head[f] = h[f];
+  return head;
+};
+
 export async function runRebill(ctx: BcContext, company: string, no: string, markup: number) {
   const plan = await planRebill(ctx, company, no, markup);
   const key = `rebill:${company}:${no}`;
@@ -87,41 +111,35 @@ export async function runRebill(ctx: BcContext, company: string, no: string, mar
       done.creditMemo = s(existing[0].number);
       warnings.push(`Ya había un abono sin registrar para ${no}: ${done.creditMemo}.`);
     } else {
-      await bcRequest('POST', `${ctx.apiBase}/salesInvoices(${h.id})/Microsoft.NAV.makeCorrectiveCreditMemo`, ctx.token);
-      const created = await bcFetchAll(odataUrl(`${ctx.apiBase}/salesCreditMemos`, { $filter: `invoiceNumber eq '${q(no)}' and status eq 'Draft'`, $select: 'number' }), ctx.token);
-      done.creditMemo = s(created[created.length - 1]?.number) || '(creado)';
+      try {
+        await bcRequest('POST', `${ctx.apiBase}/salesInvoices(${h.id})/Microsoft.NAV.makeCorrectiveCreditMemo`, ctx.token);
+        const created = await bcFetchAll(odataUrl(`${ctx.apiBase}/salesCreditMemos`, { $filter: `invoiceNumber eq '${q(no)}' and status eq 'Draft'`, $select: 'number' }), ctx.token);
+        done.creditMemo = s(created[created.length - 1]?.number) || '(creado)';
+      } catch (e: any) {
+        // Factura ya cerrada (cobrada / liquidada): BC no hace el abono corrector; se crea una copia del abono sin liquidar
+        if (!/invoice is closed/i.test(String(e?.message))) throw e;
+        const cm = await bcRequest('POST', `${ctx.apiBase}/salesCreditMemos`, ctx.token, headerOf(h));
+        const base = `${ctx.apiBase}/salesCreditMemos(${cm.id})`;
+        try {
+          await copyLines(ctx, h.id, base, 'salesCreditMemoLines', l => ({ unitPrice: n(l.unitPrice), discountPercent: n(l.discountPercent) }));
+        } catch (err) { await bcRequest('DELETE', base, ctx.token).catch(() => {}); throw err; }
+        done.creditMemo = s(cm.number);
+        warnings.push(`${no} ya está cerrada en BC: el abono ${done.creditMemo} es una copia sin liquidar contra la factura (aplícalo a mano si hace falta).`);
+      }
     }
     await writeSetting(key, done);
   }
 
   // 2) Factura nueva con el precio = coste + markup
   if (!done.invoice) {
-    const head: Record<string, unknown> = {};
-    for (const f of HEADER_FIELDS) if (h[f] !== undefined && h[f] !== null && h[f] !== '' && h[f] !== '00000000-0000-0000-0000-000000000000') head[f] = h[f];
-    const inv = await bcRequest('POST', `${ctx.apiBase}/salesInvoices`, ctx.token, head);
+    const inv = await bcRequest('POST', `${ctx.apiBase}/salesInvoices`, ctx.token, headerOf(h));
     const base = `${ctx.apiBase}/salesInvoices(${inv.id})`;
+    const bySeq = new Map(plan.lines.map(l => [l.sequence, l]));
     try {
-      // Fuera las líneas estándar que BC añade al poner el cliente
-      const auto = await bcRequest('GET', `${base}/salesInvoiceLines?$select=id`, ctx.token);
-      for (const l of auto?.value || []) await bcRequest('DELETE', `${base}/salesInvoiceLines(${l.id})`, ctx.token);
-      const src = await bcFetchAll(`${ctx.apiBase}/salesInvoices(${h.id})/salesInvoiceLines`, ctx.token);
-      const bySeq = new Map(plan.lines.map(l => [l.sequence, l]));
-      for (const l of src.sort((a: any, b: any) => n(a.sequence) - n(b.sequence))) {
+      await copyLines(ctx, h.id, base, 'salesInvoiceLines', l => {
         const p = bySeq.get(n(l.sequence));
-        const type = s(l.lineType);
-        const body: Record<string, unknown> = { lineType: type || 'Comment', description: s(l.description) };
-        if (s(l.description2)) body.description2 = s(l.description2);
-        if (type && type !== 'Comment') {
-          Object.assign(body, {
-            lineObjectNumber: s(l.lineObjectNumber), quantity: n(l.quantity),
-            unitPrice: p?.newPrice ?? n(l.unitPrice), discountPercent: p?.newPrice != null ? 0 : n(l.discountPercent),
-          });
-          if (s(l.unitOfMeasureCode)) body.unitOfMeasureCode = s(l.unitOfMeasureCode);
-          if (s(l.taxCode)) body.taxCode = s(l.taxCode);
-          if (s(l.locationId) && s(l.locationId) !== '00000000-0000-0000-0000-000000000000') body.locationId = s(l.locationId);
-        }
-        await bcRequest('POST', `${base}/salesInvoiceLines`, ctx.token, body);
-      }
+        return p?.newPrice != null ? { unitPrice: p.newPrice, discountPercent: 0 } : { unitPrice: n(l.unitPrice), discountPercent: n(l.discountPercent) };
+      });
     } catch (e) {
       await bcRequest('DELETE', base, ctx.token).catch(() => {});
       throw e;
