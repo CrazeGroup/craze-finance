@@ -74,7 +74,7 @@ async function createDoc(ce: BcContext, kind: 'cm' | 'inv', plan: IcPlan, piId: 
   const entity = kind === 'cm' ? 'purchaseCreditMemos' : 'purchaseInvoices';
   const linesEntity = kind === 'cm' ? 'purchaseCreditMemoLines' : 'purchaseInvoiceLines';
   const head = await bcRequest('POST', `${ce.apiBase}/${entity}`, ce.token, kind === 'cm'
-    ? { vendorNumber: plan.vendor, vendorCreditMemoNumber: d.vendorCrMemoNo || (d as any).vendorInvoiceNo, creditMemoDate: d.documentDate, postingDate: d.postingDate, ...(plan.applyTo ? { invoiceId: piId } : {}) }
+    ? { vendorNumber: plan.vendor, vendorCreditMemoNumber: (d as any).vendorCrMemoNo, creditMemoDate: d.documentDate, postingDate: d.postingDate, ...(plan.applyTo ? { invoiceId: piId } : {}) }
     : { vendorNumber: plan.vendor, vendorInvoiceNumber: (d as any).vendorInvoiceNo, invoiceDate: d.documentDate, postingDate: d.postingDate });
   const base = `${ce.apiBase}/${entity}(${head.id})`;
   const warnings: string[] = [];
