@@ -99,8 +99,9 @@ async function fixCosts(ce: BcContext, entity: string, linesEntity: string, id: 
 async function fixDocDate(ce: BcContext, entity: string, id: string, field: 'creditMemoDate' | 'invoiceDate', date: string, posting: string) {
   const h = await bcRequest('GET', `${ce.apiBase}/${entity}(${id})`, ce.token);
   // Entertainment no pone fecha de registro por defecto: se pone la del documento de GmbH (y después la del documento)
-  if (posting && s(h?.postingDate).substring(0, 10) !== posting) await bcRequest('PATCH', `${ce.apiBase}/${entity}(${id})`, ce.token, { postingDate: posting });
-  if (date && s(h?.[field]).substring(0, 10) !== date) await bcRequest('PATCH', `${ce.apiBase}/${entity}(${id})`, ce.token, { [field]: date });
+  let cur = h;
+  if (posting && s(h?.postingDate).substring(0, 10) !== posting) cur = await bcRequest('PATCH', `${ce.apiBase}/${entity}(${id})`, ce.token, { postingDate: posting });
+  if (date && s(cur?.[field]).substring(0, 10) !== date) await bcRequest('PATCH', `${ce.apiBase}/${entity}(${id})`, ce.token, { [field]: date });
 }
 
 async function createDoc(ce: BcContext, kind: 'cm' | 'inv', plan: IcPlan, piId: string) {
