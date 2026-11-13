@@ -212,6 +212,37 @@ export async function setOriginalDates(ctx: BcContext, no: string, done: { credi
   return out;
 }
 
+// Unit Cost (LCY) de cada línea del abono y de la factura nueva = el de la factura original (BC pone el coste actual del
+// artículo, o el ajustado del movimiento liquidado). Se cambia por la página 43/44 publicada en OData (v2 no lo tiene).
+export async function setOriginalCosts(ctx: BcContext, no: string, done: { creditMemo?: string; invoice?: string }) {
+  const orig = await bcFetchAll(odataUrl(`${ctx.customApiBase}/salesInvoiceLines`, { $filter: `documentNo eq '${q(no)}'` }), ctx.token);
+  const src = orig.filter((l: any) => s(l.type) === 'Item').sort((a: any, b: any) => n(a.lineNo) - n(b.lineNo));
+  const out: string[] = [];
+  for (const [kind, num] of [['credit', done.creditMemo], ['invoice', done.invoice]] as const) {
+    if (!num) continue;
+    const services = (await salesHeaderServices(ctx, kind)).map(x => `${x}SalesLines`);
+    let rows: any[] | null = null, svc = '';
+    for (const name of services) {
+      try { rows = (await odataGet(ctx, odataUrl(`${ctx.odataCompanyBase}/${name}`, { $filter: `Document_No eq '${q(num)}'` }))).value || []; svc = name; break; } catch { /* siguiente */ }
+    }
+    if (!rows) { out.push(`${num}: no hay página de líneas publicada`); continue; }
+    const pending = [...src];
+    for (const r of rows.filter((x: any) => s(x.No) && s(x.Type) === 'Item').sort((a: any, b: any) => n(a.Line_No) - n(b.Line_No))) {
+      const i = pending.findIndex((o: any) => s(o.no) === s(r.No) && Math.abs(n(o.quantity) - n(r.Quantity)) < 1e-6);
+      if (i < 0) continue;
+      const o = pending.splice(i, 1)[0];
+      const cost = n(o.unitCostLCY);
+      if (Math.abs(n(r.Unit_Cost_LCY) - cost) < 0.000001) continue;
+      try {
+        await bcRequest('PATCH', editUrl(ctx, r['@odata.editLink']), ctx.token, { Unit_Cost_LCY: cost });
+        out.push(`${num} ${r.No}: ${n(r.Unit_Cost_LCY)} → ${cost}`);
+      } catch (e: any) { out.push(`${num} ${r.No}: no se ha podido poner ${cost} (${String(e?.message).replace(/^BC PATCH [^:]*: /, '').substring(0, 160)})`); }
+    }
+    void svc;
+  }
+  return out;
+}
+
 export async function runRebill(ctx: BcContext, company: string, no: string, markup: number) {
   const plan = await planRebill(ctx, company, no, markup);
   if (plan.blockers.length) throw new Error(`No se crea nada para ${no}: ${plan.blockers.join(' · ')}`);
@@ -284,6 +315,7 @@ export async function runRebill(ctx: BcContext, company: string, no: string, mar
     done.invoice = s(inv.number);
     await writeSetting(key, done);
   }
+  try { warnings.push(...(await setOriginalCosts(ctx, no, done)).filter(x => x.includes('no se ha podido') || x.includes('no hay página'))); } catch (e: any) { warnings.push(`${no}: no se ha podido poner el coste unitario de la factura original (${String(e?.message).substring(0, 160)}).`); }
   try { await setOriginalDates(ctx, no, done); } catch (e: any) { warnings.push(`${no}: no se ha podido poner la fecha de la factura original (${String(e?.message).substring(0, 160)}).`); }
   warnings.push(...[...notes].map(x => `${no}: ${x}.`));
   notes.clear();
