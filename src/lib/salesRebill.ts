@@ -194,6 +194,24 @@ export async function restorePrices(ctx: BcContext, invoiceId: string, cmId: str
   }
 }
 
+// Abono y factura nueva con la fecha de la factura original (registro y documento; el vencimiento lo recalcula BC)
+export async function setOriginalDates(ctx: BcContext, no: string, done: { creditMemo?: string; invoice?: string }) {
+  const h = await invoiceOf(ctx, no);
+  const posting = s(h.postingDate).substring(0, 10), docDate = s(h.invoiceDate).substring(0, 10) || posting;
+  const out: string[] = [];
+  const fix = async (entity: 'salesCreditMemos' | 'salesInvoices', num: string | undefined, dateField: string) => {
+    if (!num) return;
+    const [d] = await bcFetchAll(odataUrl(`${ctx.apiBase}/${entity}`, { $filter: `number eq '${q(num)}' and status eq 'Draft'`, $select: `id,postingDate,${dateField}` }), ctx.token);
+    if (!d) { out.push(`${num} no encontrado`); return; }
+    if (s(d.postingDate).substring(0, 10) !== posting || s(d[dateField]).substring(0, 10) !== docDate)
+      await bcRequest('PATCH', `${ctx.apiBase}/${entity}(${d.id})`, ctx.token, { [dateField]: docDate, postingDate: posting });
+    out.push(`${num} → ${posting}`);
+  };
+  await fix('salesCreditMemos', done.creditMemo, 'creditMemoDate');
+  await fix('salesInvoices', done.invoice, 'invoiceDate');
+  return out;
+}
+
 export async function runRebill(ctx: BcContext, company: string, no: string, markup: number) {
   const plan = await planRebill(ctx, company, no, markup);
   if (plan.blockers.length) throw new Error(`No se crea nada para ${no}: ${plan.blockers.join(' · ')}`);
@@ -266,6 +284,7 @@ export async function runRebill(ctx: BcContext, company: string, no: string, mar
     done.invoice = s(inv.number);
     await writeSetting(key, done);
   }
+  try { await setOriginalDates(ctx, no, done); } catch (e: any) { warnings.push(`${no}: no se ha podido poner la fecha de la factura original (${String(e?.message).substring(0, 160)}).`); }
   warnings.push(...[...notes].map(x => `${no}: ${x}.`));
   notes.clear();
   return { ...plan, done, warnings };

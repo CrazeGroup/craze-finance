@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { bcFetchAll, getBcContext, odataUrl } from '@/lib/bcClient';
-import { planRebill, restorePrices, runRebill } from '@/lib/salesRebill';
+import { planRebill, restorePrices, runRebill, setOriginalDates } from '@/lib/salesRebill';
+import { readSetting } from '@/lib/reporting/cache';
 import { logAction } from '@/lib/logger';
 
 export const runtime = 'nodejs';
@@ -27,6 +28,11 @@ export async function POST(req: Request) {
       await restorePrices(ctx, inv.id, cm.id);
       const [after] = await bcFetchAll(odataUrl(`${ctx.apiBase}/salesCreditMemos`, { $filter: `number eq '${String(body.fixCreditMemo).replace(/'/g, "''")}'`, $select: 'number,totalAmountExcludingTax' }), ctx.token);
       return NextResponse.json({ fixed: after });
+    }
+    // Fechas de la factura original en el abono y la factura nueva ya creados
+    if (body.fixDates) {
+      const done = await readSetting<{ creditMemo?: string; invoice?: string }>(`rebill:${company}:${invoice}`, {});
+      return NextResponse.json({ dates: await setOriginalDates(ctx, invoice, done) });
     }
     if (body.dryRun) return NextResponse.json(await planRebill(ctx, company, invoice, markup));
     const result = await runRebill(ctx, company, invoice, markup);
