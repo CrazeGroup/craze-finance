@@ -4,7 +4,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { LogOut, Building2, ChevronDown, ChevronRight, FolderPlus, GripVertical, Pencil, Trash2, Check, Languages, Menu as MenuIcon, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { LogOut, Building2, ChevronDown, ChevronRight, FolderPlus, GripVertical, Pencil, Trash2, Check, Languages, Menu as MenuIcon, PanelLeftClose, PanelLeftOpen, Star } from 'lucide-react';
 import { useCompany, COMPANIES, companyLabel } from '@/contexts/CompanyContext';
 import { useLanguage, LANGS, LANG_NAMES, type Lang } from '@/contexts/LanguageContext';
 
@@ -17,7 +17,7 @@ const TEXT: Record<Lang, Record<string, string>> = {
   en: {
     menu: 'Menu', hide: 'Hide menu', show: 'Show menu', hello: 'Hi,', activeCompany: 'Active company', allCompanies: 'ALL COMPANIES', language: 'Language',
     noSection: 'No section', dragHere: 'Drag items here', newSection: 'New section', organize: 'Organize menu', done: 'Done', rename: 'Rename', dragSection: 'Drag to reorder the section',
-    deleteSection: 'Delete section (its items go back to "No section")', logout: 'Log out',
+    deleteSection: 'Delete section (its items go back to "No section")', logout: 'Log out', favorites: 'Favorites', addFav: 'Add to favorites', removeFav: 'Remove from favorites',
     '/': 'Main Dashboard', '/riesgos': 'Risks', '/recobros': 'Collections', '/movimientos': 'Open Entries', '/pagos': 'Vendor Payments',
     '/cierre-mensual': 'Month-End Close Tracking', '/inventario': 'Inventory (Closing)', '/inventory-analysis': 'Inventory Analysis', '/logistic-cost': 'Logistic Cost', '/customer-margin': 'Customer Margin', '/notas-compra': 'Purchase Notes', '/aduanas': 'Customs', '/insurances': 'Insurance', '/contracts': 'Contracts',
     '/settings/users': 'Users', '/settings/logs': 'Audit Log', '/settings': 'Settings',
@@ -25,12 +25,12 @@ const TEXT: Record<Lang, Record<string, string>> = {
   es: {
     menu: 'Menú', hide: 'Ocultar menú', show: 'Mostrar menú', hello: 'Hola,', activeCompany: 'Empresa activa', allCompanies: 'TODAS LAS EMPRESAS', language: 'Idioma',
     noSection: 'Sin sección', dragHere: 'Arrastra aquí los apartados', newSection: 'Nueva sección', organize: 'Organizar menú', done: 'Terminar', rename: 'Renombrar', dragSection: 'Arrastra para cambiar el orden de la sección',
-    deleteSection: 'Eliminar sección (sus apartados vuelven a «Sin sección»)', logout: 'Cerrar sesión',
+    deleteSection: 'Eliminar sección (sus apartados vuelven a «Sin sección»)', logout: 'Cerrar sesión', favorites: 'Favoritos', addFav: 'Añadir a favoritos', removeFav: 'Quitar de favoritos',
   },
   de: {
     menu: 'Menü', hide: 'Menü ausblenden', show: 'Menü einblenden', hello: 'Hallo,', activeCompany: 'Aktive Firma', allCompanies: 'ALLE FIRMEN', language: 'Sprache',
     noSection: 'Ohne Bereich', dragHere: 'Einträge hierher ziehen', newSection: 'Neuer Bereich', organize: 'Menü organisieren', done: 'Fertig', rename: 'Umbenennen', dragSection: 'Ziehen, um den Bereich zu verschieben',
-    deleteSection: 'Bereich löschen (seine Einträge gehen zurück zu „Ohne Bereich“)', logout: 'Abmelden',
+    deleteSection: 'Bereich löschen (seine Einträge gehen zurück zu „Ohne Bereich“)', logout: 'Abmelden', favorites: 'Favoriten', addFav: 'Zu Favoriten hinzufügen', removeFav: 'Aus Favoriten entfernen',
     '/': 'Haupt-Dashboard', '/riesgos': 'Risiken', '/recobros': 'Inkasso', '/movimientos': 'Offene Posten', '/pagos': 'Lieferantenzahlungen',
     '/cierre-mensual': 'Monatsabschluss-Tracking', '/inventario': 'Inventar (Abschluss)', '/inventory-analysis': 'Bestandsanalyse', '/logistic-cost': 'Logistikkosten', '/customer-margin': 'Kundenmarge', '/notas-compra': 'Einkaufsnotizen', '/aduanas': 'Zoll', '/insurances': 'Versicherungen', '/contracts': 'Verträge',
     '/settings/users': 'Benutzer', '/settings/logs': 'Protokoll', '/settings': 'Einstellungen',
@@ -62,6 +62,17 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
   const draggedSec = useRef<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<string[]>([]);
+  // Favoritos de cada usuario (base de datos): salen arriba del todo, en el orden en que se marcaron
+  const [favorites, setFavorites] = useState<string[]>([]);
+  useEffect(() => {
+    if (pathname === '/login') return;
+    fetch('/api/sidebar-favorites', { cache: 'no-store' }).then(r => r.json()).then(d => { if (Array.isArray(d?.items)) setFavorites(d.items); }).catch(() => {});
+  }, [pathname === '/login']); // eslint-disable-line react-hooks/exhaustive-deps
+  const toggleFavorite = (href: string) => setFavorites(f => {
+    const next = f.includes(href) ? f.filter(h => h !== href) : [...f, href];
+    fetch('/api/sidebar-favorites', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: next }) }).catch(() => {});
+    return next;
+  });
 
   // Secciones del menú, comunes a todos (se guardan en la base de datos); las plegadas son de cada navegador
   useEffect(() => {
@@ -224,7 +235,10 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
           const visible = menuItems.filter(i => hasPermission(i.module));
           const byHref = new Map(visible.map(i => [i.href, i]));
           const inSection = new Set(layout.sections.flatMap(sec => sec.items));
-          const loose = visible.filter(i => !inSection.has(i.href));
+          // Los favoritos salen arriba y no se repiten en su sitio (al organizar el menú se ven todos donde están)
+          const favItems = editing ? [] : favorites.map(h => byHref.get(h)).filter(Boolean) as MenuItem[];
+          const isFav = new Set(favItems.map(i => i.href));
+          const loose = visible.filter(i => !inSection.has(i.href) && !isFav.has(i.href));
 
           // Mover un apartado a una sección (o fuera de ellas: sectionId null), antes de otro apartado o al final
           const moveTo = (href: string, sectionId: string | null, beforeHref?: string) => {
@@ -268,16 +282,34 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
                 <GripVertical size={14} className="text-gray-400 shrink-0" /> {item.label}
               </div>
             );
+            const fav = favorites.includes(item.href);
             return (
-              <Link key={item.href} href={item.href}
-                className={`block px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${isActive ? 'bg-black text-white shadow-md' : 'text-gray-600 hover:text-black hover:bg-gray-100'}`}>
-                {item.label}
-              </Link>
+              <div key={item.href} className="relative group">
+                <Link href={item.href}
+                  className={`block pl-4 pr-9 py-2.5 rounded-lg text-sm font-semibold transition-all ${isActive ? 'bg-black text-white shadow-md' : 'text-gray-600 hover:text-black hover:bg-gray-100'}`}>
+                  {item.label}
+                </Link>
+                <button type="button" onClick={() => toggleFavorite(item.href)}
+                  title={tx(fav ? 'removeFav' : 'addFav')} aria-label={tx(fav ? 'removeFav' : 'addFav')} aria-pressed={fav}
+                  className={`absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded transition-opacity ${fav ? 'text-amber-400 opacity-100' : `${isActive ? 'text-gray-400 hover:text-white' : 'text-gray-300 hover:text-amber-500'} opacity-60 group-hover:opacity-100`}`}>
+                  <Star size={14} fill={fav ? 'currentColor' : 'none'} />
+                </button>
+              </div>
             );
           };
 
           return (
             <>
+              {/* Favoritos del usuario */}
+              {favItems.length > 0 && (
+                <div className="pb-2 mb-1 border-b border-gray-100 space-y-1.5">
+                  <p className="flex items-center gap-1 px-2 mb-1 text-[11px] font-bold uppercase tracking-wider text-gray-400">
+                    <Star size={11} className="text-amber-400" fill="currentColor" /> {tx('favorites')}
+                  </p>
+                  {favItems.map(i => link(i, null))}
+                </div>
+              )}
+
               {/* Apartados sin sección */}
               <div onDragOver={over('loose')} onDrop={onDrop(null)}
                 className={`space-y-1.5 ${editing ? `min-h-[40px] rounded-lg p-1 border border-dashed ${dropTarget === 'loose' ? 'border-black bg-gray-50' : 'border-gray-200'}` : ''}`}>
@@ -286,7 +318,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
               </div>
 
               {layout.sections.map(sec => {
-                const items = sec.items.map(h => byHref.get(h)).filter(Boolean) as MenuItem[];
+                const items = sec.items.map(h => byHref.get(h)).filter(Boolean).filter(i => !isFav.has(i!.href)) as MenuItem[];
                 const isConfig = sec === configSection;
                 if (!editing && !items.length && !isConfig) return null;
                 const open = editing || !collapsed.includes(sec.id);
