@@ -15,7 +15,6 @@ const MODULES = [
   { id: 'cierre', label: 'Tracking Cierre Mensual' },
   { id: 'auditoria', label: 'Auditoría (Registro de Actividad)' },
   { id: 'inventario', label: 'Inventario (Cierre)' },
-  { id: 'bwa', label: 'BWA Analytics' },
   { id: 'reporting', label: 'Reporting' },
   { id: 'controlling', label: 'Controlling' },
   { id: 'royalties', label: 'Royalties' },

@@ -124,7 +124,6 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
     { href: '/banco', label: 'BANCO', module: 'banco' },
     { href: '/cierre-mensual', label: 'Tracking Cierre Mensual', module: 'cierre' },
     { href: '/inventario', label: 'Inventario (Cierre)', module: 'inventario' },
-    { href: '/bwa', label: 'BWA Analytics', module: 'bwa' },
     { href: '/reporting', label: 'Reporting', module: 'reporting' },
     { href: '/inventory-analysis', label: 'Análisis Inventario', module: 'reporting' },
     { href: '/controlling', label: 'Controlling', module: 'controlling' },

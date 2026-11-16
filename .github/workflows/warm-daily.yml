@@ -50,7 +50,6 @@ jobs:
           for yy in range(y - 2, y + 1):
               out.append(('CRAZE', f'controlling/order-intake?company=CRAZE&year={yy}&from=1&to=12' + ('&open=1' if yy == y else '')))
           out.append(('CRAZE', f'controlling/bwa-pbi?year={y}'))
-          out.append(('CRAZE', f'bwa/live?year={y}'))
           # Royalties: último trimestre (CRAZE GmbH), resumen del grupo y Minimum Guarantee
           out.append(('CRAZE', f'royalties?company=CRAZE&from={iso(q_from)}&to={iso(q_to)}'))
           out.append(('CRAZE', f'royalties/group?from={iso(q_from)}&to={iso(q_to)}'))
