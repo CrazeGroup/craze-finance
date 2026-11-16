@@ -7,7 +7,7 @@ import { Ctx, Facts, Filters, groupBy, keyFn, PARAMS, ParamId, pctVar, projectio
 import { Bars, Card, COLORS, Donut, fmtMoney, fmtNum, fmtPct, fmtShare, Gauge, Kpi, LineArea, tone } from './ui';
 
 // Páginas de Commercial Analysis (mismas que el Power BI): YoY Status, Sales Performance, Budget (Summary, Analysis,
-// MoTD vs Forecast), Rule 80-20 y Top 50 Items.
+// MoTD vs Forecast).
 
 type P = { ctx: Ctx; facts: Facts[]; filters: Filters };
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -466,104 +466,5 @@ export function Budget({ ctx, facts, filters }: P) {
         </div>
       </Card>
     </div>
-  );
-}
-
-// ---------- Rule 80-20 ----------
-function Pareto({ title, rows, label }: { title: string; rows: [string, Pair][]; label: string }) {
-  const rank = (f: (p: Pair) => number) => {
-    const sorted = [...rows].sort((a, b) => f(b[1]) - f(a[1]));
-    const total = sorted.reduce((s, [, p]) => s + f(p), 0);
-    let acc = 0;
-    return new Map(sorted.map(([k, p], i) => { acc += f(p); return [k, { rank: i + 1, share: total ? acc / total : 0 }]; }));
-  };
-  const rPrev = rank(p => p.prev.sIn), rCur = rank(p => p.cur.sIn), rBdg = rank(p => p.cur.bdg);
-  const sorted = [...rows].sort((a, b) => b[1].cur.sIn - a[1].cur.sIn);
-  const Share = ({ v }: { v: number }) => <span className={v <= 0.8 ? 'font-semibold text-gray-900' : 'text-gray-400'}>{fmtShare(v)}</span>;
-  return (
-    <Card title={title} right={<ExportBtn onClick={() => exportRows(`Rule 80-20 ${label}`, sorted.map(([k, p]) => ({
-      [label]: k, 'Sell-in LY': p.prev.sIn, '% acum LY': rPrev.get(k)!.share, '# LY': rPrev.get(k)!.rank, 'Sell-in FY': p.cur.sIn, '% acum FY': rCur.get(k)!.share, '# FY': rCur.get(k)!.rank,
-      'Budget FY': p.cur.bdg, '% acum Bdg': rBdg.get(k)!.share, '# Bdg': rBdg.get(k)!.rank,
-    })))} />}>
-      <div className="overflow-x-auto max-h-[520px]">
-        <table className="w-full text-[12px]">
-          <thead className="sticky top-0 bg-white"><tr className="border-b border-gray-200">
-            <th className={`${th} text-left`}>{label}</th>
-            <th className={th}>Sell-in LY</th><th className={th}>% acum</th><th className={th}>#</th>
-            <th className={th}>Sell-in FY</th><th className={th}>% acum</th><th className={th}>#</th>
-            <th className={th}>Budget FY</th><th className={th}>% acum</th><th className={th}>#</th>
-          </tr></thead>
-          <tbody>
-            {sorted.map(([k, p]) => (
-              <tr key={k} className={`border-b border-gray-100 ${rCur.get(k)!.share <= 0.8 ? 'bg-[#FDF2F7]/50' : ''}`}>
-                <td className="py-1.5 px-2 max-w-[300px] truncate" title={k}>{k}</td>
-                <td className={td}>{fmtNum(p.prev.sIn)}</td><td className={td}><Share v={rPrev.get(k)!.share} /></td><td className={`${td} text-gray-500`}>{rPrev.get(k)!.rank}</td>
-                <td className={`${td} font-semibold`}>{fmtNum(p.cur.sIn)}</td><td className={td}><Share v={rCur.get(k)!.share} /></td><td className={`${td} text-gray-500`}>{rCur.get(k)!.rank}</td>
-                <td className={td}>{fmtNum(p.cur.bdg)}</td><td className={td}><Share v={rBdg.get(k)!.share} /></td><td className={`${td} text-gray-500`}>{rBdg.get(k)!.rank}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </Card>
-  );
-}
-
-export function Rule8020({ ctx, facts, filters }: P) {
-  const [param, setParam] = useState<ParamId>('root');
-  const recs = useMemo(() => records(ctx, facts, filters, 'full'), [ctx, facts, filters]);
-  const by = (p: ParamId) => Array.from(groupBy(recs, keyFn(ctx, p)).entries());
-  return (
-    <div className="space-y-4">
-      <p className="text-xs text-gray-500">Año completo (o los meses elegidos). Resaltado: lo que suma el 80 % del sell-in del año. % acum = porcentaje acumulado de mayor a menor; # = posición.</p>
-      <div className="grid gap-4 2xl:grid-cols-2">
-        <Pareto title="Product Line" label="Product Line" rows={by('line')} />
-        <Pareto title="Customer" label="Customer" rows={by('customer')} />
-      </div>
-      <Card title="Detalle" right={<ParamSelect value={param} onChange={setParam} />}><div /></Card>
-      <Pareto title={PARAMS.find(x => x.id === param)!.label} label={PARAMS.find(x => x.id === param)!.label} rows={by(param)} />
-    </div>
-  );
-}
-
-// ---------- Top 50 Items (sell-in en unidades, por trimestre) ----------
-export function Top50({ ctx, facts, filters }: P) {
-  const recs = useMemo(() => records(ctx, facts, filters, 'full', 'noMain'), [ctx, facts, filters]);
-  const key = keyFn(ctx, filters.units === 'root' ? 'root' : 'raw');
-  const q = (m: number) => Math.ceil(m / 3);
-  const byQ = new Map<string, number[][]>();   // artículo → [trimestre][cur, prev]
-  for (const r of recs) {
-    const k = key(r);
-    const arr = byQ.get(k) || [0, 1, 2, 3, 4].map(() => [0, 0]);
-    const qty = r.invQty + r.soQty;
-    arr[q(r.m)][r.y === 'cur' ? 0 : 1] += qty;
-    arr[0][r.y === 'cur' ? 0 : 1] += qty;
-    byQ.set(k, arr);
-  }
-  const top = Array.from(byQ.entries()).sort((a, b) => b[1][0][0] - a[1][0][0]).slice(0, 50);
-  return (
-    <Card title={`Top 50 por unidades de sell-in · ${ctx.year} (${filters.units === 'root' ? 'Article To Root' : 'Raw Article'})`}
-      right={<ExportBtn onClick={() => exportRows('Top 50 sell-in', top.map(([k, a], i) => ({ '#': i + 1, Artículo: k, ...Object.fromEntries([1, 2, 3, 4].flatMap(qq => [[`Q${qq}`, a[qq][0]], [`Q${qq} YoY`, a[qq][0] - a[qq][1]]])), Total: a[0][0], 'Total YoY': a[0][0] - a[0][1] })))} />}>
-      <div className="overflow-x-auto">
-        <table className="w-full text-[12px]">
-          <thead><tr className="border-b border-gray-200">
-            <th className={th}>#</th><th className={`${th} text-left`}>Artículo</th>
-            {[1, 2, 3, 4].map(qq => <Fragment key={qq}><th className={th}>Q{qq}</th><th className={th}>YoY</th></Fragment>)}
-            <th className={th}>Total</th><th className={th}>YoY</th>
-          </tr></thead>
-          <tbody>
-            {top.map(([k, a], i) => (
-              <tr key={k} className="border-b border-gray-100">
-                <td className={`${td} text-gray-500`}>{i + 1}</td>
-                <td className="py-1.5 px-2 max-w-[320px] truncate" title={k}>{k}</td>
-                {[1, 2, 3, 4].map(qq => <Fragment key={qq}><td className={td}>{fmtNum(a[qq][0])}</td><td className={`${td} ${tone(a[qq][0] - a[qq][1])}`}>{fmtNum(a[qq][0] - a[qq][1])}</td></Fragment>)}
-                <td className={`${td} font-semibold`}>{fmtNum(a[0][0])}</td><td className={`${td} ${tone(a[0][0] - a[0][1])}`}>{fmtNum(a[0][0] - a[0][1])}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p className="text-xs text-gray-500 mt-2">Sell-in = facturado + pedidos abiertos, en unidades, sin las líneas Main Item (como el Power BI). YoY = diferencia de unidades con el mismo trimestre del año anterior.</p>
-    </Card>
   );
 }

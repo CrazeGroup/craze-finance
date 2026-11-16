@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { COMPANIES, Dims, EMPTY_FILTERS, Facts, Filters, makeCtx } from './engine';
 import { MultiSelect } from './ui';
-import { Budget, Rule8020, SalesPerformance, Top50, YoYStatus } from './views';
+import { Budget, SalesPerformance, YoYStatus } from './views';
 
 // Commercial Analysis: recreación del Power BI "Commercial Analysis" con BC en directo (datos guardados y renovados
 // cada hora). Filtros comunes arriba (como los slicers del Power BI) y una pestaña por página.
@@ -12,8 +12,6 @@ const PAGES = [
   { id: 'yoy', label: 'YoY Status' },
   { id: 'performance', label: 'Sales Performance' },
   { id: 'budget', label: 'Budget' },
-  { id: 'pareto', label: 'Rule 80-20' },
-  { id: 'top50', label: 'Top 50 Items' },
 ] as const;
 type PageId = typeof PAGES[number]['id'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -178,9 +176,7 @@ export default function CommercialAnalysisPage() {
           <p className="text-sm text-gray-500 py-10 text-center">Leyendo facturación, pedidos, presupuesto y forecast de Business Central… ({wanted.filter(k => loads[k] && !loads[k].loading).length}/{wanted.length})</p>
         ) : page === 'yoy' ? <YoYStatus {...props} />
           : page === 'performance' ? <SalesPerformance {...props} />
-          : page === 'budget' ? <Budget {...props} />
-          : page === 'pareto' ? <Rule8020 {...props} />
-          : <Top50 {...props} />}
+          : <Budget {...props} />}
       </main>
     </div>
   );

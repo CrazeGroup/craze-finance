@@ -5,7 +5,6 @@ import { useCompany } from '@/contexts/CompanyContext';
 import { makeT } from '../reporting/i18n';
 import PurchaseItemsView from './PurchaseItemsView';
 import PurchaseVendorsView from './PurchaseVendorsView';
-import PlCompareView from './PlCompareView';
 import ConsumedProvisionsView from './ConsumedProvisionsView';
 import LicenseSalesView from './LicenseSalesView';
 import OrderIntakeView from './OrderIntakeView';
@@ -15,7 +14,6 @@ import BwaPbiView from './BwaPbiView';
 const REPORTS = [
   { id: 'purchase-items', label: 'Compras por artículo' },
   { id: 'purchase-vendors', label: 'Compras por proveedor' },
-  { id: 'pl-compare', label: 'BWA año a año' },
   { id: 'consumed-provisions', label: 'Consumed Provisions' },
   { id: 'license-sales', label: 'Ventas por licencia' },
   { id: 'order-intake', label: 'Facturación según Order Date' },
@@ -61,7 +59,6 @@ export default function ControllingPage() {
         {selectedCompany === 'ALL' && report === 'consumed-provisions' ? <p className="text-sm text-gray-600">{fmt.t('selectCompany')}</p>
           : report === 'purchase-items' ? <PurchaseItemsView fmt={fmt} company={selectedCompany} />
           : report === 'purchase-vendors' ? <PurchaseVendorsView fmt={fmt} company={selectedCompany} />
-          : report === 'pl-compare' ? <PlCompareView fmt={fmt} company={selectedCompany} />
           : report === 'bwa-pbi' ? <BwaPbiView fmt={fmt} />
           : report === 'order-intake' ? <OrderIntakeView fmt={fmt} company={selectedCompany} />
           : report === 'license-sales' ? <LicenseSalesView fmt={fmt} company={selectedCompany} />
