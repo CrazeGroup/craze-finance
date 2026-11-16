@@ -575,8 +575,25 @@ function catchAllAccounts(books: Booking[], own: Set<string>) {
 // sastre y hay una cuenta específica con ≥ 2 movimientos que comparten una palabra distintiva (≥ 30 %), la específica:
 // "COMPRA TARJ. VIENA FILADORS-SABADELL" → VE-00066 ESTABLIMENTS VIENA S.A. (60 pagos) y no VE-00078 por dos "TIKET
 // VIENA FILADORS" registrados ahí una vez
+// Números de referencia del concepto (≥ 8 cifras: nº de contribuyente, Kassenzeichen…), sin fechas ni importes
+const refNumbers = (s: string) => new Set((s.match(/\d{8,}/g) || []).filter(x => !/^(19|20)\d{6}$/.test(x)));
+// Texto del movimiento sin espacios, para encontrar palabras pegadas ("ZOLLAUFSCHUB" contiene "zoll")
+const compactText = (m: Movement) => normName(`${m.name} ${m.purpose}`).replace(/\s/g, '');
+
 function fromHistory(m: Movement, books: Booking[], own: Set<string>) {
   if (!books.length) return null;
+  // La misma referencia que un movimiento anterior ("501010093839/Gewerbesteuer"): el más reciente del mismo signo
+  const refs = refNumbers(m.purpose);
+  if (refs.size) {
+    const hits = books.filter(b => [...refNumbers(b.description)].some(r => refs.has(r)) && Math.sign(b.amount) === Math.sign(m.amount))
+      .sort((a, b) => b.date.localeCompare(a.date));
+    if (hits.length) {
+      const b = hits[0];
+      return { key: `${b.balType}|${b.balNo}`, weight: 99, best: b, score: 1, n: hits.length, words: new Map<string, number>(), ref: true };
+    }
+  }
+  const compact = compactText(m);
+  const purposeCompact = normName(m.purpose).replace(/\s/g, '');
   const docs = books.map(b => words(b.description, own));
   const df = new Map<string, number>();
   for (const ws of docs) for (const w of ws) df.set(w, (df.get(w) || 0) + 1);
@@ -584,20 +601,26 @@ function fromHistory(m: Movement, books: Booking[], own: Set<string>) {
   const mw = words(`${m.name} ${m.purpose}`, own);
   if (!mw.size) return null;
   const mWeight = [...mw].reduce((t, w) => t + idf(w), 0);
-  type Vote = { key: string; weight: number; best: Booking; score: number; n: number; words: Map<string, number> };
+  type Vote = { key: string; weight: number; best: Booking; score: number; n: number; words: Map<string, number>; ref?: boolean; purposeHit?: boolean };
   const strong = new Map<string, Vote>();
   const weak = new Map<string, Vote>();
   books.forEach((b, i) => {
     const ws = docs[i];
     if (!ws.size) return;
-    const shared = [...ws].filter(w => mw.has(w));
+    // Palabras en común, también pegadas: la de la cuenta dentro del texto del movimiento ("zoll" en "zollaufschub")
+    // o la del movimiento dentro de la de la cuenta ("gewerbesteuer" en "gewerbesteuerruckstellung")
+    const shared = [...ws].filter(w => mw.has(w) || (w.length >= 4 && compact.includes(w)) || [...mw].some(x => x.length >= 6 && w.includes(x)));
     if (!shared.some(w => w.length >= 4)) return;
     const score = shared.reduce((t, w) => t + idf(w), 0) / Math.min([...ws].reduce((t, w) => t + idf(w), 0), mWeight);
     if (score < 0.3) return;
     const key = `${b.balType}|${b.balNo}`;
     const weight = score * (Math.sign(b.amount) === Math.sign(m.amount) ? 2 : 1);
-    for (const votes of score >= 0.5 ? [strong, weak] : [weak]) {
-      const v = votes.get(key) || { key, weight: 0, best: b, score, n: 0, words: new Map<string, number>() };
+    // Una palabra de la cuenta que está en el concepto (no solo en el nombre) basta con menos parecido: "ZOLL Aufschubkonto"
+    // para "ZOLLAUFSCHUB …" aunque "Aufschubkonto (Sammelkonto)" también lo tenga la de EUST
+    const inPurpose = shared.some(w => w.length >= 4 && purposeCompact.includes(w));
+    for (const votes of score >= 0.5 || (inPurpose && score >= 0.3) ? [strong, weak] : [weak]) {
+      const v = votes.get(key) || { key, weight: 0, best: b, score, n: 0, words: new Map<string, number>(), purposeHit: false };
+      if (shared.some(w => w.length >= 4 && purposeCompact.includes(w))) v.purposeHit = true;
       votes.set(key, v);
       for (const w of shared) v.words.set(w, (v.words.get(w) || 0) + 1);
       if (v.n++ === 0) v.weight = weight;
@@ -735,7 +758,17 @@ export function suggest(
     }
 
     // Misma contrapartida en movimientos ya registrados
-    const rule = pickRule(m, (m.iban && !ownAccount(m) && byIban.get(m.iban)) || byName.get(normName(m.name)));
+    let rule = pickRule(m, (m.iban && !ownAccount(m) && byIban.get(m.iban)) || byName.get(normName(m.name)));
+    // La misma contrapartida a veces se registra en cuentas distintas según el concepto (Bundeskasse: ZOLL o EUST;
+    // Stadt Karlsruhe: Gewerbesteuer 3035 o Grundsteuer 7680): si lo copiado no tiene nada que ver con este concepto y
+    // el histórico encuentra una cuenta por la referencia o por una palabra del concepto, gana el histórico
+    if (rule && !rule.usesPurpose) {
+      const compact = compactText(m);
+      const ruleWords = [...words(rule.description, own)].filter(w => w.length >= 4);
+      const related = !ruleWords.length || ruleWords.some(w => compact.includes(w));
+      const hist = related ? null : fromHistory(m, books, own);
+      if (hist && (hist.ref || hist.purposeHit) && hist.key !== `${rule.accountType}|${rule.accountNo}`) rule = null;
+    }
     if (rule) {
       const when = `Como el ${rule.date.split('-').reverse().join('.')}`;
       // Varias líneas (p. ej. leasing: cuota, intereses e IVA): las mismas; con otro importe, solo si son cuentas de
