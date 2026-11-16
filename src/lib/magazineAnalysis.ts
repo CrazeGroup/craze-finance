@@ -12,6 +12,9 @@ import { CUSTOMER_NO, DFORCE_COMPANY } from '@/lib/dforce';
 // - El resto se asigna por Project No. + Project Task No. de la línea: Magazine Ads (facturas a CRAZE GmbH, campos AIT),
 //   costes de distribución (facturas de compra de D-FORCE y, en 2024/25, líneas de coste en sus facturas/abonos de venta)
 //   y el resto de costes (Posted Purchase Invoice / Cr. Memo Lines: gadget, foilbag, diseño, imprenta…).
+// - Gadget (004.001) de las revistas sin compra de gadget (gadgets reutilizados de stock): el coste de lo que consume la
+//   Assembly Order que monta la revista (Item Ledger Entries: Assembly Consumption del documento cuyo Assembly Output es
+//   el artículo de la revista; coste real + esperado).
 // - Proyecto → revista: 05995_AAMM = artículo 05995_AAMM; desde 2026 35420_AAMM → 05995_AAMM (Galupy),
 //   38791_AAMM → 05993_AAMM (Inkee) y 35420_AAMM_SPECIAL → 05994_AAMM (Galupy Special).
 // Importes en signo de resultado: ingresos +, costes −; beneficio = suma de todo.
@@ -21,10 +24,11 @@ const ITEM_RE = /^0599\d_\d{4}$/;
 const TASK_SALES = '001.001';
 const TASK_RETURNS = '001.003';
 const TASK_ADS = '001.004';
+const TASK_GADGET = '004.001';
 
 export type MagEntry = {
   task: string; qty: number; value: number;
-  kind: 'salesInv' | 'salesCrMemo' | 'purchInv' | 'purchCrMemo';
+  kind: 'salesInv' | 'salesCrMemo' | 'purchInv' | 'purchCrMemo' | 'assembly';
   doc: string; date: string; partner: string; no: string; description: string; location: string;
   fixed?: string;   // corrección hecha en la app (proyecto equivocado o sin proyecto)
   key?: string;     // tipo|documento|línea
@@ -89,7 +93,7 @@ const n = (v: any) => (typeof v === 'number' ? v : parseFloat(v) || 0);
 
 async function readAll(ctx: BcContext) {
   const sel = 'documentNo,lineNo,type,no,description,description2,quantity,amount,postingDate';
-  const [salesInv, salesCr, purchInv, purchCr, tasks, projects, customers, vendors, invHeads, crHeads] = await Promise.all([
+  const [salesInv, salesCr, purchInv, purchCr, tasks, projects, customers, vendors, invHeads, crHeads, assembly] = await Promise.all([
     bcFetchAll(odataUrl(`${ctx.customApiBase}/salesInvoiceLines`, { $select: `${sel},sellToCustomerNo,aitJobNo,aitJobTaskNo` }), ctx.token),
     bcFetchAll(odataUrl(`${ctx.customApiBase}/salesCrMemoLines`, { $select: `${sel},sellToCustomerNo,aitJobNo,aitJobTaskNo,returnReasonCode` }), ctx.token),
     bcFetchAll(odataUrl(`${ctx.customApiBase}/purchInvLines`, { $select: `${sel},buyFromVendorNo,jobNo,jobTaskNo` }), ctx.token),
@@ -102,9 +106,14 @@ async function readAll(ctx: BcContext) {
     // External Document No. de las facturas/abonos de venta: en los Magazine Ads dice la revista ("MAGAZINE - INKEE 01/25 ADS")
     bcFetchAll(odataUrl(`${ctx.apiBase}/salesInvoices`, { $filter: `customerNumber ne '${CUSTOMER_NO}'`, $select: 'number,externalDocumentNumber' }), ctx.token),
     bcFetchAll(odataUrl(`${ctx.apiBase}/salesCreditMemos`, { $filter: `customerNumber ne '${CUSTOMER_NO}'`, $select: 'number,externalDocumentNumber' }), ctx.token),
+    // Assembly Orders registradas (montaje de cada revista: consume el gadget)
+    bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Item_Ledger_Entries_Excel`, {
+      $filter: `Entry_Type eq 'Assembly Consumption' or Entry_Type eq 'Assembly Output'`,
+      $select: 'Entry_No,Entry_Type,Posting_Date,Document_No,Item_No,Item_Description,Location_Code,Quantity,Cost_Amount_Actual,Cost_Amount_Expected',
+    }), ctx.token).catch(() => [] as any[]),
   ]);
   const extDoc = new Map<string, string>([...invHeads, ...crHeads].map((h: any) => [s(h.number), s(h.externalDocumentNumber)]));
-  return { salesInv, salesCr, purchInv, purchCr, tasks, projects, customers, vendors, extDoc };
+  return { salesInv, salesCr, purchInv, purchCr, tasks, projects, customers, vendors, extDoc, assembly };
 }
 
 // Las líneas de abono de compra no traen fecha: se toma de la cabecera
@@ -372,6 +381,21 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
     unassigned.push({ ...p.u, pdf, suggestedTask: p.u.task || usualTask(p.u.no) });
   }
 
+  // Gadget reutilizado: revistas sin coste de gadget (004.001) → consumo de su Assembly Order
+  const outputs = new Map<string, string>();   // documento de montaje → revista
+  for (const e of raw.assembly) if (s(e.Entry_Type) === 'Assembly Output' && ITEM_RE.test(s(e.Item_No))) outputs.set(s(e.Document_No), s(e.Item_No));
+  const noGadget = (item: string) => !mags.get(item)?.entries.some(e => e.task === TASK_GADGET && Math.abs(e.value) > 0.005);
+  const consumed = raw.assembly.filter((e: any) => s(e.Entry_Type) === 'Assembly Consumption' && outputs.has(s(e.Document_No)) && noGadget(outputs.get(s(e.Document_No))!));
+  for (const e of consumed) {
+    const item = outputs.get(s(e.Document_No))!;
+    const value = n(e.Cost_Amount_Actual) + n(e.Cost_Amount_Expected);
+    push(mag(item), {
+      kind: 'assembly', doc: s(e.Document_No), date: s(e.Posting_Date), partner: s(e.Location_Code), no: s(e.Item_No), description: s(e.Item_Description),
+      location: '', key: `assembly|${s(e.Document_No)}|${s(e.Entry_No)}`, task: TASK_GADGET, qty: -n(e.Quantity), value,
+      fixed: 'Gadget reutilizado (sin compra en 004.001): coste del consumo de la Assembly Order de la revista',
+    });
+  }
+
   // Proyectos de revista sin movimientos también aparecen (p. ej. números aún sin vender)
   for (const p of raw.projects) {
     const item = magazineOfProject(s(p.No));
@@ -421,7 +445,7 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
 }
 
 export async function magazineAnalysis(force = false) {
-  return cached('magazines:analysis:v6', HOUR, async () => computeMagazineAnalysis(await getBcContext(DFORCE_COMPANY)), force);
+  return cached('magazines:analysis:v7', HOUR, async () => computeMagazineAnalysis(await getBcContext(DFORCE_COMPANY)), force);
 }
 
 // Líneas sin revista dadas por buenas (no son de ninguna revista): no se vuelven a avisar. Clave tipo|documento|línea.

@@ -20,9 +20,10 @@ const neg = (v: number) => (v < -0.005 ? 'text-red-600' : '');
 const GROUPS = ['001', '002', '003', '004'] as const;
 const GROUP_LABEL: Record<string, string> = { '001': 'SALES', '002': 'DISTRIBUTION COSTS', '003': 'MARKETING COSTS', '004': 'MAGAZINE COSTS' };
 const TASK_SALES = '001.001', TASK_RETURNS = '001.003', TASK_ADS = '001.004';
-const DOC_TYPE: Record<MagEntry['kind'], { label: string; pdf: 'salesInv' | 'salesCrMemo' | 'purchInv' | 'purchCrMemo' }> = {
+const DOC_TYPE: Record<MagEntry['kind'], { label: string; pdf?: 'salesInv' | 'salesCrMemo' | 'purchInv' | 'purchCrMemo' }> = {
   salesInv: { label: 'Factura venta', pdf: 'salesInv' }, salesCrMemo: { label: 'Abono venta', pdf: 'salesCrMemo' },
   purchInv: { label: 'Factura compra', pdf: 'purchInv' }, purchCrMemo: { label: 'Abono compra', pdf: 'purchCrMemo' },
+  assembly: { label: 'Assembly Order' },   // consumo de gadget en el montaje de la revista (sin PDF)
 };
 const COMPANY = 'Craze Entertainment';
 
@@ -321,7 +322,7 @@ export default function MagazineProfitabilityView() {
                         return (
                           <tr key={u.key} className={v ? 'text-gray-400' : ''}>
                             <td className="px-3 py-1.5">{u.reason}{u.pdf && <p className="text-amber-700">{u.pdf}</p>}</td>
-                            <td className={td}><span className="text-gray-400 mr-1">{DOC_TYPE[u.kind].label}</span>{u.doc} <DocPdfLink documentNo={u.doc} kind={DOC_TYPE[u.kind].pdf} company={COMPANY} /></td>
+                            <td className={td}><span className="text-gray-400 mr-1">{DOC_TYPE[u.kind].label}</span>{u.doc} {DOC_TYPE[u.kind].pdf && <DocPdfLink documentNo={u.doc} kind={DOC_TYPE[u.kind].pdf!} company={COMPANY} />}</td>
                             <td className={td}>{dmy(u.date)}</td><td className={td}>{u.partner}</td><td className={td}>{u.no}</td>
                             <td className="px-3 py-1.5">{u.description}</td><td className={td}>{u.project}</td><td className={td}>{u.task}</td>
                             <td className={`${td} text-right`}>{units(u.qty)}</td><td className={`${td} text-right`}>{money(u.amount)}</td>
@@ -402,7 +403,7 @@ export default function MagazineProfitabilityView() {
                         return (
                           <tr key={i}>
                             <td className="px-3 py-1.5">{c.reason}</td>
-                            <td className={td}><span className="text-gray-400 mr-1">{DOC_TYPE[c.kind].label}</span>{c.doc} <DocPdfLink documentNo={c.doc} kind={DOC_TYPE[c.kind].pdf} company={COMPANY} /></td>
+                            <td className={td}><span className="text-gray-400 mr-1">{DOC_TYPE[c.kind].label}</span>{c.doc} {DOC_TYPE[c.kind].pdf && <DocPdfLink documentNo={c.doc} kind={DOC_TYPE[c.kind].pdf!} company={COMPANY} />}</td>
                             <td className={td}>{dmy(c.date)}</td><td className={td}>{c.no}</td>
                             <td className="px-3 py-1.5">{c.description}</td><td className={td}>{c.location}</td>
                             <td className={`${td} text-red-600 line-through`}>{c.bcProject || '(vacío)'}</td>
@@ -692,7 +693,7 @@ function TaskTable({ m, taskNames, openTask, toggle, saving, exclude }: {
                             <tbody className="divide-y divide-gray-100">
                               {entries.map((e, i) => (
                                 <tr key={i} className={e.excluded ? 'text-gray-400 [&>td:not(:last-child)]:line-through' : ''}>
-                                  <td className="px-2 py-1 whitespace-nowrap"><span className="text-gray-400 mr-1">{DOC_TYPE[e.kind].label}</span>{e.doc} <DocPdfLink documentNo={e.doc} kind={DOC_TYPE[e.kind].pdf} company={COMPANY} /></td>
+                                  <td className="px-2 py-1 whitespace-nowrap"><span className="text-gray-400 mr-1">{DOC_TYPE[e.kind].label}</span>{e.doc} {DOC_TYPE[e.kind].pdf && <DocPdfLink documentNo={e.doc} kind={DOC_TYPE[e.kind].pdf!} company={COMPANY} />}</td>
                                   <td className="px-2 py-1 whitespace-nowrap">{dmy(e.date)}</td>
                                   <td className="px-2 py-1">{e.partner}</td><td className="px-2 py-1 whitespace-nowrap">{e.no}</td>
                                   <td className="px-2 py-1">{e.description}{e.fixed && <p className="text-sky-700 flex items-center gap-1"><Wrench size={11} /> {e.fixed}</p>}{e.excluded && <p className="text-amber-700">{e.excluded}</p>}</td><td className="px-2 py-1 whitespace-nowrap">{e.location}</td>
