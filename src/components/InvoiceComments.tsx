@@ -7,12 +7,30 @@ import { MessageSquare, Trash2, X } from 'lucide-react';
 // y misma API (/api/cashflow/comments), así el seguimiento de una factura es el mismo en las dos pantallas.
 export type Comment = { id: number; targetKey: string; text: string; author?: string | null; createdAt: string };
 
+// Claves: "invoice:<id>" = una factura; "invoices:<id>,<id>…" = una línea de Cashflow (sus facturas, así el comentario
+// no se pierde si la línea cambia de fecha y se ve en Recobros en cada factura); otra clave = línea manual de Cashflow.
+export const lineKey = (entry: { id: string; invoices?: { id: number }[] }) =>
+  entry.invoices?.length ? `invoices:${entry.invoices.map(i => i.id).join(',')}` : entry.id;
+const idsOf = (key: string) => key.startsWith('invoice:') ? [key.slice(8)] : key.startsWith('invoices:') ? key.slice(9).split(',') : [];
+// withLines: una factura también muestra los comentarios de las líneas que la contienen (Recobros)
+export function matchComments<T extends { targetKey: string }>(comments: T[], key: string, withLines = false): T[] {
+  if (key.startsWith('invoices:')) {
+    const ids = new Set(idsOf(key));
+    return comments.filter(c => c.targetKey === key || (c.targetKey.startsWith('invoices:') && idsOf(c.targetKey).some(i => ids.has(i))));
+  }
+  if (withLines && key.startsWith('invoice:')) {
+    const id = key.slice(8);
+    return comments.filter(c => c.targetKey === key || (c.targetKey.startsWith('invoices:') && idsOf(c.targetKey).includes(id)));
+  }
+  return comments.filter(c => c.targetKey === key);
+}
+
 export function useComments(company: string) {
   const [comments, setComments] = useState<Comment[]>([]);
   useEffect(() => {
     fetch('/api/cashflow/comments', { cache: 'no-store' }).then(r => r.json()).then(d => setComments(Array.isArray(d) ? d : [])).catch(() => setComments([]));
   }, [company]);
-  const commentsFor = (key: string) => comments.filter(c => c.targetKey === key);
+  const commentsFor = (key: string) => matchComments(comments, key, true);
   const add = async (key: string, text: string, label: string) => {
     const res = await fetch('/api/cashflow/comments', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

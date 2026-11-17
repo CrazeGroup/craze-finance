@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Save, X, ChevronRight, ChevronDown, Download, Upload, Archive, Send, Calendar, Search, MailCheck, AlertTriangle, MessageSquare } from 'lucide-react';
 import ReminderDialog from '@/components/ReminderDialog';
+import { lineKey, matchComments } from '@/components/InvoiceComments';
 import * as XLSX from 'xlsx';
 import { useCompany } from '@/contexts/CompanyContext';
 import { syncFromBc } from '@/lib/syncClient';
@@ -147,7 +148,25 @@ export default function CashflowPage() {
     fetch('/api/cashflow/comments', { cache: 'no-store' }).then(r => r.json()).then(d => setComments(Array.isArray(d) ? d : [])).catch(() => setComments([]));
   }, [selectedCompany]);
 
-  const commentsFor = (key: string) => comments.filter(c => c.targetKey === key);
+  const commentsFor = (key: string) => matchComments(comments, key);
+
+  // Comentarios de línea guardados con la clave antigua (id de la línea = cliente + fecha): pasan a las facturas de la
+  // línea ("invoices:<ids>") para verse también en Recobros y no perderse si la línea cambia de fecha
+  useEffect(() => {
+    const old = comments.filter(c => c.targetKey.startsWith('auto-transfer-'));
+    if (!old.length || !entries.length) return;
+    for (const c of old) {
+      let entry = entries.find((e: any) => e.id === c.targetKey && e.invoices?.length);
+      if (!entry) {
+        const sameCustomer = entries.filter((e: any) => e.invoices?.length && c.targetKey.startsWith(`auto-transfer-${e.customerName || e.description}-`));
+        if (sameCustomer.length === 1) entry = sameCustomer[0];
+      }
+      if (!entry) continue;
+      const key = lineKey(entry);
+      fetch('/api/cashflow/comments', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: c.id, targetKey: key }) })
+        .then(r => { if (r.ok) setComments(prev => prev.map(x => x.id === c.id ? { ...x, targetKey: key } : x)); }).catch(() => {});
+    }
+  }, [comments.length, entries]); // eslint-disable-line react-hooks/exhaustive-deps
   const addComment = async () => {
     if (!commentTarget || !commentDraft.trim()) return;
     try {
@@ -430,7 +449,7 @@ export default function CashflowPage() {
       const claimed = invoices.filter((i: any) => i.lastReminderDate);
       detail.push([
         new Date(e.date), e.description, invoices.length ? `${invoices.length} facturas` : '', '', null, e.amount, e.balance,
-        claimed.length ? `${claimed.length}/${invoices.length} reclamadas` : '', null, commentText(e.id),
+        claimed.length ? `${claimed.length}/${invoices.length} reclamadas` : '', null, commentText(lineKey(e)),
       ]);
       levels.push(0);
       for (const inv of invoices) {
@@ -1015,10 +1034,10 @@ export default function CashflowPage() {
                                   </span>
                                 );
                               })()}
-                              {commentsFor(entry.id).length > 0 && (
-                                <button onClick={(e) => openComments(e, entry.id, entry.description)} className="flex items-center gap-1 max-w-xs bg-sky-500/10 text-sky-800 font-semibold px-1.5 py-0.5 rounded text-[10px] border border-sky-500/30 hover:bg-sky-500/20" title={commentsFor(entry.id).map(c => c.text).join('\n')}>
-                                  <MessageSquare size={11} className="shrink-0" /> <span className="truncate">{commentsFor(entry.id).at(-1).text}</span>
-                                  {commentsFor(entry.id).length > 1 && <span className="shrink-0">(+{commentsFor(entry.id).length - 1})</span>}
+                              {commentsFor(lineKey(entry)).length > 0 && (
+                                <button onClick={(e) => openComments(e, lineKey(entry), entry.description)} className="flex items-center gap-1 max-w-xs bg-sky-500/10 text-sky-800 font-semibold px-1.5 py-0.5 rounded text-[10px] border border-sky-500/30 hover:bg-sky-500/20" title={commentsFor(lineKey(entry)).map(c => c.text).join('\n')}>
+                                  <MessageSquare size={11} className="shrink-0" /> <span className="truncate">{commentsFor(lineKey(entry)).at(-1).text}</span>
+                                  {commentsFor(lineKey(entry)).length > 1 && <span className="shrink-0">(+{commentsFor(lineKey(entry)).length - 1})</span>}
                                 </button>
                               )}
                             </div>
@@ -1043,7 +1062,7 @@ export default function CashflowPage() {
                           </td>
                           <td className="p-4 text-center">
                             <div className="flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button onClick={(e) => openComments(e, entry.id, entry.description)} className={`p-1.5 rounded-md transition-colors hover:bg-sky-400/20 ${commentsFor(entry.id).length ? 'text-sky-700' : 'text-black'}`} title="Comentarios de la línea">
+                              <button onClick={(e) => openComments(e, lineKey(entry), entry.description)} className={`p-1.5 rounded-md transition-colors hover:bg-sky-400/20 ${commentsFor(lineKey(entry)).length ? 'text-sky-700' : 'text-black'}`} title="Comentarios de la línea">
                                 <MessageSquare size={14} />
                               </button>
                               {!entry.isRecurring && (

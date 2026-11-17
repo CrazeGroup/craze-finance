@@ -37,6 +37,18 @@ export async function POST(request: Request) {
   }
 }
 
+// Cambia la clave de un comentario (comentarios de línea antiguos → facturas de la línea)
+export async function PATCH(request: Request) {
+  try {
+    const { id, targetKey } = await request.json();
+    if (!Number.isInteger(Number(id)) || !targetKey) return NextResponse.json({ error: 'Datos no válidos' }, { status: 400 });
+    const comment = await prisma.cashflowComment.update({ where: { id: Number(id) }, data: { targetKey: String(targetKey) } });
+    return NextResponse.json(comment);
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
 export async function DELETE(request: Request) {
   try {
     const id = Number(new URL(request.url).searchParams.get('id'));
