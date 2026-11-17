@@ -4,6 +4,8 @@ import { useEffect, useState, useMemo } from 'react';
 import { tabCompany } from '@/contexts/CompanyContext';
 import { syncFromBc } from '@/lib/syncClient';
 import { RefreshCcw, Send, CheckCircle, ChevronDown, ChevronRight, Filter, Briefcase } from 'lucide-react';
+import ReminderDialog from '@/components/ReminderDialog';
+import { buildReminderPdf } from '@/lib/reminderPdf';
 
 // Empresa activa (cookie que escribe CompanyContext)
 
@@ -11,16 +13,8 @@ export default function RecobrosPage() {
   const [rawInvoices, setRawInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Email Modal State (Customer)
-  const [emailModalOpen, setEmailModalOpen] = useState(false);
-  const [emailDraft, setEmailDraft] = useState({
-    customerId: 0,
-    to: '',
-    subject: '',
-    message: '',
-    invoices: [] as any[]
-  });
-  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  // Recordatorio al cliente (diálogo común con Cashflow)
+  const [reminder, setReminder] = useState<{ customer: any; invoices: any[] } | null>(null);
 
   // Email Modal State (Salesperson)
   const [spEmailModalOpen, setSpEmailModalOpen] = useState(false);
@@ -234,18 +228,7 @@ export default function RecobrosPage() {
       alert("Selecciona al menos una factura para este cliente.");
       return;
     }
-
-    const totalAmount = selectedList.reduce((acc: number, inv: any) => acc + inv.amount, 0);
-    const invoiceDetails = selectedList.map((i: any) => `- Invoice ${i.bcId}: €${i.amount.toLocaleString(undefined, {minimumFractionDigits: 2})} (Overdue on ${new Date(i.dueDate).toLocaleDateString()})`).join('\n');
-    
-    setEmailDraft({
-      customerId: group.customer.id,
-      to: group.customer.email || '',
-      subject: `Recordatorio de facturas vencidas - ${group.customer.name}`,
-      message: `Dear ${group.customer.name},\n\nWe are contacting you to remind you that there are overdue invoices pending payment on your account.\nWe would appreciate it if you could settle this matter as soon as possible.\n\n${invoiceDetails}`,
-      invoices: selectedList
-    });
-    setEmailModalOpen(true);
+    setReminder({ customer: group.customer, invoices: selectedList });
   };
 
   const openSpEmailModal = (group: any) => {
@@ -270,147 +253,10 @@ export default function RecobrosPage() {
     setSpEmailModalOpen(true);
   };
 
-  const confirmSendEmail = async () => {
-    setIsSendingEmail(true);
-    try {
-      // Generate PDF on client side to bypass Vercel Puppeteer limits
-      const previewRes = await fetch(`/api/preview-report?customerId=${emailDraft.customerId}&invoices=${emailDraft.invoices.map((i: any) => i.id).join(',')}&message=${encodeURIComponent(emailDraft.message)}`);
-      const htmlContent = await previewRes.text();
-      
-      // Run html2pdf inside an isolated iframe to prevent html2canvas from parsing Tailwind v4 CSS
-      const iframe = document.createElement('iframe');
-      iframe.style.position = 'absolute';
-      iframe.style.width = '800px';
-      iframe.style.height = '1000px';
-      iframe.style.left = '-9999px';
-      document.body.appendChild(iframe);
-      
-      const pdfBase64 = await new Promise<string>((resolve, reject) => {
-        iframe.onload = async () => {
-          try {
-            const win = iframe.contentWindow as any;
-            // Wait for html2pdf to be loaded in the iframe just in case
-            if (!win.html2pdf) {
-              await new Promise(r => setTimeout(r, 500));
-            }
-            const pdfStr = await win.html2pdf().set({
-              margin: 10,
-              filename: 'Facturas.pdf',
-              image: { type: 'jpeg', quality: 0.98 },
-              html2canvas: { scale: 2, useCORS: true, logging: false },
-              jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-            }).from(win.document.getElementById('pdf-content')).outputPdf('datauristring');
-            resolve(pdfStr);
-          } catch (err) {
-            reject(err);
-          }
-        };
-
-        iframe.contentDocument!.open();
-        iframe.contentDocument!.write(`
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-            </head>
-            <body>
-              <div id="pdf-content">${htmlContent}</div>
-            </body>
-          </html>
-        `);
-        iframe.contentDocument!.close();
-      });
-      
-      document.body.removeChild(iframe);
-
-      const res = await fetch('/api/send-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customerId: emailDraft.customerId,
-          invoiceIds: emailDraft.invoices.map((i: any) => i.id),
-          to: emailDraft.to,
-          subject: emailDraft.subject,
-          message: emailDraft.message,
-          pdfBase64: pdfBase64
-        })
-      });
-      const data = await res.json();
-      
-      if (res.ok) {
-        if (data.previewUrl) {
-          alert(`Correo simulado enviado al cliente.\nMíralo aquí: ${data.previewUrl}`);
-        } else {
-          alert('Correo enviado correctamente.');
-        }
-        
-        const newSelected = { ...selectedInvoices };
-        emailDraft.invoices.forEach((i: any) => delete newSelected[i.id]);
-        setSelectedInvoices(newSelected);
-        await fetchInvoices();
-        setEmailModalOpen(false);
-      } else {
-        alert('Error al enviar correo: ' + data.error);
-      }
-    } catch (e: any) {
-      alert('Error en el sistema de correos: ' + e.message);
-    } finally {
-      setIsSendingEmail(false);
-    }
-  };
-
   const confirmSendSpEmail = async () => {
     setIsSendingSpEmail(true);
     try {
-      // Generate PDF on client side to bypass Vercel Puppeteer limits
-      const previewRes = await fetch(`/api/preview-report?customerId=${spEmailDraft.customerId}&invoices=${spEmailDraft.invoices.map((i: any) => i.id).join(',')}&message=${encodeURIComponent(spEmailDraft.message)}`);
-      const htmlContent = await previewRes.text();
-      
-      // Run html2pdf inside an isolated iframe to prevent html2canvas from parsing Tailwind v4 CSS
-      const iframe = document.createElement('iframe');
-      iframe.style.position = 'absolute';
-      iframe.style.width = '800px';
-      iframe.style.height = '1000px';
-      iframe.style.left = '-9999px';
-      document.body.appendChild(iframe);
-      
-      const pdfBase64 = await new Promise<string>((resolve, reject) => {
-        iframe.onload = async () => {
-          try {
-            const win = iframe.contentWindow as any;
-            // Wait for html2pdf to be loaded in the iframe just in case
-            if (!win.html2pdf) {
-              await new Promise(r => setTimeout(r, 500));
-            }
-            const pdfStr = await win.html2pdf().set({
-              margin: 10,
-              filename: 'Facturas.pdf',
-              image: { type: 'jpeg', quality: 0.98 },
-              html2canvas: { scale: 2, useCORS: true, logging: false },
-              jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-            }).from(win.document.getElementById('pdf-content')).outputPdf('datauristring');
-            resolve(pdfStr);
-          } catch (err) {
-            reject(err);
-          }
-        };
-
-        iframe.contentDocument!.open();
-        iframe.contentDocument!.write(`
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-            </head>
-            <body>
-              <div id="pdf-content">${htmlContent}</div>
-            </body>
-          </html>
-        `);
-        iframe.contentDocument!.close();
-      });
-      
-      document.body.removeChild(iframe);
+      const pdfBase64 = await buildReminderPdf(spEmailDraft.customerId, spEmailDraft.invoices.map((i: any) => i.id), spEmailDraft.message);
 
       const res = await fetch('/api/send-salesperson-email', {
         method: 'POST',
@@ -740,7 +586,7 @@ export default function RecobrosPage() {
                                   <span className="text-gray-900 font-bold">Al día</span>
                                 )}
                               </td>
-                              <td className="py-2">{inv.reminderCount}</td>
+                              <td className="py-2">{inv.reminderCount ? <span className="font-semibold text-amber-700">{inv.reminderCount}º</span> : '0'}</td>
                               <td className="py-2 text-gray-700 font-semibold">
                                 {inv.lastReminderSentAt ? new Date(inv.lastReminderSentAt).toLocaleDateString() : '-'}
                               </td>
@@ -760,72 +606,16 @@ export default function RecobrosPage() {
         </div>
       )}
 
-      {/* Customer Email Modal */}
-      {emailModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-gray-200 p-6 rounded-2xl w-full max-w-2xl shadow-2xl">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">Avisar al Cliente</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm text-gray-900 font-bold mb-1">Destinatario (Para)</label>
-                <input 
-                  type="email" 
-                  value={emailDraft.to}
-                  onChange={e => setEmailDraft({...emailDraft, to: e.target.value})}
-                  className="w-full bg-gray-50 border border-gray-200 rounded-lg p-2.5 text-gray-900 outline-none focus:border-indigo-500"
-                  placeholder="cliente@empresa.com"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-900 font-bold mb-1">Asunto</label>
-                <input 
-                  type="text" 
-                  value={emailDraft.subject}
-                  onChange={e => setEmailDraft({...emailDraft, subject: e.target.value})}
-                  className="w-full bg-gray-50 border border-gray-200 rounded-lg p-2.5 text-gray-900 outline-none focus:border-indigo-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-900 font-bold mb-1">Mensaje</label>
-                <textarea 
-                  value={emailDraft.message}
-                  onChange={e => setEmailDraft({...emailDraft, message: e.target.value})}
-                  className="w-full h-48 bg-gray-50 border border-gray-200 rounded-lg p-3 text-gray-900 outline-none focus:border-indigo-500 resize-none"
-                ></textarea>
-              </div>
-            </div>
-            <div className="flex justify-end gap-3 mt-6">
-              {emailDraft.invoices.length > 0 && (
-                <a 
-                  href={`/api/preview-report?customerId=${emailDraft.customerId}&invoices=${emailDraft.invoices.map((i: any) => i.id).join(',')}&message=${encodeURIComponent(emailDraft.message)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mr-auto px-4 py-2 rounded-lg text-black bg-blue-400/10 hover:bg-blue-400/20 transition-colors flex items-center gap-2"
-                >
-                  📄 Ver / Guardar PDF
-                </a>
-              )}
-              <button 
-                onClick={() => setEmailModalOpen(false)}
-                className="px-4 py-2 rounded-lg text-gray-800 font-medium hover:bg-gray-50 transition-colors"
-              >
-                Cancelar
-              </button>
-              <button 
-                onClick={confirmSendEmail}
-                disabled={isSendingEmail || !emailDraft.to}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
-                  isSendingEmail || !emailDraft.to
-                    ? 'bg-indigo-500/50 text-gray-900/50 cursor-not-allowed'
-                    : 'bg-indigo-500 hover:bg-indigo-400 text-gray-900 shadow-lg shadow-gray-500/20'
-                }`}
-              >
-                <Send size={16} className={isSendingEmail ? 'animate-pulse' : ''} />
-                {isSendingEmail ? 'Enviando...' : 'Enviar Correo'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Recordatorio al cliente: 1º normal, 2º comercial en copia, 3º aviso aseguradora */}
+      {reminder && (
+        <ReminderDialog customer={reminder.customer} invoices={reminder.invoices} onClose={() => setReminder(null)}
+          onSent={async () => {
+            const newSelected = { ...selectedInvoices };
+            reminder.invoices.forEach((i: any) => delete newSelected[i.id]);
+            setSelectedInvoices(newSelected);
+            setReminder(null);
+            await fetchInvoices();
+          }} />
       )}
 
       {/* Salesperson Email Modal */}

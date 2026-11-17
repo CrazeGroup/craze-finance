@@ -1,6 +1,8 @@
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Save, X, ChevronRight, ChevronDown, Download, Upload, Archive, Send, Briefcase, Calendar, Search, MailCheck, AlertTriangle, MessageSquare } from 'lucide-react';
+import ReminderDialog from '@/components/ReminderDialog';
+import { buildReminderPdf } from '@/lib/reminderPdf';
 import * as XLSX from 'xlsx';
 import { useCompany } from '@/contexts/CompanyContext';
 import { syncFromBc } from '@/lib/syncClient';
@@ -77,15 +79,8 @@ export default function CashflowPage() {
   
   // Email states
   const [selectedInvoices, setSelectedInvoices] = useState<Record<number, boolean>>({});
-  const [emailModalOpen, setEmailModalOpen] = useState(false);
-  const [emailDraft, setEmailDraft] = useState({
-    customerId: 0,
-    to: '',
-    subject: '',
-    message: '',
-    invoices: [] as any[]
-  });
-  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  // Recordatorio al cliente: el mismo diálogo que en Recobros (1º normal, 2º comercial en copia, 3º aviso aseguradora)
+  const [reminder, setReminder] = useState<{ customer: any; invoices: any[] } | null>(null);
 
   const [spEmailModalOpen, setSpEmailModalOpen] = useState(false);
   const [spEmailDraft, setSpEmailDraft] = useState({
@@ -390,33 +385,23 @@ export default function CashflowPage() {
     setSelectedInvoices(prev => ({ ...prev, [invoiceId]: !prev[invoiceId] }));
   };
 
+  // Facturas marcadas del cliente; sin ninguna marcada, todas las de la línea
+  const pickInvoices = (entry: any) => {
+    const sel = entry.invoices?.filter((inv: any) => selectedInvoices[inv.id]) || [];
+    return sel.length ? sel : (entry.invoices || []);
+  };
+
   const openEmailModal = (entry: any) => {
     if (!entry.customer) return;
-    const selectedList = entry.invoices?.filter((inv: any) => selectedInvoices[inv.id]) || [];
-    if (selectedList.length === 0) {
-      alert("Selecciona al menos una factura para este cliente.");
-      return;
-    }
-
-    const invoiceDetails = selectedList.map((i: any) => `- Factura ${i.bcId}: €${i.amount.toLocaleString(undefined, {minimumFractionDigits: 2})} (Vence el ${new Date(i.dueDate).toLocaleDateString()})`).join('\n');
-    
-    setEmailDraft({
-      customerId: entry.customer.id,
-      to: entry.customer.email || '',
-      subject: `Recordatorio de facturas pendientes - ${entry.customer.name}`,
-      message: `Estimado ${entry.customer.name},\n\nNos ponemos en contacto con usted para recordarle que existen facturas pendientes de pago en su cuenta.\nLe agradeceríamos que las liquidara lo antes posible.\n\n${invoiceDetails}`,
-      invoices: selectedList
-    });
-    setEmailModalOpen(true);
+    const selectedList = pickInvoices(entry);
+    if (selectedList.length === 0) return;
+    setReminder({ customer: entry.customer, invoices: selectedList });
   };
 
   const openSpEmailModal = (entry: any) => {
     if (!entry.customer) return;
-    const selectedList = entry.invoices?.filter((inv: any) => selectedInvoices[inv.id]) || [];
-    if (selectedList.length === 0) {
-      alert("Selecciona al menos una factura para notificar al comercial.");
-      return;
-    }
+    const selectedList = pickInvoices(entry);
+    if (selectedList.length === 0) return;
     if (!entry.customer.salespersonName) {
       alert("Este cliente no tiene un comercial asignado.");
       return;
@@ -432,41 +417,10 @@ export default function CashflowPage() {
     setSpEmailModalOpen(true);
   };
 
-  const confirmSendEmail = async () => {
-    setIsSendingEmail(true);
-    try {
-      const res = await fetch('/api/send-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customerId: emailDraft.customerId,
-          invoiceIds: emailDraft.invoices.map((i: any) => i.id),
-          to: emailDraft.to,
-          subject: emailDraft.subject,
-          message: emailDraft.message
-        })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        alert(data.previewUrl ? `Correo simulado enviado al cliente.\nMíralo aquí: ${data.previewUrl}` : 'Correo enviado correctamente.');
-        const newSelected = { ...selectedInvoices };
-        emailDraft.invoices.forEach((i: any) => delete newSelected[i.id]);
-        setSelectedInvoices(newSelected);
-        await fetchCashflow();
-        setEmailModalOpen(false);
-      } else {
-        alert('Error al enviar correo: ' + data.error);
-      }
-    } catch (e) {
-      alert('Error en el sistema de correos.');
-    } finally {
-      setIsSendingEmail(false);
-    }
-  };
-
   const confirmSendSpEmail = async () => {
     setIsSendingSpEmail(true);
     try {
+      const pdfBase64 = await buildReminderPdf(spEmailDraft.customerId, spEmailDraft.invoices.map((i: any) => i.id), spEmailDraft.message);
       const res = await fetch('/api/send-salesperson-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -475,7 +429,8 @@ export default function CashflowPage() {
           invoiceIds: spEmailDraft.invoices.map((i: any) => i.id),
           to: spEmailDraft.to,
           subject: spEmailDraft.subject,
-          message: spEmailDraft.message
+          message: spEmailDraft.message,
+          pdfBase64
         })
       });
       const data = await res.json();
@@ -1175,7 +1130,7 @@ export default function CashflowPage() {
                               })()}
                               {entry.isGroup && entry.customer && (
                                 <>
-                                  <button onClick={(e) => { e.stopPropagation(); openEmailModal(entry); }} className="p-1.5 text-gray-900 font-bold hover:bg-emerald-400/20 rounded-md transition-colors" title="Enviar Recordatorio al Cliente">
+                                  <button onClick={(e) => { e.stopPropagation(); openEmailModal(entry); }} className="p-1.5 text-gray-900 font-bold hover:bg-emerald-400/20 rounded-md transition-colors" title="Enviar recordatorio al cliente (1º, 2º con comercial en copia, 3º con aviso de aseguradora); sin facturas marcadas, todas las de la línea">
                                     <Send size={14} />
                                   </button>
                                   <button onClick={(e) => { e.stopPropagation(); openSpEmailModal(entry); }} className="p-1.5 text-orange-400 hover:bg-orange-400/20 rounded-md transition-colors" title="Avisar al Comercial">
@@ -1373,63 +1328,16 @@ export default function CashflowPage() {
           </div>
         )}
 
-        {/* Email Customer Modal */}
-        {emailModalOpen && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex justify-center items-center">
-            <div className="bg-white border border-gray-200 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden transform transition-all">
-              <div className="flex justify-between items-center p-6 border-b border-gray-200 bg-gray-50">
-                <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                  <Send className="text-gray-900 font-bold" />
-                  Enviar Recordatorio a {emailDraft.to}
-                </h3>
-                <button onClick={() => setEmailModalOpen(false)} className="text-gray-900 font-bold hover:text-gray-900 transition-colors">
-                  <X size={20} />
-                </button>
-              </div>
-              <div className="p-6 space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-900 font-bold mb-1">Para (Email del Cliente)</label>
-                  <input 
-                    type="email" 
-                    value={emailDraft.to}
-                    onChange={e => setEmailDraft({...emailDraft, to: e.target.value})}
-                    className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-900 font-bold mb-1">Asunto</label>
-                  <input 
-                    type="text" 
-                    value={emailDraft.subject}
-                    onChange={e => setEmailDraft({...emailDraft, subject: e.target.value})}
-                    className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-900 font-bold mb-1">Mensaje</label>
-                  <textarea 
-                    rows={8}
-                    value={emailDraft.message}
-                    onChange={e => setEmailDraft({...emailDraft, message: e.target.value})}
-                    className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 resize-none font-mono text-sm"
-                  />
-                </div>
-                <div className="flex justify-end gap-3 mt-6">
-                  <button onClick={() => setEmailModalOpen(false)} className="px-5 py-2.5 text-sm font-medium text-gray-900 font-bold hover:text-gray-900 transition-colors">
-                    Cancelar
-                  </button>
-                  <button 
-                    onClick={confirmSendEmail}
-                    disabled={isSendingEmail}
-                    className="px-5 py-2.5 bg-gray-800 hover:bg-gray-700 text-white text-gray-900 text-sm font-medium rounded-xl shadow-lg transition-all disabled:opacity-50 flex items-center gap-2"
-                  >
-                    {isSendingEmail ? <RefreshCw className="animate-spin" size={16} /> : <Send size={16} />}
-                    {isSendingEmail ? 'Enviando...' : 'Enviar Correo'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+        {/* Recordatorio al cliente (común con Recobros) */}
+        {reminder && (
+          <ReminderDialog customer={reminder.customer} invoices={reminder.invoices} onClose={() => setReminder(null)}
+            onSent={async () => {
+              const newSelected = { ...selectedInvoices };
+              reminder.invoices.forEach((i: any) => delete newSelected[i.id]);
+              setSelectedInvoices(newSelected);
+              setReminder(null);
+              await fetchCashflow();
+            }} />
         )}
 
         {/* Email Salesperson Modal */}

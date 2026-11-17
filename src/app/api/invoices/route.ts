@@ -50,9 +50,10 @@ export async function GET() {
         ...invoice,
         isOverdue,
         daysOverdue,
-        reminderCount: invoice.reminders.length,
+        // Nº de reclamaciones, el mismo que en Cashflow (correo desde cualquiera de los dos o marca manual)
+        reminderCount: invoice.lastReminderDate ? Math.max(invoice.claimCount || 0, 1) : 0,
         // Using the field requested by user or fallback to relation
-        lastReminderSentAt: invoice.lastReminderDate || invoice.reminders[0]?.sentAt || null,
+        lastReminderSentAt: invoice.lastReminderDate || null,
       };
     });
 

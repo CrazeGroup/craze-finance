@@ -5,7 +5,7 @@ import { registerClaim } from '@/lib/claims';
 
 export async function POST(request: Request) {
   try {
-    const { customerId, invoiceIds, to, subject, message, pdfBase64 } = await request.json();
+    const { customerId, invoiceIds, to, cc, subject, message, pdfBase64, level, insurance } = await request.json();
 
     if (!invoiceIds || !Array.isArray(invoiceIds) || invoiceIds.length === 0 || !to || !subject || !message || !customerId || !pdfBase64) {
       return NextResponse.json({ error: 'Faltan campos requeridos' }, { status: 400 });
@@ -54,7 +54,7 @@ export async function POST(request: Request) {
       <div style="margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px; font-size: 14px; color: #555;">
         <p style="margin: 0; font-weight: bold; color: #111;">CRAZE GmbH Finance Team</p>
         <p style="margin: 5px 0;">Haynauer Str. 72 a | 12249 Berlin | Germany</p>
-        <p style="margin: 0;">Email <a href="mailto:finance@craze.toys" style="color: #3b82f6; text-decoration: none;">finance@craze.toys</a></p>
+        <p style="margin: 0;">Email <a href="mailto:invoice@craze-group.com" style="color: #3b82f6; text-decoration: none;">invoice@craze-group.com</a></p>
         <p style="margin: 0;">Web <a href="https://www.craze-group.com" style="color: #3b82f6; text-decoration: none;">www.craze-group.com</a></p>
         <br/>
         <img src="cid:crazelogo" alt="Craze Group" width="130" style="margin-top: 10px; display: block;" />
@@ -66,6 +66,7 @@ export async function POST(request: Request) {
     const info = await transporter.sendMail({
       from: fromAddress,
       to,
+      ...(cc ? { cc } : {}),
       subject,
       text: message, // plain text
       html: `<div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; color: #333;">
@@ -99,20 +100,22 @@ export async function POST(request: Request) {
       await prisma.reminder.create({
         data: {
           invoiceId,
-          messageContent: message,
+          messageContent: level ? `[${level}º recordatorio${cc ? ` · CC ${cc}` : ''}${insurance ? ' · aviso aseguradora' : ''}]\n${message}` : message,
         }
       });
 
     }
-    await registerClaim(invoiceIds.map(Number));
+    await registerClaim(invoiceIds.map(Number), new Date(), Number(level) || undefined);
+    // Comercial en copia: cuenta como aviso al comercial
+    if (cc) await prisma.customer.update({ where: { id: customerId }, data: { salespersonReminderCount: { increment: 1 }, salespersonLastReminderDate: new Date() } }).catch(() => {});
 
     const customer = await prisma.customer.findUnique({ where: { id: customerId } });
     if (customer) {
       await prisma.actionLog.create({
         data: {
           user: 'Sistema',
-          action: 'Correo a cliente (Recordatorio)',
-          details: `Cliente: ${customer.name} | Enviado a ${to} para ${invoiceIds.length} factura(s)`,
+          action: level ? `Recordatorio ${level} a cliente` : 'Correo a cliente (Recordatorio)',
+          details: `Cliente: ${customer.name} | Enviado a ${to}${cc ? ` (CC ${cc})` : ''} para ${invoiceIds.length} factura(s)${insurance ? ' · aviso aseguradora' : ''}`,
           companyId: customer.companyId
         }
       });
