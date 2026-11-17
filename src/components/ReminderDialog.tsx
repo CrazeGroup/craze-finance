@@ -46,6 +46,15 @@ export default function ReminderDialog({ customer, invoices, onClose, onSent }: 
   const [message, setMessage] = useState(buildMessage(customer.name, proposed, proposed >= 3));
   const [sending, setSending] = useState(false);
   const [attachInvoices, setAttachInvoices] = useState(false);
+  // Desde qué cuenta sale: el buzón del usuario (si lo conectó) o la cuenta SMTP común
+  const [mailFrom, setMailFrom] = useState<{ connected: boolean; email?: string; smtpFrom?: string; username?: string } | null>(null);
+  useEffect(() => { fetch('/api/mail/status', { cache: 'no-store' }).then(r => r.json()).then(setMailFrom).catch(() => {}); }, []);
+  const connectUrl = () => `/api/auth/microsoft?purpose=mail&back=${encodeURIComponent(window.location.pathname)}`;
+  const disconnect = async () => {
+    if (!confirm('¿Desconectar tu correo? Los recordatorios volverán a salir por la cuenta común.')) return;
+    await fetch('/api/mail/status', { method: 'DELETE' });
+    setMailFrom(m => m ? { ...m, connected: false } : m);
+  };
 
   // Email del comercial (BC) en cuanto se necesita
   useEffect(() => {
@@ -83,7 +92,7 @@ export default function ReminderDialog({ customer, invoices, onClose, onSent }: 
       const data = await res.json();
       if (!res.ok) throw new Error(data.details || data.error);
       const pdfNote = attachInvoices ? `\n${data.invoicePdfs || 0} PDF de factura adjuntos.${data.missingPdfs?.length ? ` Sin PDF en BC: ${data.missingPdfs.join(', ')}` : ''}` : '';
-      alert((data.previewUrl ? `Correo simulado enviado.\nMíralo aquí: ${data.previewUrl}` : `Recordatorio ${level} enviado a ${to}${cc ? ` (copia a ${cc})` : ''}.`) + pdfNote);
+      alert((data.previewUrl ? `Correo simulado enviado.\nMíralo aquí: ${data.previewUrl}` : `Recordatorio ${level} enviado desde ${data.from || '—'}${data.via === 'graph' ? ' (tu buzón)' : ''} a ${to}${cc ? ` (copia a ${cc})` : ''}.`) + pdfNote + (data.note ? `\n${data.note}` : ''));
       onSent();
     } catch (e: any) {
       alert(`Error al enviar el recordatorio: ${e.message || e}`);
@@ -116,6 +125,22 @@ export default function ReminderDialog({ customer, invoices, onClose, onSent }: 
         </div>
 
         <div className="space-y-3">
+          {mailFrom && (
+            <div className={`rounded-lg border px-3 py-2 text-xs flex flex-wrap items-center gap-x-2 gap-y-1 ${mailFrom.connected ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-gray-200 bg-gray-50 text-gray-700'}`}>
+              {mailFrom.connected ? (
+                <>
+                  <span>Se enviará desde <strong>tu buzón</strong> ({mailFrom.email}).</span>
+                  <button type="button" onClick={disconnect} className="underline">Desconectar</button>
+                </>
+              ) : (
+                <>
+                  <span>Se enviará desde la cuenta común <strong>{mailFrom.smtpFrom || '—'}</strong>.</span>
+                  <a href={connectUrl()} className="font-semibold underline">Conectar mi correo</a>
+                  <span className="text-gray-500">para que salga desde el tuyo</span>
+                </>
+              )}
+            </div>
+          )}
           <div>
             <label className="block text-sm font-bold text-gray-900 mb-1">Para</label>
             <input type="text" value={to} onChange={e => setTo(e.target.value)} className={box} placeholder="cliente@empresa.com (varios separados por coma)" />

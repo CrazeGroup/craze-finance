@@ -6,6 +6,7 @@ import { useComments, CommentBadge, CommentsDialog } from '@/components/InvoiceC
 import { syncFromBc } from '@/lib/syncClient';
 import { RefreshCcw, Send, CheckCircle, ChevronDown, ChevronRight, Filter, Briefcase, MessageSquare } from 'lucide-react';
 import ReminderDialog from '@/components/ReminderDialog';
+import MailConnectNotice from '@/components/MailConnectNotice';
 
 // Empresa activa (cookie que escribe CompanyContext)
 
@@ -227,6 +228,7 @@ export default function RecobrosPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 p-8 pb-32">
+      <MailConnectNotice />
       <header className="flex flex-wrap justify-between items-end mb-8 gap-4">
         <div>
           <h1 className="text-4xl font-black text-black tracking-tight">

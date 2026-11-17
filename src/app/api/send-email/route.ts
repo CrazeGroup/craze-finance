@@ -6,6 +6,7 @@ import { salesDocumentPdfs } from '@/lib/invoicePdfs';
 import { companyAddress, addressLines } from '@/lib/companyAddress';
 import { logAction } from '@/lib/logger';
 import { getSession } from '@/lib/auth';
+import { mailStatus, sendAsUser } from '@/lib/graphMail';
 
 // Con los PDF de las facturas de BC puede tardar
 export const maxDuration = 120;
@@ -75,40 +76,57 @@ export async function POST(request: Request) {
 
     const formattedMessage = message.split('\n\n').map((p: string) => `<p style="margin-top: 0; margin-bottom: 16px;">${p.replace(/\n/g, '<br/>')}</p>`).join('');
 
-    const info = await transporter.sendMail({
-      from: fromAddress,
-      to,
-      ...(cc ? { cc } : {}),
-      subject,
-      text: message, // plain text
-      html: `<div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; color: #333;">
+    const html = `<div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; color: #333;">
               ${formattedMessage}
               ${signature}
-             </div>`, 
-      attachments: [
-        ...invoicePdfs.files,
-        {
-          filename: 'Overdue_Invoices.pdf',
-          content: Buffer.from(pdfBuffer),
-          contentType: 'application/pdf'
-        },
-        {
-          filename: 'logo.png',
-          path: 'https://craze-finance-iota.vercel.app/logo.png',
-          cid: 'crazelogo'
-        }
-      ]
-    });
+             </div>`;
+    const summaryPdf = { filename: 'Overdue_Invoices.pdf', content: Buffer.from(pdfBuffer), contentType: 'application/pdf' };
+    const sender = (await getSession())?.username || '';
 
-    console.log('Message sent: %s', info.messageId);
-    
-    let previewUrl = null;
-    if (isEthereal) {
-      previewUrl = nodemailer.getTestMessageUrl(info);
-      console.log('Preview URL: %s', previewUrl);
+    // Desde el buzón del usuario (Microsoft Graph) si lo ha conectado; si no, o si falla por tamaño, la cuenta SMTP común
+    let via: 'graph' | 'smtp' = 'smtp';
+    let fromUsed = emailConfig?.fromEmail || '';
+    let graphNote = '';
+    let info: any = { messageId: null };
+    if (sender && (await mailStatus(sender)).connected) {
+      try {
+        const logo = await fetch(new URL('/logo.png', request.url)).then(r => r.arrayBuffer()).then(b => Buffer.from(b)).catch(() => null);
+        await sendAsUser(sender, {
+          to, cc, subject, html,
+          attachments: [
+            ...[...invoicePdfs.files, summaryPdf].map(f => ({ name: f.filename, contentType: f.contentType, content: f.content })),
+            ...(logo ? [{ name: 'logo.png', contentType: 'image/png', content: logo, contentId: 'crazelogo' }] : []),
+          ],
+        });
+        via = 'graph';
+        fromUsed = (await mailStatus(sender)).email || sender;
+      } catch (e: any) {
+        if (e.status !== 413) throw e;
+        graphNote = 'El correo pesaba demasiado para enviarlo desde tu buzón; se ha enviado por la cuenta común.';
+      }
+    }
+    if (via === 'smtp') {
+      info = await transporter.sendMail({
+        from: fromAddress,
+        to,
+        ...(cc ? { cc } : {}),
+        subject,
+        text: message,
+        html,
+        attachments: [
+          ...invoicePdfs.files,
+          summaryPdf,
+          { filename: 'logo.png', path: 'https://craze-finance-iota.vercel.app/logo.png', cid: 'crazelogo' },
+        ],
+      });
+      console.log('Message sent: %s', info.messageId);
     }
 
-    const sender = (await getSession())?.username || '';
+    let previewUrl = null;
+    if (via === 'smtp' && isEthereal) {
+      previewUrl = nodemailer.getTestMessageUrl(info);
+    }
+
     // Save to database for all selected invoices
     for (const invoiceId of invoiceIds) {
       await prisma.reminder.create({
@@ -130,7 +148,7 @@ export async function POST(request: Request) {
       const docs = await prisma.invoice.findMany({ where: { id: { in: invoiceIds.map(Number) } }, select: { bcId: true } });
       await logAction(
         level ? `Recordatorio ${level} a cliente` : 'Correo a cliente (Recordatorio)',
-        `Cliente: ${customer.name} | Enviado a ${to}${cc ? ` (CC ${cc})` : ''} | ${docs.map(d => d.bcId).join(', ')}${insurance ? ' · aviso aseguradora' : ''}${invoicePdfs.files.length ? ` · ${invoicePdfs.files.length} PDF de factura` : ''}`,
+        `Cliente: ${customer.name} | Desde ${fromUsed}${via === 'graph' ? ' (su buzón)' : ''} a ${to}${cc ? ` (CC ${cc})` : ''} | ${docs.map(d => d.bcId).join(', ')}${insurance ? ' · aviso aseguradora' : ''}${invoicePdfs.files.length ? ` · ${invoicePdfs.files.length} PDF de factura` : ''}`,
         customer.companyId,
       );
     }
@@ -139,6 +157,9 @@ export async function POST(request: Request) {
       success: true, 
       messageId: info.messageId, 
       previewUrl: previewUrl || null,
+      via,
+      from: fromUsed,
+      note: graphNote,
       invoicePdfs: invoicePdfs.files.length,
       missingPdfs: invoicePdfs.missing
     });

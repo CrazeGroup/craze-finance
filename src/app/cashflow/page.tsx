@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Save, X, ChevronRight, ChevronDown, Download, Upload, Archive, Send, Calendar, Search, MailCheck, AlertTriangle, MessageSquare } from 'lucide-react';
 import ReminderDialog from '@/components/ReminderDialog';
+import MailConnectNotice from '@/components/MailConnectNotice';
 import { lineKey, matchComments } from '@/components/InvoiceComments';
 import * as XLSX from 'xlsx';
 import { useCompany } from '@/contexts/CompanyContext';
@@ -718,6 +719,7 @@ export default function CashflowPage() {
 
   return (
     <div className="flex-1 px-6 py-8 w-full">
+        <MailConnectNotice />
         <div className="flex flex-wrap justify-between items-end gap-4 mb-8 sticky top-0 z-10 bg-gray-50/95 backdrop-blur-md pb-4 pt-6 -mt-6 border-b border-gray-200">
           <div>
             <h1 className="text-4xl font-black text-black mb-2">

@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import prisma from '@/lib/prisma';
-import { entraConfig, setSessionCookie } from '@/lib/auth';
+import { entraConfig, setSessionCookie, getSession } from '@/lib/auth';
+import { GRAPH_MAIL_SCOPE, saveMailToken } from '@/lib/graphMail';
 
 // Vuelta de Entra ID: canjea el code, verifica el id_token (firma, tenant, client id, nonce) y abre sesión con el
 // usuario de la tabla User cuyo username es el correo de Microsoft. Un correo que no esté dado de alta no entra.
@@ -18,9 +19,22 @@ export async function GET(req: Request) {
   const cfg = entraConfig();
   if (!cfg) return fail('sso_config');
 
-  const [state, nonce] = ((await cookies()).get('sso-state')?.value || '').split('.');
+  const [state, nonce, purpose, backRaw] = ((await cookies()).get('sso-state')?.value || '').split('.');
+  const mail = purpose === 'mail';
+  const back = decodeURIComponent(backRaw || '/recobros');
   const code = searchParams.get('code');
-  if (searchParams.get('error')) return fail('sso_cancelado');
+  if (searchParams.get('error')) {
+    // Conectar correo cancelado o sin permiso (p. ej. AADSTS65001 / "need admin approval"): vuelve a la página
+    if (mail) {
+      const target = new URL(back.startsWith('/') ? back : '/recobros', origin);
+      target.searchParams.set('mail', 'error');
+      target.searchParams.set('detail', String(searchParams.get('error_description') || searchParams.get('error')).split('\n')[0].slice(0, 200));
+      const response = NextResponse.redirect(target);
+      response.cookies.delete({ name: 'sso-state', path: '/api/auth/microsoft' });
+      return response;
+    }
+    return fail('sso_cancelado');
+  }
   if (!code || !state || searchParams.get('state') !== state) return fail('sso_state');
 
   try {
@@ -33,7 +47,7 @@ export async function GET(req: Request) {
         grant_type: 'authorization_code',
         code,
         redirect_uri: `${origin}/api/auth/microsoft/callback`,
-        scope: 'openid profile email',
+        scope: mail ? GRAPH_MAIL_SCOPE : 'openid profile email',
       }),
     });
     const tokens = await tokenRes.json();
@@ -47,6 +61,24 @@ export async function GET(req: Request) {
     if (payload.nonce !== nonce) return fail('sso_state');
 
     const email = String(payload.preferred_username || payload.email || payload.upn || '').trim().toLowerCase();
+
+    // Conectar el correo: la cuenta de Microsoft tiene que ser la del usuario de la sesión
+    if (mail) {
+      const session = await getSession();
+      const target = new URL(back.startsWith('/') ? back : '/recobros', origin);
+      if (!session?.username || session.username.toLowerCase() !== email) {
+        target.searchParams.set('mail', 'otra_cuenta');
+      } else if (!tokens.refresh_token) {
+        target.searchParams.set('mail', 'sin_permiso');
+      } else {
+        await saveMailToken(session.username, tokens.refresh_token, email);
+        await prisma.actionLog.create({ data: { user: session.username, action: 'Correo conectado', details: `Recordatorios desde ${email} (Microsoft Graph)` } }).catch(() => {});
+        target.searchParams.set('mail', 'conectado');
+      }
+      const response = NextResponse.redirect(target);
+      response.cookies.delete({ name: 'sso-state', path: '/api/auth/microsoft' });
+      return response;
+    }
     const user = email ? await prisma.user.findFirst({ where: { username: { equals: email, mode: 'insensitive' } } }) : null;
     if (!user) return fail('sso_usuario', email);
 
