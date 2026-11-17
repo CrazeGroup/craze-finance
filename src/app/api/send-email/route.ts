@@ -105,7 +105,8 @@ export async function POST(request: Request) {
       });
 
     }
-    await registerClaim(invoiceIds.map(Number), new Date(), Number(level) || undefined);
+    // Cada factura suma su propia reclamación (en un mismo correo puede ir el 1er recordatorio de una y el 2º de otra)
+    await registerClaim(invoiceIds.map(Number), new Date());
     // Comercial en copia: cuenta como aviso al comercial
     if (cc) await prisma.customer.update({ where: { id: customerId }, data: { salespersonReminderCount: { increment: 1 }, salespersonLastReminderDate: new Date() } }).catch(() => {});
 

@@ -1,6 +1,10 @@
 import prisma from '@/lib/prisma';
 import { CUSTOMER_INVOICE_TYPES } from '@/lib/documentTypes';
 
+// Nº de recordatorio que lleva cada factura en este correo: sus reclamaciones (Cashflow/Recobros) + 1
+const nextReminder = (inv: { lastReminderDate: Date | null; claimCount: number }) => (inv.lastReminderDate ? Math.max(inv.claimCount || 0, 1) : 0) + 1;
+const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' } as Record<number, string>)[n % 10] || 'th'}`;
+
 export async function generateReportHtml(customerId: number, invoiceIds: number[], customMessage?: string) {
   const customer = await prisma.customer.findUnique({
     where: { id: customerId },
@@ -112,6 +116,7 @@ export async function generateReportHtml(customerId: number, invoiceIds: number[
         <td style="padding: 12px; border-bottom: 1px solid #eee; color: #333;">${inv.bcId}</td>
         <td style="padding: 12px; border-bottom: 1px solid #eee; color: #333;">${dueDate.toLocaleDateString()}</td>
         <td style="padding: 12px; border-bottom: 1px solid #eee; color: #d97706; font-weight: bold;">${diffDays} days</td>
+        <td style="padding: 12px; border-bottom: 1px solid #eee; color: #333;">${ordinal(nextReminder(inv))} reminder</td>
         <td style="padding: 12px; border-bottom: 1px solid #eee; color: #333; text-align: right; font-weight: bold;">€${inv.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
       </tr>
     `;
@@ -196,6 +201,7 @@ export async function generateReportHtml(customerId: number, invoiceIds: number[
               <th style="padding: 12px; text-align: left; color: #475569; font-weight: 600; border-bottom: 2px solid #cbd5e1;">Invoice No.</th>
               <th style="padding: 12px; text-align: left; color: #475569; font-weight: 600; border-bottom: 2px solid #cbd5e1;">Due Date</th>
               <th style="padding: 12px; text-align: left; color: #475569; font-weight: 600; border-bottom: 2px solid #cbd5e1;">Overdue By</th>
+              <th style="padding: 12px; text-align: left; color: #475569; font-weight: 600; border-bottom: 2px solid #cbd5e1;">Reminder</th>
               <th style="padding: 12px; text-align: right; color: #475569; font-weight: 600; border-bottom: 2px solid #cbd5e1;">Remaining Amount</th>
             </tr>
           </thead>
@@ -204,7 +210,7 @@ export async function generateReportHtml(customerId: number, invoiceIds: number[
           </tbody>
           <tfoot>
             <tr>
-              <td colspan="3" style="padding: 15px 12px; text-align: right; font-weight: 700; color: #0f172a; font-size: 16px;">Total Overdue:</td>
+              <td colspan="4" style="padding: 15px 12px; text-align: right; font-weight: 700; color: #0f172a; font-size: 16px;">Total Overdue:</td>
               <td style="padding: 15px 12px; text-align: right; font-weight: 900; color: #10b981; font-size: 18px;">€${totalAmount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
             </tr>
           </tfoot>

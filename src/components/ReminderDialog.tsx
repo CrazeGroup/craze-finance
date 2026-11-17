@@ -8,7 +8,7 @@ import { claimCountOf } from '@/lib/claimLevel';
 // Recordatorio al cliente, el mismo en Recobros y en Cashflow. Tres niveles:
 // 1 = normal; 2 = se puede poner al comercial en copia; 3 = además, aviso de que pasaremos el caso a la aseguradora.
 // El nivel propuesto es la siguiente reclamación de las facturas (máx. 3). Al enviar, las facturas quedan con
-// claimCount = nivel y lastReminderDate = hoy (se ve igual en las dos pantallas).
+// una reclamación más cada una (claimCount + 1, cada factura con su propio nº, que sale en el PDF) y lastReminderDate = hoy.
 type Customer = { id: number; bcId?: string; name: string; email?: string | null; salespersonCode?: string | null; salespersonName?: string | null };
 type Inv = { id: number; bcId: string; amount: number; dueDate: string; currencyCode?: string | null; lastReminderDate?: string | null; claimCount?: number | null };
 
@@ -25,10 +25,11 @@ const INTRO: Record<number, string> = {
   3: 'Despite our previous reminders, the invoices below are still unpaid. This is our final reminder.\nPlease settle the outstanding amount immediately.',
 };
 
+const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' } as Record<number, string>)[n % 10] || 'th'}`;
 const money = (n: number, cur?: string | null) => `${cur && cur !== 'EUR' ? `${cur} ` : '€'}${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 function buildMessage(name: string, level: number, invoices: Inv[], insurance: boolean) {
-  const list = invoices.map(i => `- Invoice ${i.bcId}: ${money(i.amount, i.currencyCode)} (Overdue on ${new Date(i.dueDate).toLocaleDateString('de-DE')})`).join('\n');
+  const list = invoices.map(i => `- Invoice ${i.bcId}: ${money(i.amount, i.currencyCode)} (Overdue on ${new Date(i.dueDate).toLocaleDateString('de-DE')}, ${ordinal(claimCountOf(i) + 1)} reminder)`).join('\n');
   return `Dear ${name},\n\n${INTRO[level]}\n\n${list}${insurance ? `\n\n${INSURANCE_TEXT}` : ''}`;
 }
 
