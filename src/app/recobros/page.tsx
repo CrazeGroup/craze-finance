@@ -6,7 +6,6 @@ import { useComments, CommentBadge, CommentsDialog } from '@/components/InvoiceC
 import { syncFromBc } from '@/lib/syncClient';
 import { RefreshCcw, Send, CheckCircle, ChevronDown, ChevronRight, Filter, Briefcase, MessageSquare } from 'lucide-react';
 import ReminderDialog from '@/components/ReminderDialog';
-import { buildReminderPdf } from '@/lib/reminderPdf';
 
 // Empresa activa (cookie que escribe CompanyContext)
 
@@ -21,17 +20,6 @@ export default function RecobrosPage() {
 
   // Recordatorio al cliente (diálogo común con Cashflow)
   const [reminder, setReminder] = useState<{ customer: any; invoices: any[] } | null>(null);
-
-  // Email Modal State (Salesperson)
-  const [spEmailModalOpen, setSpEmailModalOpen] = useState(false);
-  const [spEmailDraft, setSpEmailDraft] = useState({
-    customerId: 0,
-    to: '',
-    subject: '',
-    message: '',
-    invoices: [] as any[]
-  });
-  const [isSendingSpEmail, setIsSendingSpEmail] = useState(false);
 
   // UI State
   const [searchQuery, setSearchQuery] = useState('');
@@ -237,69 +225,6 @@ export default function RecobrosPage() {
     setReminder({ customer: group.customer, invoices: selectedList });
   };
 
-  const openSpEmailModal = (group: any) => {
-    const selectedList = group.invoices.filter((inv: any) => selectedInvoices[inv.id]);
-    if (selectedList.length === 0) {
-      alert("Selecciona al menos una factura para notificar al comercial.");
-      return;
-    }
-
-    if (!group.customer.salespersonName) {
-      alert("Este cliente no tiene un comercial asignado.");
-      return;
-    }
-
-    setSpEmailDraft({
-      customerId: group.customer.id,
-      to: 'prueba.comercial@craze.local', // Placeholder email for now
-      subject: `[Action Required] Customer ${group.customer.name} - Overdue Invoices`,
-      message: `Hi ${group.customer.salespersonName || 'Salesperson'},\n\nWe urgently need your assistance regarding ${group.customer.name}'s account (${group.customer.bcId}). They have significantly overdue invoices totaling €${group.amtOverdue.toLocaleString(undefined, {minimumFractionDigits: 2})}.\n\nWhile we value our relationship with them, these outstanding balances are severely impacting our credit risk metrics and cash flow. Please reach out to your contact immediately to secure a firm payment date. We need this resolved as soon as possible to avoid further escalation or a potential credit hold on their account.\n\nThank you for your prompt action,\nCraze Gmbh Finance Team`,
-      invoices: selectedList
-    });
-    setSpEmailModalOpen(true);
-  };
-
-  const confirmSendSpEmail = async () => {
-    setIsSendingSpEmail(true);
-    try {
-      const pdfBase64 = await buildReminderPdf(spEmailDraft.customerId, spEmailDraft.invoices.map((i: any) => i.id), spEmailDraft.message);
-
-      const res = await fetch('/api/send-salesperson-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customerId: spEmailDraft.customerId,
-          invoiceIds: spEmailDraft.invoices.map((i: any) => i.id),
-          to: spEmailDraft.to,
-          subject: spEmailDraft.subject,
-          message: spEmailDraft.message,
-          pdfBase64: pdfBase64
-        })
-      });
-      const data = await res.json();
-      
-      if (res.ok) {
-        if (data.previewUrl) {
-          alert(`Correo simulado enviado al comercial.\nMíralo aquí: ${data.previewUrl}`);
-        } else {
-          alert('Correo enviado al comercial correctamente.');
-        }
-        
-        const newSelected = { ...selectedInvoices };
-        spEmailDraft.invoices.forEach((i: any) => delete newSelected[i.id]);
-        setSelectedInvoices(newSelected);
-        await fetchInvoices();
-        setSpEmailModalOpen(false);
-      } else {
-        alert('Error al enviar correo al comercial: ' + data.error);
-      }
-    } catch (e: any) {
-      alert('Error en el sistema de correos al comercial: ' + e.message);
-    } finally {
-      setIsSendingSpEmail(false);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-slate-50 p-8 pb-32">
       <header className="flex flex-wrap justify-between items-end mb-8 gap-4">
@@ -487,18 +412,7 @@ export default function RecobrosPage() {
                       }`}
                     >
                       <Send size={16} />
-                      Avisar Cliente ({selectedCount})
-                    </button>
-                    <button
-                      onClick={() => openSpEmailModal(group)}
-                      className={`flex items-center justify-center w-full sm:w-auto gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
-                        !hasSelection || !group.customer.salespersonName
-                          ? 'bg-gray-100 text-gray-900 font-bold hover:bg-gray-200'
-                          : 'bg-gray-600 hover:bg-gray-500 text-white shadow-md'
-                      }`}
-                    >
-                      <Briefcase size={16} />
-                      Avisar Comercial
+                      Enviar recordatorio ({selectedCount})
                     </button>
                   </div>
                 </div>
@@ -640,80 +554,6 @@ export default function RecobrosPage() {
           }} />
       )}
 
-      {/* Salesperson Email Modal */}
-      {spEmailModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-gray-300 p-6 rounded-2xl w-full max-w-2xl shadow-2xl">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">Avisar al Comercial</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm text-gray-900 font-bold/80 mb-1">Destinatario (Comercial)</label>
-                <input 
-                  type="email" 
-                  value={spEmailDraft.to}
-                  onChange={e => setSpEmailDraft({...spEmailDraft, to: e.target.value})}
-                  className="w-full bg-gray-50 border border-emerald-500/20 rounded-lg p-2.5 text-gray-900 outline-none focus:border-emerald-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-900 font-bold/80 mb-1">Asunto</label>
-                <input 
-                  type="text" 
-                  value={spEmailDraft.subject}
-                  onChange={e => setSpEmailDraft({...spEmailDraft, subject: e.target.value})}
-                  className="w-full bg-gray-50 border border-emerald-500/20 rounded-lg p-2.5 text-gray-900 outline-none focus:border-emerald-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-900 font-bold/80 mb-1">Mensaje (Personalizable)</label>
-                <textarea 
-                  value={spEmailDraft.message}
-                  onChange={e => setSpEmailDraft({...spEmailDraft, message: e.target.value})}
-                  className="w-full h-32 bg-gray-50 border border-emerald-500/20 rounded-lg p-3 text-gray-900 outline-none focus:border-emerald-500 resize-none"
-                ></textarea>
-              </div>
-              <div className="bg-emerald-500/10 rounded-lg p-4 border border-emerald-500/20">
-                <p className="text-sm text-emerald-700 font-bold font-medium mb-2">Se adjuntará un informe automático PDF/HTML con la siguiente información:</p>
-                <ul className="text-xs text-emerald-200/80 list-disc list-inside space-y-1">
-                  <li>Diseño CRAZE con cabecera y datos de empresa.</li>
-                  <li>Listado de las {spEmailDraft.invoices.length} facturas seleccionadas.</li>
-                  <li>Días de retraso e importe de cada factura.</li>
-                </ul>
-              </div>
-            </div>
-            <div className="flex justify-end gap-3 mt-6">
-              {spEmailDraft.invoices.length > 0 && (
-                <a 
-                  href={`/api/preview-report?customerId=${spEmailDraft.customerId}&invoices=${spEmailDraft.invoices.map((i: any) => i.id).join(',')}&message=${encodeURIComponent(spEmailDraft.message)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mr-auto px-4 py-2 rounded-lg text-gray-900 font-bold bg-emerald-400/10 hover:bg-emerald-400/20 transition-colors flex items-center gap-2"
-                >
-                  📄 Ver / Guardar PDF
-                </a>
-              )}
-              <button 
-                onClick={() => setSpEmailModalOpen(false)}
-                className="px-4 py-2 rounded-lg text-gray-800 font-medium hover:bg-gray-50 transition-colors"
-              >
-                Cancelar
-              </button>
-              <button 
-                onClick={confirmSendSpEmail}
-                disabled={isSendingSpEmail || !spEmailDraft.to}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
-                  isSendingSpEmail || !spEmailDraft.to
-                    ? 'bg-emerald-600/50 text-gray-900/50 cursor-not-allowed'
-                    : 'bg-emerald-600 hover:bg-emerald-500 text-gray-900 shadow-lg shadow-gray-500/20'
-                }`}
-              >
-                <Briefcase size={16} className={isSendingSpEmail ? 'animate-pulse' : ''} />
-                {isSendingSpEmail ? 'Generando y Enviando...' : 'Avisar Comercial'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
     </div>
   );

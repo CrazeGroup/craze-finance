@@ -1,8 +1,7 @@
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Save, X, ChevronRight, ChevronDown, Download, Upload, Archive, Send, Briefcase, Calendar, Search, MailCheck, AlertTriangle, MessageSquare } from 'lucide-react';
+import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Save, X, ChevronRight, ChevronDown, Download, Upload, Archive, Send, Calendar, Search, MailCheck, AlertTriangle, MessageSquare } from 'lucide-react';
 import ReminderDialog from '@/components/ReminderDialog';
-import { buildReminderPdf } from '@/lib/reminderPdf';
 import * as XLSX from 'xlsx';
 import { useCompany } from '@/contexts/CompanyContext';
 import { syncFromBc } from '@/lib/syncClient';
@@ -82,16 +81,6 @@ export default function CashflowPage() {
   // Recordatorio al cliente: el mismo diálogo que en Recobros (1º normal, 2º comercial en copia, 3º aviso aseguradora)
   const [reminder, setReminder] = useState<{ customer: any; invoices: any[] } | null>(null);
 
-  const [spEmailModalOpen, setSpEmailModalOpen] = useState(false);
-  const [spEmailDraft, setSpEmailDraft] = useState({
-    customerId: 0,
-    to: '',
-    subject: '',
-    message: '',
-    invoices: [] as any[]
-  });
-  const [isSendingSpEmail, setIsSendingSpEmail] = useState(false);
-  
   // Recurring Payments
   const [recurringModalOpen, setRecurringModalOpen] = useState(false);
   const [recurringPayments, setRecurringPayments] = useState<any[]>([]);
@@ -396,59 +385,6 @@ export default function CashflowPage() {
     const selectedList = pickInvoices(entry);
     if (selectedList.length === 0) return;
     setReminder({ customer: entry.customer, invoices: selectedList });
-  };
-
-  const openSpEmailModal = (entry: any) => {
-    if (!entry.customer) return;
-    const selectedList = pickInvoices(entry);
-    if (selectedList.length === 0) return;
-    if (!entry.customer.salespersonName) {
-      alert("Este cliente no tiene un comercial asignado.");
-      return;
-    }
-    const totalAmount = selectedList.reduce((acc: number, inv: any) => acc + inv.amount, 0);
-    setSpEmailDraft({
-      customerId: entry.customer.id,
-      to: 'prueba.comercial@craze.local', // Placeholder
-      subject: `[Acción Requerida] Cliente ${entry.customer.name} - Facturas Pendientes`,
-      message: `Hola ${entry.customer.salespersonName},\n\nNecesitamos tu asistencia urgente respecto a la cuenta de ${entry.customer.name} (${entry.customer.bcId}). Tienen facturas pendientes por un total de €${totalAmount.toLocaleString(undefined, {minimumFractionDigits: 2})}.\n\nPor favor, contacta con ellos para asegurar una fecha de pago.\n\nGracias,\nEquipo de Finanzas`,
-      invoices: selectedList
-    });
-    setSpEmailModalOpen(true);
-  };
-
-  const confirmSendSpEmail = async () => {
-    setIsSendingSpEmail(true);
-    try {
-      const pdfBase64 = await buildReminderPdf(spEmailDraft.customerId, spEmailDraft.invoices.map((i: any) => i.id), spEmailDraft.message);
-      const res = await fetch('/api/send-salesperson-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customerId: spEmailDraft.customerId,
-          invoiceIds: spEmailDraft.invoices.map((i: any) => i.id),
-          to: spEmailDraft.to,
-          subject: spEmailDraft.subject,
-          message: spEmailDraft.message,
-          pdfBase64
-        })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        alert(data.previewUrl ? `Correo simulado enviado al comercial.\nMíralo aquí: ${data.previewUrl}` : 'Correo enviado al comercial correctamente.');
-        const newSelected = { ...selectedInvoices };
-        spEmailDraft.invoices.forEach((i: any) => delete newSelected[i.id]);
-        setSelectedInvoices(newSelected);
-        await fetchCashflow();
-        setSpEmailModalOpen(false);
-      } else {
-        alert('Error al enviar correo: ' + data.error);
-      }
-    } catch (e) {
-      alert('Error en el sistema de correos.');
-    } finally {
-      setIsSendingSpEmail(false);
-    }
   };
 
   // Exporta lo que se ve en pantalla (divisa, filtro y archivadas): saldo inicial + una fila por línea; en la segunda
@@ -1133,9 +1069,6 @@ export default function CashflowPage() {
                                   <button onClick={(e) => { e.stopPropagation(); openEmailModal(entry); }} className="p-1.5 text-gray-900 font-bold hover:bg-emerald-400/20 rounded-md transition-colors" title="Enviar recordatorio al cliente (1º, 2º con comercial en copia, 3º con aviso de aseguradora); sin facturas marcadas, todas las de la línea">
                                     <Send size={14} />
                                   </button>
-                                  <button onClick={(e) => { e.stopPropagation(); openSpEmailModal(entry); }} className="p-1.5 text-orange-400 hover:bg-orange-400/20 rounded-md transition-colors" title="Avisar al Comercial">
-                                    <Briefcase size={14} />
-                                  </button>
                                 </>
                               )}
                               {entry.isManual && (
@@ -1338,65 +1271,6 @@ export default function CashflowPage() {
               setReminder(null);
               await fetchCashflow();
             }} />
-        )}
-
-        {/* Email Salesperson Modal */}
-        {spEmailModalOpen && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex justify-center items-center">
-            <div className="bg-white border border-gray-200 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden transform transition-all">
-              <div className="flex justify-between items-center p-6 border-b border-gray-200 bg-gray-50">
-                <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                  <Briefcase className="text-orange-400" />
-                  Avisar al Comercial
-                </h3>
-                <button onClick={() => setSpEmailModalOpen(false)} className="text-gray-900 font-bold hover:text-gray-900 transition-colors">
-                  <X size={20} />
-                </button>
-              </div>
-              <div className="p-6 space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-900 font-bold mb-1">Para</label>
-                  <input 
-                    type="text" 
-                    value={spEmailDraft.to}
-                    onChange={e => setSpEmailDraft({...spEmailDraft, to: e.target.value})}
-                    className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-500/50"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-900 font-bold mb-1">Asunto</label>
-                  <input 
-                    type="text" 
-                    value={spEmailDraft.subject}
-                    onChange={e => setSpEmailDraft({...spEmailDraft, subject: e.target.value})}
-                    className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-500/50"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-900 font-bold mb-1">Mensaje</label>
-                  <textarea 
-                    rows={8}
-                    value={spEmailDraft.message}
-                    onChange={e => setSpEmailDraft({...spEmailDraft, message: e.target.value})}
-                    className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-500/50 resize-none font-mono text-sm"
-                  />
-                </div>
-                <div className="flex justify-end gap-3 mt-6">
-                  <button onClick={() => setSpEmailModalOpen(false)} className="px-5 py-2.5 text-sm font-medium text-gray-900 font-bold hover:text-gray-900 transition-colors">
-                    Cancelar
-                  </button>
-                  <button 
-                    onClick={confirmSendSpEmail}
-                    disabled={isSendingSpEmail}
-                    className="px-5 py-2.5 bg-gray-600 hover:bg-gray-500 text-white text-gray-900 text-sm font-medium rounded-xl shadow-lg transition-all disabled:opacity-50 flex items-center gap-2"
-                  >
-                    {isSendingSpEmail ? <RefreshCw className="animate-spin" size={16} /> : <Briefcase size={16} />}
-                    {isSendingSpEmail ? 'Enviando...' : 'Enviar al Comercial'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
         )}
 
         {/* Recurring Payments Modal */}
