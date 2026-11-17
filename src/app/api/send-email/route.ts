@@ -3,6 +3,8 @@ import nodemailer from 'nodemailer';
 import prisma from '@/lib/prisma';
 import { registerClaim } from '@/lib/claims';
 import { salesDocumentPdfs } from '@/lib/invoicePdfs';
+import { logAction } from '@/lib/logger';
+import { getSession } from '@/lib/auth';
 
 // Con los PDF de las facturas de BC puede tardar
 export const maxDuration = 120;
@@ -102,12 +104,13 @@ export async function POST(request: Request) {
       console.log('Preview URL: %s', previewUrl);
     }
 
+    const sender = (await getSession())?.username || '';
     // Save to database for all selected invoices
     for (const invoiceId of invoiceIds) {
       await prisma.reminder.create({
         data: {
           invoiceId,
-          messageContent: level ? `[${level}º recordatorio${cc ? ` · CC ${cc}` : ''}${insurance ? ' · aviso aseguradora' : ''}]\n${message}` : message,
+          messageContent: level ? `[${sender ? `${sender} · ` : ''}${level}º recordatorio${cc ? ` · CC ${cc}` : ''}${insurance ? ' · aviso aseguradora' : ''}]\n${message}` : message,
         }
       });
 
@@ -119,14 +122,13 @@ export async function POST(request: Request) {
 
     const customer = await prisma.customer.findUnique({ where: { id: customerId } });
     if (customer) {
-      await prisma.actionLog.create({
-        data: {
-          user: 'Sistema',
-          action: level ? `Recordatorio ${level} a cliente` : 'Correo a cliente (Recordatorio)',
-          details: `Cliente: ${customer.name} | Enviado a ${to}${cc ? ` (CC ${cc})` : ''} para ${invoiceIds.length} factura(s)${insurance ? ' · aviso aseguradora' : ''}`,
-          companyId: customer.companyId
-        }
-      });
+      // Quién envió (usuario de la sesión), aunque todos los correos salgan desde la misma cuenta
+      const docs = await prisma.invoice.findMany({ where: { id: { in: invoiceIds.map(Number) } }, select: { bcId: true } });
+      await logAction(
+        level ? `Recordatorio ${level} a cliente` : 'Correo a cliente (Recordatorio)',
+        `Cliente: ${customer.name} | Enviado a ${to}${cc ? ` (CC ${cc})` : ''} | ${docs.map(d => d.bcId).join(', ')}${insurance ? ' · aviso aseguradora' : ''}${invoicePdfs.files.length ? ` · ${invoicePdfs.files.length} PDF de factura` : ''}`,
+        customer.companyId,
+      );
     }
 
     return NextResponse.json({ 
