@@ -16,7 +16,7 @@ export async function buildReminderPdf(customerId: number, invoiceIds: number[],
           const win = iframe.contentWindow as any;
           for (let i = 0; i < 20 && !win.html2pdf; i++) await new Promise(r => setTimeout(r, 250));
           resolve(await win.html2pdf().set({
-            margin: 10, filename: 'Facturas.pdf', image: { type: 'jpeg', quality: 0.98 },
+            margin: 10, filename: 'Overdue_Invoices.pdf', image: { type: 'jpeg', quality: 0.98 },
             html2canvas: { scale: 2, useCORS: true, logging: false },
             jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
           }).from(win.document.getElementById('pdf-content')).outputPdf('datauristring'));
