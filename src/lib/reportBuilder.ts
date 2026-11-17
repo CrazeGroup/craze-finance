@@ -146,11 +146,6 @@ export async function generateReportHtml(customerId: number, invoiceIds: number[
     </head>
     <body style="margin: 0; padding: 40px; background-color: #f1f5f9; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
       
-      <div class="no-print" style="text-align: center; margin-bottom: 20px;">
-        <button onclick="window.print()" style="background-color: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 16px; box-shadow: 0 4px 6px rgba(59,130,246,0.3);">
-          🖨 Print to PDF / Save
-        </button>
-      </div>
 
       <div class="container" style="max-width: 800px; margin: 0 auto; background-color: #ffffff; padding: 40px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); color: #333;">
         <!-- Header -->
