@@ -209,7 +209,7 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
 
         const custData = {
           name: c.displayName || c.name || c.number,
-          email: c.email || null,
+          email: c.email || c.eMail || c.eMailAddress || null,
           paymentMethod: pmCode,
           riskLimit: c.creditLimitLCY !== undefined ? c.creditLimitLCY : (c.creditLimit || 0),
           balance: c.balance || c.balanceLCY || 0,
@@ -491,7 +491,7 @@ export async function syncBusinessCentral(specificCompany?: string, step: 'custo
 
         const venData = {
           name: v.displayName || v.number,
-          email: v.email || null,
+          email: v.email || v.eMail || v.eMailAddress || null,
           paymentMethod: pmCode,
           balance: v.balance || 0,
           companyId: exactCompanyName
