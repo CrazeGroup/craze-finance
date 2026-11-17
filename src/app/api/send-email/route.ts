@@ -3,6 +3,7 @@ import nodemailer from 'nodemailer';
 import prisma from '@/lib/prisma';
 import { registerClaim } from '@/lib/claims';
 import { salesDocumentPdfs } from '@/lib/invoicePdfs';
+import { companyAddress, addressLines } from '@/lib/companyAddress';
 import { logAction } from '@/lib/logger';
 import { getSession } from '@/lib/auth';
 
@@ -58,10 +59,13 @@ export async function POST(request: Request) {
       ? `"${emailConfig.fromName}" <${emailConfig.fromEmail}>` 
       : process.env.SMTP_FROM || '"Craze Finance" <no-reply@craze.com>';
 
+    // Firma con la razón social y dirección fiscal (BC) de la empresa de las facturas
+    const firstInv = await prisma.invoice.findFirst({ where: { id: { in: invoiceIds.map(Number) } }, select: { companyId: true } });
+    const fiscal = await companyAddress(firstInv?.companyId || 'CRAZE');
     const signature = `
       <div style="margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px; font-size: 14px; color: #555;">
-        <p style="margin: 0; font-weight: bold; color: #111;">CRAZE GmbH Finance Team</p>
-        <p style="margin: 5px 0;">Haynauer Str. 72 a | 12249 Berlin | Germany</p>
+        <p style="margin: 0; font-weight: bold; color: #111;">${fiscal?.name || 'CRAZE GmbH'} Finance Team</p>
+        ${fiscal ? `<p style="margin: 5px 0;">${addressLines(fiscal).join(' | ')}</p>` : ''}
         <p style="margin: 0;">Email <a href="mailto:invoice@craze-group.com" style="color: #3b82f6; text-decoration: none;">invoice@craze-group.com</a></p>
         <p style="margin: 0;">Web <a href="https://www.craze-group.com" style="color: #3b82f6; text-decoration: none;">www.craze-group.com</a></p>
         <br/>

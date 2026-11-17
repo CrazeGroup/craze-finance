@@ -1,3 +1,4 @@
+import { companyAddress, addressLines } from './companyAddress';
 import prisma from '@/lib/prisma';
 import { CUSTOMER_INVOICE_TYPES } from '@/lib/documentTypes';
 
@@ -84,6 +85,10 @@ export async function generateReportHtml(customerId: number, invoiceIds: number[
       website: 'www.craze.toys'
     };
   }
+
+  // Razón social, dirección fiscal y NIF de BC (companyInformation) cuando se pueden leer
+  const fiscal = await companyAddress(companyId);
+  if (fiscal) companyDetails = { ...companyDetails, name: fiscal.name || companyDetails.name, address: addressLines(fiscal).join('<br>'), vat: fiscal.vat || companyDetails.vat };
 
   const footerDetailsHtml = `
     <div style="font-size: 11px; color: #475569; display: flex; justify-content: space-between; border-top: 1px solid #cbd5e1; padding-top: 15px; margin-top: 30px; text-align: left;">
