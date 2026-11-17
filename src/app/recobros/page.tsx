@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
-import { tabCompany } from '@/contexts/CompanyContext';
+import { tabCompany, useCompany } from '@/contexts/CompanyContext';
+import { useComments, CommentBadge, CommentsDialog } from '@/components/InvoiceComments';
 import { syncFromBc } from '@/lib/syncClient';
-import { RefreshCcw, Send, CheckCircle, ChevronDown, ChevronRight, Filter, Briefcase } from 'lucide-react';
+import { RefreshCcw, Send, CheckCircle, ChevronDown, ChevronRight, Filter, Briefcase, MessageSquare } from 'lucide-react';
 import ReminderDialog from '@/components/ReminderDialog';
 import { buildReminderPdf } from '@/lib/reminderPdf';
 
@@ -12,6 +13,11 @@ import { buildReminderPdf } from '@/lib/reminderPdf';
 export default function RecobrosPage() {
   const [rawInvoices, setRawInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Comentarios por factura, los mismos que en Cashflow ("invoice:<id>")
+  const { selectedCompany } = useCompany();
+  const { commentsFor, add: addComment, remove: removeComment } = useComments(selectedCompany);
+  const [commentTarget, setCommentTarget] = useState<{ key: string; label: string } | null>(null);
 
   // Recordatorio al cliente (diálogo común con Cashflow)
   const [reminder, setReminder] = useState<{ customer: any; invoices: any[] } | null>(null);
@@ -434,6 +440,7 @@ export default function RecobrosPage() {
                         {group.customer.name}
                       </h3>
                       <p className="text-xs text-gray-700 font-semibold">{group.customer.email || 'Sin email configurado'}</p>
+                      {(() => { const n = group.invoices.filter((i: any) => commentsFor(`invoice:${i.id}`).length).length; return n ? <p className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-sky-700"><MessageSquare size={11} /> {n} factura(s) con comentarios</p> : null; })()}
                     </div>
                   </div>
                   
@@ -547,6 +554,7 @@ export default function RecobrosPage() {
                             <th className="pb-2 font-medium">Recordatorios</th>
                             <th className="pb-2 font-medium">Fecha Recordatorio</th>
                             <th className="pb-2 font-medium">Fecha Pago Confirmado</th>
+                            <th className="pb-2 font-medium">Comentarios</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
@@ -593,6 +601,15 @@ export default function RecobrosPage() {
                               <td className="py-2 font-medium text-gray-900 font-bold">
                                 {inv.confirmedPaymentDate ? new Date(inv.confirmedPaymentDate).toLocaleDateString() : '-'}
                               </td>
+                              <td className="py-2">
+                                <div className="flex items-center gap-1.5">
+                                  <button onClick={() => setCommentTarget({ key: `invoice:${inv.id}`, label: inv.bcId })}
+                                    className={`p-1 rounded hover:bg-sky-400/20 ${commentsFor(`invoice:${inv.id}`).length ? 'text-sky-700' : 'text-gray-400 hover:text-black'}`} title="Comentarios de la factura (los mismos que en Cashflow)">
+                                    <MessageSquare size={14} />
+                                  </button>
+                                  <CommentBadge items={commentsFor(`invoice:${inv.id}`)} onClick={() => setCommentTarget({ key: `invoice:${inv.id}`, label: inv.bcId })} />
+                                </div>
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -604,6 +621,11 @@ export default function RecobrosPage() {
             );
           })}
         </div>
+      )}
+
+      {commentTarget && (
+        <CommentsDialog label={commentTarget.label} items={commentsFor(commentTarget.key)} onClose={() => setCommentTarget(null)}
+          onAdd={text => addComment(commentTarget.key, text, commentTarget.label)} onDelete={removeComment} />
       )}
 
       {/* Recordatorio al cliente: 1º normal, 2º comercial en copia, 3º aviso aseguradora */}
