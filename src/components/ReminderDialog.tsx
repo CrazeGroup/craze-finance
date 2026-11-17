@@ -21,16 +21,15 @@ const SUBJECTS: Record<number, string> = {
 };
 const INTRO: Record<number, string> = {
   1: 'We are contacting you to remind you that there are overdue invoices pending payment on your account.\nWe would appreciate it if you could settle this matter as soon as possible.',
-  2: 'We are contacting you again regarding the overdue invoices below, which remain unpaid despite our previous reminder.\nPlease arrange the payment as soon as possible or let us know the expected payment date.',
-  3: 'Despite our previous reminders, the invoices below are still unpaid. This is our final reminder.\nPlease settle the outstanding amount immediately.',
+  2: 'We are contacting you again regarding the overdue invoices listed in this reminder, which remain unpaid despite our previous reminder.\nPlease arrange the payment as soon as possible or let us know the expected payment date.',
+  3: 'Despite our previous reminders, the invoices listed in this reminder are still unpaid. This is our final reminder.\nPlease settle the outstanding amount immediately.',
 };
 
-const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' } as Record<number, string>)[n % 10] || 'th'}`;
 const money = (n: number, cur?: string | null) => `${cur && cur !== 'EUR' ? `${cur} ` : '€'}${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-function buildMessage(name: string, level: number, invoices: Inv[], insurance: boolean) {
-  const list = invoices.map(i => `- Invoice ${i.bcId}: ${money(i.amount, i.currencyCode)} (Overdue on ${new Date(i.dueDate).toLocaleDateString('de-DE')}, ${ordinal(claimCountOf(i) + 1)} reminder)`).join('\n');
-  return `Dear ${name},\n\n${INTRO[level]}\n\n${list}${insurance ? `\n\n${INSURANCE_TEXT}` : ''}`;
+// Sin lista de facturas: ya van en la tabla del PDF (con el nº de recordatorio de cada una)
+function buildMessage(name: string, level: number, insurance: boolean) {
+  return `Dear ${name},\n\n${INTRO[level]}${insurance ? `\n\n${INSURANCE_TEXT}` : ''}`;
 }
 
 export default function ReminderDialog({ customer, invoices, onClose, onSent }: {
@@ -44,7 +43,7 @@ export default function ReminderDialog({ customer, invoices, onClose, onSent }: 
   const [spEmail, setSpEmail] = useState('');
   const [spLoading, setSpLoading] = useState(false);
   const [subject, setSubject] = useState(`${SUBJECTS[proposed]} - ${customer.name}`);
-  const [message, setMessage] = useState(buildMessage(customer.name, proposed, invoices, proposed >= 3));
+  const [message, setMessage] = useState(buildMessage(customer.name, proposed, proposed >= 3));
   const [sending, setSending] = useState(false);
 
   // Email del comercial (BC) en cuanto se necesita
@@ -61,7 +60,7 @@ export default function ReminderDialog({ customer, invoices, onClose, onSent }: 
     setCcSales(l >= 2);
     setInsurance(ins);
     setSubject(`${SUBJECTS[l]} - ${customer.name}`);
-    setMessage(buildMessage(customer.name, l, invoices, ins));
+    setMessage(buildMessage(customer.name, l, ins));
   };
   const toggleInsurance = (on: boolean) => {
     setInsurance(on);
