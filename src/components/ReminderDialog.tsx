@@ -45,6 +45,7 @@ export default function ReminderDialog({ customer, invoices, onClose, onSent }: 
   const [subject, setSubject] = useState(`${SUBJECTS[proposed]} - ${customer.name}`);
   const [message, setMessage] = useState(buildMessage(customer.name, proposed, proposed >= 3));
   const [sending, setSending] = useState(false);
+  const [attachInvoices, setAttachInvoices] = useState(false);
 
   // Email del comercial (BC) en cuanto se necesita
   useEffect(() => {
@@ -77,11 +78,12 @@ export default function ReminderDialog({ customer, invoices, onClose, onSent }: 
       const pdfBase64 = await buildReminderPdf(customer.id, ids, message);
       const res = await fetch('/api/send-email', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customerId: customer.id, invoiceIds: ids, to, cc, subject, message, pdfBase64, level, insurance }),
+        body: JSON.stringify({ customerId: customer.id, invoiceIds: ids, to, cc, subject, message, pdfBase64, level, insurance, attachInvoices }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.details || data.error);
-      alert(data.previewUrl ? `Correo simulado enviado.\nMíralo aquí: ${data.previewUrl}` : `Recordatorio ${level} enviado a ${to}${cc ? ` (copia a ${cc})` : ''}.`);
+      const pdfNote = attachInvoices ? `\n${data.invoicePdfs || 0} PDF de factura adjuntos.${data.missingPdfs?.length ? ` Sin PDF en BC: ${data.missingPdfs.join(', ')}` : ''}` : '';
+      alert((data.previewUrl ? `Correo simulado enviado.\nMíralo aquí: ${data.previewUrl}` : `Recordatorio ${level} enviado a ${to}${cc ? ` (copia a ${cc})` : ''}.`) + pdfNote);
       onSent();
     } catch (e: any) {
       alert(`Error al enviar el recordatorio: ${e.message || e}`);
@@ -139,6 +141,11 @@ export default function ReminderDialog({ customer, invoices, onClose, onSent }: 
               )}
             </div>
           )}
+
+          <label className="flex items-start gap-2 text-sm font-semibold text-gray-900">
+            <input type="checkbox" className="mt-0.5" checked={attachInvoices} onChange={e => setAttachInvoices(e.target.checked)} />
+            <span>Adjuntar el PDF de las facturas de venta <span className="block text-xs font-normal text-gray-500">Impresión de BC de cada factura seleccionada, además del resumen (tarda unos segundos más por factura)</span></span>
+          </label>
 
           <div>
             <label className="block text-sm font-bold text-gray-900 mb-1">Asunto</label>

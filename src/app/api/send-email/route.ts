@@ -2,10 +2,16 @@ import { NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 import prisma from '@/lib/prisma';
 import { registerClaim } from '@/lib/claims';
+import { salesDocumentPdfs } from '@/lib/invoicePdfs';
+
+// Con los PDF de las facturas de BC puede tardar
+export const maxDuration = 120;
 
 export async function POST(request: Request) {
   try {
-    const { customerId, invoiceIds, to, cc, subject, message, pdfBase64, level, insurance } = await request.json();
+    const { customerId, invoiceIds, to, cc, subject, message, pdfBase64, level, insurance, attachInvoices } = await request.json();
+    // PDF impreso de cada factura de venta (opcional)
+    const invoicePdfs = attachInvoices ? await salesDocumentPdfs(invoiceIds.map(Number)) : { files: [], missing: [] as string[] };
 
     if (!invoiceIds || !Array.isArray(invoiceIds) || invoiceIds.length === 0 || !to || !subject || !message || !customerId || !pdfBase64) {
       return NextResponse.json({ error: 'Faltan campos requeridos' }, { status: 400 });
@@ -74,6 +80,7 @@ export async function POST(request: Request) {
               ${signature}
              </div>`, 
       attachments: [
+        ...invoicePdfs.files,
         {
           filename: 'Overdue_Invoices.pdf',
           content: Buffer.from(pdfBuffer),
@@ -125,7 +132,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ 
       success: true, 
       messageId: info.messageId, 
-      previewUrl: previewUrl || null
+      previewUrl: previewUrl || null,
+      invoicePdfs: invoicePdfs.files.length,
+      missingPdfs: invoicePdfs.missing
     });
 
   } catch (error: any) {
