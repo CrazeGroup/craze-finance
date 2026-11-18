@@ -69,14 +69,14 @@ export default function MovimientosPage() {
   }, [entries, viewMode]);
 
   // Excluir Amazon (clientes y proveedores cuyo nombre contiene "Amazon"); se recuerda en el navegador
-  const [noAmazon, setNoAmazon] = useState(false);
+  const [amazonMode, setAmazonMode] = useState<AmazonMode>('all');
   const [onlySuggested, setOnlySuggested] = useState(false);
   const [onlyCross, setOnlyCross] = useState(false);
   // Cierre cruzado: el par elegido (diálogo) y los ya enviados al lote ('Customer:<entryNo>' → texto)
   const [clearing, setClearing] = useState<any | null>(null);
   const [sentPairs, setSentPairs] = useState<Record<string, string>>({});
-  useEffect(() => { try { setNoAmazon(localStorage.getItem('movimientos:sinAmazon') === '1'); } catch { /* sin almacenamiento */ } }, []);
-  const changeNoAmazon = (v: boolean) => { setNoAmazon(v); try { localStorage.setItem('movimientos:sinAmazon', v ? '1' : '0'); } catch { /* sin almacenamiento */ } };
+  useEffect(() => { setAmazonMode(readAmazonMode('movimientos:sinAmazon')); }, []);
+  const changeAmazonMode = (v: AmazonMode) => { setAmazonMode(v); saveAmazonMode('movimientos:sinAmazon', v); };
 
   // Orden por columna (clic en la cabecera: ascendente, descendente)
   type SortKey = 'entityNo' | 'entityName' | 'postingDate' | 'documentType' | 'documentNo' | 'externalDocumentNo' | 'currencyCode' | 'originalAmount' | 'remainingAmount' | 'description' | 'paymentMethodCode'
@@ -88,7 +88,7 @@ export default function MovimientosPage() {
   const filteredEntries = useMemo(() => {
     const list = entries.filter(e => {
       if (e.type !== viewMode) return false;
-      if (noAmazon && /amazon/i.test(e.entityName || '')) return false;
+      if (!amazonOk(amazonMode, e)) return false;
       if (onlySuggested && !e.suggestion) return false;
       if (onlyCross && !e.cross) return false;
       if (selectedDocTypes.length > 0 && !selectedDocTypes.includes(e.documentType)) return false;
@@ -107,9 +107,9 @@ export default function MovimientosPage() {
       if (num) return ((Number(a[key]) || 0) - (Number(b[key]) || 0)) * dir;
       return String(a[key] ?? '').localeCompare(String(b[key] ?? ''), 'es', { numeric: true, sensitivity: 'base' }) * dir;
     });
-  }, [entries, viewMode, selectedDocTypes, selectedPaymentMethods, noAmazon, onlySuggested, onlyCross, sort, comments]);
-  const crossCount = useMemo(() => entries.filter(e => e.type === viewMode && e.cross && (!noAmazon || !/amazon/i.test(e.entityName || ''))).length, [entries, viewMode, noAmazon]);
-  const suggestedCount = useMemo(() => entries.filter(e => e.type === viewMode && e.suggestion && (!noAmazon || !/amazon/i.test(e.entityName || ''))).length, [entries, viewMode, noAmazon]);
+  }, [entries, viewMode, selectedDocTypes, selectedPaymentMethods, amazonMode, onlySuggested, onlyCross, sort, comments]);
+  const crossCount = useMemo(() => entries.filter(e => e.type === viewMode && e.cross && amazonOk(amazonMode, e)).length, [entries, viewMode, amazonMode]);
+  const suggestedCount = useMemo(() => entries.filter(e => e.type === viewMode && e.suggestion && amazonOk(amazonMode, e)).length, [entries, viewMode, amazonMode]);
   const amazonCount = useMemo(() => entries.filter(e => e.type === viewMode && /amazon/i.test(e.entityName || '')).length, [entries, viewMode]);
 
   // Clear filters when switching view modes
@@ -181,10 +181,7 @@ export default function MovimientosPage() {
             )}
             <div>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Amazon</p>
-              <label className="inline-flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none pt-0.5">
-                <input type="checkbox" checked={noAmazon} onChange={e => changeNoAmazon(e.target.checked)} />
-                Excluir {viewMode === 'Customer' ? 'clientes' : 'proveedores'} Amazon{amazonCount ? ` (${amazonCount} mov.)` : ''}
-              </label>
+              <AmazonSwitch value={amazonMode} onChange={changeAmazonMode} count={amazonCount} />
             </div>
             <div>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Para cerrar</p>
@@ -480,16 +477,16 @@ function SuggestionCell({ s, nf, dateEs }: { s?: Sug | null; nf: (v: number) => 
 const SUMMARY_TYPES = ['Payment', 'Refund'];
 function SummaryTable({ side, entries, year, nf, dateEs }: { side: 'Customer' | 'Vendor'; entries: any[]; year: string; nf: (v: number) => string; dateEs: (d: string) => string }) {
   const key = `movimientos:resumen:sinAmazon:${side}`;
-  const [noAmazon, setNoAmazon] = useState(false);
-  useEffect(() => { try { setNoAmazon(localStorage.getItem(key) === '1'); } catch { /* sin almacenamiento */ } }, [key]);
-  const change = (v: boolean) => { setNoAmazon(v); try { localStorage.setItem(key, v ? '1' : '0'); } catch { /* sin almacenamiento */ } };
+  const [amazonMode, setAmazonMode] = useState<AmazonMode>('all');
+  useEffect(() => { setAmazonMode(readAmazonMode(key)); }, [key]);
+  const change = (v: AmazonMode) => { setAmazonMode(v); saveAmazonMode(key, v); };
   const [open, setOpen] = useState<Set<string>>(new Set());
   const toggle = (k: string) => setOpen(p => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; });
 
   const isAmazon = (e: any) => /amazon/i.test(e.entityName || '');
   const base = entries.filter(e => e.type === side && SUMMARY_TYPES.includes(e.documentType) && (!year || String(e.postingDate || '').startsWith(year)));
   const amazonCount = base.filter(isAmazon).length;
-  const rows = base.filter(e => !noAmazon || !isAmazon(e));
+  const rows = base.filter(e => amazonOk(amazonMode, e));
   const lcy = (e: any) => Number(e.remainingAmountLCY ?? e.remainingAmount) || 0;
   type Agg = { payN: number; pay: number; refN: number; ref: number };
   const zero = (): Agg => ({ payN: 0, pay: 0, refN: 0, ref: 0 });
@@ -532,10 +529,7 @@ function SummaryTable({ side, entries, year, nf, dateEs }: { side: 'Customer' | 
           {side === 'Vendor' ? <Building2 size={16} /> : <User size={16} />}
           {side === 'Vendor' ? 'Proveedores' : 'Clientes'} · payments y refunds abiertos por mes
         </h2>
-        <label className="inline-flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none">
-          <input type="checkbox" checked={noAmazon} onChange={e => change(e.target.checked)} />
-          Sin {who} Amazon{amazonCount ? ` (${amazonCount} mov.)` : ''}
-        </label>
+        <AmazonSwitch value={amazonMode} onChange={change} count={amazonCount} />
         <p className="ml-auto text-xs text-gray-500">{rows.length} movimientos · importes pendientes en divisa local · pulsa un mes para ver los {who}</p>
       </div>
       <div className="max-h-[70vh] overflow-auto">
@@ -612,5 +606,28 @@ function SummaryTable({ side, entries, year, nf, dateEs }: { side: 'Customer' | 
         </table>
       </div>
     </section>
+  );
+}
+
+// ---- Filtro Amazon: todos / sin Amazon / solo Amazon (nombre del cliente o proveedor con "Amazon") ----
+type AmazonMode = 'all' | 'without' | 'only';
+const amazonOk = (mode: AmazonMode, e: any) => {
+  const amz = /amazon/i.test(e.entityName || '');
+  return mode === 'all' || (mode === 'only' ? amz : !amz);
+};
+// Se recuerda en el navegador ('1' = antiguo "excluir Amazon")
+function readAmazonMode(key: string): AmazonMode {
+  try { const v = localStorage.getItem(key); return v === '1' || v === 'without' ? 'without' : v === 'only' ? 'only' : 'all'; } catch { return 'all'; }
+}
+function saveAmazonMode(key: string, v: AmazonMode) { try { localStorage.setItem(key, v); } catch { /* sin almacenamiento */ } }
+function AmazonSwitch({ value, onChange, count }: { value: AmazonMode; onChange: (v: AmazonMode) => void; count: number }) {
+  const opts: [AmazonMode, string][] = [['all', 'Todos'], ['without', 'Sin Amazon'], ['only', `Solo Amazon${count ? ` (${count})` : ''}`]];
+  return (
+    <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-xs font-semibold">
+      {opts.map(([v, label]) => (
+        <button key={v} onClick={() => onChange(v)}
+          className={`px-2.5 py-1 ${value === v ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}>{label}</button>
+      ))}
+    </div>
   );
 }
