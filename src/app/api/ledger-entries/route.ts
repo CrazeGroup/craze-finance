@@ -31,6 +31,8 @@ function mapEntry(type: 'Customer' | 'Vendor', r: any) {
     currencyCode: str(r.currencyCode),
     originalAmount: num(pick(r, ['originalAmount', 'amount'])),
     remainingAmount: num(r.remainingAmount),
+    // En divisa local (para sumar movimientos de varias divisas en el resumen)
+    remainingAmountLCY: num(pick(r, ['remainingAmtLCY', 'remainingAmountLCY']) ?? r.remainingAmount),
     description: str(r.description),
     paymentMethodCode: str(r.paymentMethodCode),
     messageToRecipient: str(r.messageToRecipient),

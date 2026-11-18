@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
-import { RefreshCcw, User, Building2, CheckCircle, ArrowUp, ArrowDown, Lightbulb, AlertCircle, Shuffle, Send, X } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { RefreshCcw, User, Building2, CheckCircle, ArrowUp, ArrowDown, Lightbulb, AlertCircle, Shuffle, Send, X, LayoutList, ChevronDown, ChevronRight } from 'lucide-react';
 import DocPdfLink, { purchasePdfKind } from '@/components/DocPdfLink';
 import { companyLabel, useCompany } from '@/contexts/CompanyContext';
 
@@ -9,7 +9,7 @@ export default function MovimientosPage() {
   const { selectedCompany } = useCompany();
   const [entries, setEntries] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<'Customer' | 'Vendor'>('Customer');
+  const [viewMode, setViewMode] = useState<'Customer' | 'Vendor' | 'Summary'>('Customer');
 
   // Filter States
   const [selectedDocTypes, setSelectedDocTypes] = useState<string[]>([]);
@@ -133,7 +133,7 @@ export default function MovimientosPage() {
             <p className="text-xs text-gray-500">{companyLabel(selectedCompany)} · movimientos pendientes de clientes y proveedores</p>
           </div>
           <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
-            {([['Customer', 'Clientes', User], ['Vendor', 'Proveedores', Building2]] as const).map(([v, label, Icon]) => (
+            {([['Customer', 'Clientes', User], ['Vendor', 'Proveedores', Building2], ['Summary', 'Resumen', LayoutList]] as const).map(([v, label, Icon]) => (
               <button key={v} onClick={() => setViewMode(v)}
                 className={`flex items-center gap-2 px-4 py-1.5 font-semibold ${viewMode === v ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
                 <Icon size={15} /> {label}
@@ -148,7 +148,7 @@ export default function MovimientosPage() {
       </header>
 
       <main className="w-full px-4 md:px-8 pt-6 space-y-4">
-        {(availableDocTypes.length > 0 || availablePaymentMethods.length > 0) && (
+        {viewMode !== 'Summary' && (availableDocTypes.length > 0 || availablePaymentMethods.length > 0) && (
           <section className="bg-white rounded-xl border border-gray-200 p-4 flex flex-wrap items-start gap-x-8 gap-y-3">
             {availableDocTypes.length > 0 && (
               <div>
@@ -209,6 +209,11 @@ export default function MovimientosPage() {
         ) : loading ? (
           <div className="bg-white rounded-xl border border-gray-200 py-16 flex justify-center text-sm text-gray-500 gap-2 items-center">
             <RefreshCcw size={16} className="animate-spin" /> Cargando movimientos…
+          </div>
+        ) : viewMode === 'Summary' ? (
+          <div className="space-y-6">
+            <SummaryTable side="Vendor" entries={entries} nf={nf} dateEs={dateEs} />
+            <SummaryTable side="Customer" entries={entries} nf={nf} dateEs={dateEs} />
           </div>
         ) : filteredEntries.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 py-16 text-center">
@@ -453,5 +458,146 @@ function SuggestionCell({ s, nf, dateEs }: { s?: Sug | null; nf: (v: number) => 
         <span className="block text-[11px] opacity-80">{k.label}{s.entries.length === 1 ? ` · ${s.entries[0].documentType} ${nf(s.entries[0].remaining)}` : ''}</span>
       </span>
     </span>
+  );
+}
+
+// ---- Resumen: payments y refunds abiertos por mes (proveedores y clientes) ----
+// Importes en divisa local (Remaining Amt. LCY). Cada tabla tiene su opción con / sin Amazon (se recuerda en el navegador).
+// Un mes se abre en sus proveedores / clientes y cada uno en sus movimientos.
+const SUMMARY_TYPES = ['Payment', 'Refund'];
+function SummaryTable({ side, entries, nf, dateEs }: { side: 'Customer' | 'Vendor'; entries: any[]; nf: (v: number) => string; dateEs: (d: string) => string }) {
+  const key = `movimientos:resumen:sinAmazon:${side}`;
+  const [noAmazon, setNoAmazon] = useState(false);
+  useEffect(() => { try { setNoAmazon(localStorage.getItem(key) === '1'); } catch { /* sin almacenamiento */ } }, [key]);
+  const change = (v: boolean) => { setNoAmazon(v); try { localStorage.setItem(key, v ? '1' : '0'); } catch { /* sin almacenamiento */ } };
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const toggle = (k: string) => setOpen(p => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+
+  const isAmazon = (e: any) => /amazon/i.test(e.entityName || '');
+  const base = entries.filter(e => e.type === side && SUMMARY_TYPES.includes(e.documentType));
+  const amazonCount = base.filter(isAmazon).length;
+  const rows = base.filter(e => !noAmazon || !isAmazon(e));
+  const lcy = (e: any) => Number(e.remainingAmountLCY ?? e.remainingAmount) || 0;
+  type Agg = { payN: number; pay: number; refN: number; ref: number };
+  const zero = (): Agg => ({ payN: 0, pay: 0, refN: 0, ref: 0 });
+  const add = (a: Agg, e: any) => { if (e.documentType === 'Payment') { a.payN++; a.pay += lcy(e); } else { a.refN++; a.ref += lcy(e); } };
+  const months = new Map<string, { agg: Agg; parties: Map<string, { name: string; no: string; agg: Agg; list: any[] }> }>();
+  const total = zero();
+  for (const e of rows) {
+    const m = e.postingDate ? e.postingDate.substring(0, 7) : '';
+    if (!months.has(m)) months.set(m, { agg: zero(), parties: new Map() });
+    const g = months.get(m)!;
+    add(g.agg, e); add(total, e);
+    const pk = `${e.entityNo}`;
+    if (!g.parties.has(pk)) g.parties.set(pk, { name: e.entityName, no: e.entityNo, agg: zero(), list: [] });
+    const p = g.parties.get(pk)!;
+    add(p.agg, e); p.list.push(e);
+  }
+  const monthKeys = Array.from(months.keys()).sort((a, b) => (b || '0').localeCompare(a || '0'));
+  const monthLabel = (m: string) => {
+    if (!m) return 'Sin fecha';
+    const s = new Date(`${m}-01T00:00:00Z`).toLocaleDateString('es-ES', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  };
+  const td = 'px-3 py-2 text-right tabular-nums whitespace-nowrap';
+  const th = 'px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-gray-500 whitespace-nowrap';
+  const cells = (a: Agg) => (
+    <>
+      <td className={`${td} text-gray-500`}>{a.payN || ''}</td>
+      <td className={td}>{a.payN ? nf(a.pay) : '—'}</td>
+      <td className={`${td} text-gray-500`}>{a.refN || ''}</td>
+      <td className={td}>{a.refN ? nf(a.ref) : '—'}</td>
+      <td className={`${td} font-semibold`}>{nf(a.pay + a.ref)}</td>
+    </>
+  );
+  const who = side === 'Vendor' ? 'proveedores' : 'clientes';
+
+  return (
+    <section className="bg-white rounded-xl border border-gray-200">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 border-b border-gray-200">
+        <h2 className="font-bold text-gray-900 flex items-center gap-2">
+          {side === 'Vendor' ? <Building2 size={16} /> : <User size={16} />}
+          {side === 'Vendor' ? 'Proveedores' : 'Clientes'} · payments y refunds abiertos por mes
+        </h2>
+        <label className="inline-flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none">
+          <input type="checkbox" checked={noAmazon} onChange={e => change(e.target.checked)} />
+          Sin {who} Amazon{amazonCount ? ` (${amazonCount} mov.)` : ''}
+        </label>
+        <p className="ml-auto text-xs text-gray-500">{rows.length} movimientos · importes pendientes en divisa local · pulsa un mes para ver los {who}</p>
+      </div>
+      <div className="max-h-[70vh] overflow-auto">
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 z-10 bg-gray-50 border-b border-gray-200">
+            <tr>
+              <th className={`${th} text-left`}>Mes</th>
+              <th className={`${th} text-right`}>Nº payments</th>
+              <th className={`${th} text-right`}>Payments</th>
+              <th className={`${th} text-right`}>Nº refunds</th>
+              <th className={`${th} text-right`}>Refunds</th>
+              <th className={`${th} text-right`}>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {monthKeys.length === 0 && <tr><td colSpan={6} className="px-3 py-8 text-center text-gray-500">No hay payments ni refunds abiertos.</td></tr>}
+            {monthKeys.map(m => {
+              const g = months.get(m)!;
+              const mk = `${side}|${m}`;
+              const parties = Array.from(g.parties.values()).sort((a, b) => Math.abs(b.agg.pay + b.agg.ref) - Math.abs(a.agg.pay + a.agg.ref));
+              return (
+                <React.Fragment key={mk}>
+                  <tr onClick={() => toggle(mk)} className="border-b border-gray-100 cursor-pointer hover:bg-gray-50 font-semibold">
+                    <td className="px-3 py-2"><span className="inline-flex items-center gap-1">{open.has(mk) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{monthLabel(m)}</span></td>
+                    {cells(g.agg)}
+                  </tr>
+                  {open.has(mk) && parties.map(p => {
+                    const pk = `${mk}|${p.no}`;
+                    return (
+                      <React.Fragment key={pk}>
+                        <tr onClick={() => toggle(pk)} className="border-b border-gray-100 cursor-pointer hover:bg-gray-50 bg-gray-50/60">
+                          <td className="px-3 py-1.5 pl-9"><span className="inline-flex items-center gap-1">{open.has(pk) ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<span className="text-gray-500">{p.no}</span> {p.name}</span></td>
+                          {cells(p.agg)}
+                        </tr>
+                        {open.has(pk) && (
+                          <tr className="border-b border-gray-100">
+                            <td colSpan={6} className="pl-16 pr-3 py-2">
+                              <table className="w-full text-xs">
+                                <thead><tr className="text-gray-500 text-left">
+                                  {['Fecha', 'Tipo', 'Document No.', 'Ext. Doc. No.', 'Descripción', 'Divisa', 'Pendiente', 'Pendiente (local)'].map(h => (
+                                    <th key={h} className={`px-2 py-1 font-semibold ${h.startsWith('Pendiente') ? 'text-right' : ''}`}>{h}</th>))}
+                                </tr></thead>
+                                <tbody>
+                                  {[...p.list].sort((a, b) => Math.abs(lcy(b)) - Math.abs(lcy(a))).map(e => (
+                                    <tr key={e.entryNo} className="border-t border-gray-100">
+                                      <td className="px-2 py-1 whitespace-nowrap">{dateEs(e.postingDate || '')}</td>
+                                      <td className="px-2 py-1">{e.documentType}</td>
+                                      <td className="px-2 py-1 whitespace-nowrap">{e.documentNo}</td>
+                                      <td className="px-2 py-1">{e.externalDocumentNo}</td>
+                                      <td className="px-2 py-1">{e.description}</td>
+                                      <td className="px-2 py-1">{e.currencyCode || 'local'}</td>
+                                      <td className="px-2 py-1 text-right tabular-nums">{nf(Number(e.remainingAmount) || 0)}</td>
+                                      <td className="px-2 py-1 text-right tabular-nums">{nf(lcy(e))}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </React.Fragment>
+              );
+            })}
+            {monthKeys.length > 0 && (
+              <tr className="border-t-2 border-gray-300 font-bold">
+                <td className="px-3 py-2">Total</td>
+                {cells(total)}
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
