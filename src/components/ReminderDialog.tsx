@@ -46,15 +46,9 @@ export default function ReminderDialog({ customer, invoices, onClose, onSent }: 
   const [message, setMessage] = useState(buildMessage(customer.name, proposed, proposed >= 3));
   const [sending, setSending] = useState(false);
   const [attachInvoices, setAttachInvoices] = useState(false);
-  // Desde qué cuenta sale: el buzón del usuario (si lo conectó) o la cuenta SMTP común
-  const [mailFrom, setMailFrom] = useState<{ connected: boolean; email?: string; smtpFrom?: string; username?: string } | null>(null);
+  // Todos los recordatorios salen desde el buzón común (invoice@); se comprueba que la app tenga permiso
+  const [mailFrom, setMailFrom] = useState<{ mailbox: string; ok: boolean; error?: string } | null>(null);
   useEffect(() => { fetch('/api/mail/status', { cache: 'no-store' }).then(r => r.json()).then(setMailFrom).catch(() => {}); }, []);
-  const connectUrl = () => `/api/auth/microsoft?purpose=mail&back=${encodeURIComponent(window.location.pathname)}`;
-  const disconnect = async () => {
-    if (!confirm('¿Desconectar tu correo? Los recordatorios volverán a salir por la cuenta común.')) return;
-    await fetch('/api/mail/status', { method: 'DELETE' });
-    setMailFrom(m => m ? { ...m, connected: false } : m);
-  };
 
   // Email del comercial (BC) en cuanto se necesita
   useEffect(() => {
@@ -92,7 +86,7 @@ export default function ReminderDialog({ customer, invoices, onClose, onSent }: 
       const data = await res.json();
       if (!res.ok) throw new Error(data.details || data.error);
       const pdfNote = attachInvoices ? `\n${data.invoicePdfs || 0} PDF de factura adjuntos.${data.missingPdfs?.length ? ` Sin PDF en BC: ${data.missingPdfs.join(', ')}` : ''}` : '';
-      alert((data.previewUrl ? `Correo simulado enviado.\nMíralo aquí: ${data.previewUrl}` : `Recordatorio ${level} enviado desde ${data.from || '—'}${data.via === 'graph' ? ' (tu buzón)' : ''} a ${to}${cc ? ` (copia a ${cc})` : ''}.`) + pdfNote + (data.note ? `\n${data.note}` : ''));
+      alert(`Recordatorio ${level} enviado desde ${data.from || '—'} a ${to}${cc ? ` (copia a ${cc})` : ''}.` + pdfNote);
       onSent();
     } catch (e: any) {
       alert(`Error al enviar el recordatorio: ${e.message || e}`);
@@ -126,19 +120,10 @@ export default function ReminderDialog({ customer, invoices, onClose, onSent }: 
 
         <div className="space-y-3">
           {mailFrom && (
-            <div className={`rounded-lg border px-3 py-2 text-xs flex flex-wrap items-center gap-x-2 gap-y-1 ${mailFrom.connected ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-gray-200 bg-gray-50 text-gray-700'}`}>
-              {mailFrom.connected ? (
-                <>
-                  <span>Se enviará desde <strong>tu buzón</strong> ({mailFrom.email}).</span>
-                  <button type="button" onClick={disconnect} className="underline">Desconectar</button>
-                </>
-              ) : (
-                <>
-                  <span>Se enviará desde la cuenta común <strong>{mailFrom.smtpFrom || '—'}</strong>.</span>
-                  <a href={connectUrl()} className="font-semibold underline">Conectar mi correo</a>
-                  <span className="text-gray-500">para que salga desde el tuyo</span>
-                </>
-              )}
+            <div className={`rounded-lg border px-3 py-2 text-xs ${mailFrom.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-red-200 bg-red-50 text-red-800'}`}>
+              {mailFrom.ok
+                ? <>Se enviará desde <strong>{mailFrom.mailbox}</strong> (queda en sus Elementos enviados).</>
+                : <>No se puede enviar desde <strong>{mailFrom.mailbox}</strong>: {mailFrom.error}</>}
             </div>
           )}
           <div>
@@ -186,7 +171,7 @@ export default function ReminderDialog({ customer, invoices, onClose, onSent }: 
           <a href={previewReportUrl(customer.id, ids, message)} target="_blank" rel="noopener noreferrer"
             className="mr-auto px-4 py-2 rounded-lg text-sm font-semibold text-black bg-gray-100 hover:bg-gray-200">📄 Ver PDF</a>
           <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-100">Cancelar</button>
-          <button onClick={send} disabled={sending || !to.trim() || (ccSales && level >= 2 && !spEmail.trim() && spLoading)}
+          <button onClick={send} disabled={sending || mailFrom?.ok === false || !to.trim() || (ccSales && level >= 2 && !spEmail.trim() && spLoading)}
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-black text-white hover:bg-gray-800 disabled:opacity-40">
             <Send size={16} className={sending ? 'animate-pulse' : ''} /> {sending ? 'Enviando…' : `Enviar ${level}º recordatorio`}
           </button>

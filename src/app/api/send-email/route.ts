@@ -1,12 +1,11 @@
 import { NextResponse } from 'next/server';
-import nodemailer from 'nodemailer';
 import prisma from '@/lib/prisma';
 import { registerClaim } from '@/lib/claims';
 import { salesDocumentPdfs } from '@/lib/invoicePdfs';
 import { companyAddress, addressLines } from '@/lib/companyAddress';
 import { logAction } from '@/lib/logger';
 import { getSession } from '@/lib/auth';
-import { mailStatus, sendAsUser } from '@/lib/graphMail';
+import { SHARED_MAILBOX, sendAsMailbox } from '@/lib/graphMail';
 
 // Con los PDF de las facturas de BC puede tardar
 export const maxDuration = 120;
@@ -21,44 +20,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Faltan campos requeridos' }, { status: 400 });
     }
 
-    // Check if we have DB config, else use ethereal
-    let transporter;
-    let isEthereal = false;
-    
-    const emailConfig = await prisma.emailConfig.findUnique({ where: { id: 1 } });
-    
-    if (emailConfig && emailConfig.host && emailConfig.user && emailConfig.password) {
-      transporter = nodemailer.createTransport({
-        host: emailConfig.host,
-        port: emailConfig.port,
-        secure: emailConfig.secure,
-        auth: {
-          user: emailConfig.user,
-          pass: emailConfig.password,
-        },
-      });
-    } else {
-      isEthereal = true;
-      const testAccount = await nodemailer.createTestAccount();
-      transporter = nodemailer.createTransport({
-        host: 'smtp.ethereal.email',
-        port: 587,
-        secure: false,
-        auth: {
-          user: testAccount.user,
-          pass: testAccount.pass,
-        },
-      });
-      console.log('Using Ethereal account:', testAccount.user);
-    }
-
     // Get PDF buffer from base64 string
     const base64Data = pdfBase64.split('base64,')[1] || pdfBase64.replace(/^data:application\/pdf.*?;base64,/, "");
     const pdfBuffer = Buffer.from(base64Data, 'base64');
-
-    const fromAddress = emailConfig?.fromName && emailConfig?.fromEmail 
-      ? `"${emailConfig.fromName}" <${emailConfig.fromEmail}>` 
-      : process.env.SMTP_FROM || '"Craze Finance" <no-reply@craze.com>';
 
     // Firma con la razón social y dirección fiscal (BC) de la empresa de las facturas
     const firstInv = await prisma.invoice.findFirst({ where: { id: { in: invoiceIds.map(Number) } }, select: { companyId: true } });
@@ -83,50 +47,22 @@ export async function POST(request: Request) {
     const summaryPdf = { filename: 'Overdue_Invoices.pdf', content: Buffer.from(pdfBuffer), contentType: 'application/pdf' };
     const sender = (await getSession())?.username || '';
 
-    // Desde el buzón del usuario (Microsoft Graph) si lo ha conectado; si no, o si falla por tamaño, la cuenta SMTP común
-    let via: 'graph' | 'smtp' = 'smtp';
-    let fromUsed = emailConfig?.fromEmail || '';
-    let graphNote = '';
-    let info: any = { messageId: null };
-    if (sender && (await mailStatus(sender)).connected) {
-      try {
-        const logo = await fetch(new URL('/logo.png', request.url)).then(r => r.arrayBuffer()).then(b => Buffer.from(b)).catch(() => null);
-        await sendAsUser(sender, {
-          to, cc, subject, html,
-          attachments: [
-            ...[...invoicePdfs.files, summaryPdf].map(f => ({ name: f.filename, contentType: f.contentType, content: f.content })),
-            ...(logo ? [{ name: 'logo.png', contentType: 'image/png', content: logo, contentId: 'crazelogo' }] : []),
-          ],
-        });
-        via = 'graph';
-        fromUsed = (await mailStatus(sender)).email || sender;
-      } catch (e: any) {
-        if (e.status !== 413) throw e;
-        graphNote = 'El correo pesaba demasiado para enviarlo desde tu buzón; se ha enviado por la cuenta común.';
-      }
-    }
-    if (via === 'smtp') {
-      info = await transporter.sendMail({
-        from: fromAddress,
-        to,
-        ...(cc ? { cc } : {}),
-        subject,
-        text: message,
-        html,
+    // Siempre desde el buzón común invoice@ (Microsoft Graph, permiso de aplicación); sin alternativa por SMTP,
+    // para que ningún recordatorio salga desde otra cuenta
+    const via = 'graph' as const;
+    const fromUsed = SHARED_MAILBOX;
+    const logo = await fetch(new URL('/logo.png', request.url)).then(r => r.arrayBuffer()).then(b => Buffer.from(b)).catch(() => null);
+    try {
+      await sendAsMailbox({
+        to, cc, subject, html,
         attachments: [
-          ...invoicePdfs.files,
-          summaryPdf,
-          { filename: 'logo.png', path: 'https://craze-finance-iota.vercel.app/logo.png', cid: 'crazelogo' },
+          ...[...invoicePdfs.files, summaryPdf].map(f => ({ name: f.filename, contentType: f.contentType, content: f.content })),
+          ...(logo ? [{ name: 'logo.png', contentType: 'image/png', content: logo, contentId: 'crazelogo' }] : []),
         ],
       });
-      console.log('Message sent: %s', info.messageId);
+    } catch (e: any) {
+      throw new Error(`No se pudo enviar desde ${SHARED_MAILBOX}: ${e.message}`);
     }
-
-    let previewUrl = null;
-    if (via === 'smtp' && isEthereal) {
-      previewUrl = nodemailer.getTestMessageUrl(info);
-    }
-
     // Save to database for all selected invoices
     for (const invoiceId of invoiceIds) {
       await prisma.reminder.create({
@@ -148,18 +84,15 @@ export async function POST(request: Request) {
       const docs = await prisma.invoice.findMany({ where: { id: { in: invoiceIds.map(Number) } }, select: { bcId: true } });
       await logAction(
         level ? `Recordatorio ${level} a cliente` : 'Correo a cliente (Recordatorio)',
-        `Cliente: ${customer.name} | Desde ${fromUsed}${via === 'graph' ? ' (su buzón)' : ''} a ${to}${cc ? ` (CC ${cc})` : ''} | ${docs.map(d => d.bcId).join(', ')}${insurance ? ' · aviso aseguradora' : ''}${invoicePdfs.files.length ? ` · ${invoicePdfs.files.length} PDF de factura` : ''}`,
+        `Cliente: ${customer.name} | Desde ${fromUsed} a ${to}${cc ? ` (CC ${cc})` : ''} | ${docs.map(d => d.bcId).join(', ')}${insurance ? ' · aviso aseguradora' : ''}${invoicePdfs.files.length ? ` · ${invoicePdfs.files.length} PDF de factura` : ''}`,
         customer.companyId,
       );
     }
 
     return NextResponse.json({ 
       success: true, 
-      messageId: info.messageId, 
-      previewUrl: previewUrl || null,
       via,
       from: fromUsed,
-      note: graphNote,
       invoicePdfs: invoicePdfs.files.length,
       missingPdfs: invoicePdfs.missing
     });
