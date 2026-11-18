@@ -363,13 +363,25 @@ export function Budget({ ctx, facts, filters }: P) {
     const key = keyFn(ctx, param);
     const rows = sortedEntries(groupBy(full, key), p => p.cur.bdg || p.cur.sIn);
     const projBy = (k: string, m?: number) => projection(ctx, full.filter(r => key(r) === k && (m === undefined || r.m === m)));
+    // Vista por mes: 4 medidas por fila (las mismas en pantalla y en el Excel)
+    const monthLines = (k: string): [string, (m: number) => number][] => [
+      ['Prev. Year', m => full.filter(r => r.y === 'prev' && r.m === m && key(r) === k).reduce((s, r) => s + r.inv + r.so, 0)],
+      ['Year', m => full.filter(r => r.y === 'cur' && r.m === m && key(r) === k).reduce((s, r) => s + r.inv + r.so, 0)],
+      ['Projection', m => projBy(k, m).rev],
+      ['Budget', m => full.filter(r => r.y === 'cur' && r.m === m && key(r) === k).reduce((s, r) => s + r.bdg, 0)],
+    ];
+    const paramLabel = PARAMS.find(x => x.id === param)!.label;
+    const exportMonthly = () => exportRows(`Budget Analysis ${param} por mes`, rows.flatMap(([k]) => monthLines(k).map(([label, f]) => {
+      const vals = MONTHS.map((_, mi) => f(mi + 1));
+      return { [paramLabel]: k, Medida: label, ...Object.fromEntries(MONTHS.map((m, mi) => [m, vals[mi]])), Total: vals.reduce((a, b) => a + b, 0) };
+    })));
     return (
       <div className="space-y-4">
         {tabs}{head}
         <Card title="Año completo: anterior, actual, proyección y presupuesto" right={<div className="flex items-center gap-3">
           <ParamSelect value={param} onChange={setParam} label="Check data by" />
           <label className="text-xs flex items-center gap-1"><input type="checkbox" checked={monthly} onChange={e => setMonthly(e.target.checked)} /> por mes</label>
-          <ExportBtn onClick={() => exportRows(`Budget Analysis ${param}`, rows.map(([k, p]) => { const pr = projBy(k); return {
+          <ExportBtn onClick={() => monthly ? exportMonthly() : exportRows(`Budget Analysis ${param}`, rows.map(([k, p]) => { const pr = projBy(k); return {
             [PARAMS.find(x => x.id === param)!.label]: k, 'Prev. Year Turnover': p.prev.sIn, 'Year Turnover': p.cur.sIn, 'Projection Turnover': pr.rev, 'Budget Turnover': p.cur.bdg,
             'Prev. Year Units': p.prev.sInQty, 'Year Units': p.cur.sInQty, 'Projection Units': pr.qty, 'Budget Units': p.cur.bdgQty,
           }; }))} /></div>}>
@@ -399,12 +411,7 @@ export function Budget({ ctx, facts, filters }: P) {
                 </tr></thead>
                 <tbody>
                   {rows.slice(0, 100).map(([k]) => {
-                    const lines: [string, (m: number) => number][] = [
-                      ['Prev. Year', m => full.filter(r => r.y === 'prev' && r.m === m && key(r) === k).reduce((s, r) => s + r.inv + r.so, 0)],
-                      ['Year', m => full.filter(r => r.y === 'cur' && r.m === m && key(r) === k).reduce((s, r) => s + r.inv + r.so, 0)],
-                      ['Projection', m => projBy(k, m).rev],
-                      ['Budget', m => full.filter(r => r.y === 'cur' && r.m === m && key(r) === k).reduce((s, r) => s + r.bdg, 0)],
-                    ];
+                    const lines = monthLines(k);
                     return (
                       <Fragment key={k}>
                         {lines.map(([label, f], i) => (
