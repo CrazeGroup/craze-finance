@@ -480,6 +480,11 @@ function SummaryTable({ side, entries, year, nf, dateEs }: { side: 'Customer' | 
   const [amazonMode, setAmazonMode] = useState<AmazonMode>('all');
   useEffect(() => { setAmazonMode(readAmazonMode(key)); }, [key]);
   const change = (v: AmazonMode) => { setAmazonMode(v); saveAmazonMode(key, v); };
+  // Agrupar por mes (por defecto) o por proveedor / cliente; se recuerda en el navegador
+  const groupKey = `movimientos:resumen:agrupar:${side}`;
+  const [groupBy, setGroupBy] = useState<'month' | 'party'>('month');
+  useEffect(() => { try { setGroupBy(localStorage.getItem(groupKey) === 'party' ? 'party' : 'month'); } catch { /* sin almacenamiento */ } }, [groupKey]);
+  const changeGroup = (v: 'month' | 'party') => { setGroupBy(v); setOpen(new Set()); try { localStorage.setItem(groupKey, v); } catch { /* sin almacenamiento */ } };
   const [open, setOpen] = useState<Set<string>>(new Set());
   const toggle = (k: string) => setOpen(p => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; });
 
@@ -491,24 +496,32 @@ function SummaryTable({ side, entries, year, nf, dateEs }: { side: 'Customer' | 
   type Agg = { payN: number; pay: number; refN: number; ref: number };
   const zero = (): Agg => ({ payN: 0, pay: 0, refN: 0, ref: 0 });
   const add = (a: Agg, e: any) => { if (e.documentType === 'Payment') { a.payN++; a.pay += lcy(e); } else { a.refN++; a.ref += lcy(e); } };
-  const months = new Map<string, { agg: Agg; parties: Map<string, { name: string; no: string; agg: Agg; list: any[] }> }>();
-  const total = zero();
-  for (const e of rows) {
-    const m = e.postingDate ? e.postingDate.substring(0, 7) : '';
-    if (!months.has(m)) months.set(m, { agg: zero(), parties: new Map() });
-    const g = months.get(m)!;
-    add(g.agg, e); add(total, e);
-    const pk = `${e.entityNo}`;
-    if (!g.parties.has(pk)) g.parties.set(pk, { name: e.entityName, no: e.entityNo, agg: zero(), list: [] });
-    const p = g.parties.get(pk)!;
-    add(p.agg, e); p.list.push(e);
-  }
-  const monthKeys = Array.from(months.keys()).sort((a, b) => (b || '0').localeCompare(a || '0'));
   const monthLabel = (m: string) => {
     if (!m) return 'Sin fecha';
-    const s = new Date(`${m}-01T00:00:00Z`).toLocaleDateString('es-ES', { month: 'long', year: 'numeric', timeZone: 'UTC' });
-    return s.charAt(0).toUpperCase() + s.slice(1);
+    const t = new Date(`${m}-01T00:00:00Z`).toLocaleDateString('es-ES', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+    return t.charAt(0).toUpperCase() + t.slice(1);
   };
+  const monthOf = (e: any) => (e.postingDate ? e.postingDate.substring(0, 7) : '');
+  const partyLabel = (e: any) => <><span className="text-gray-500">{e.entityNo}</span> {e.entityName}</>;
+  // Dos niveles: mes → proveedor/cliente, o proveedor/cliente → mes; debajo, los movimientos
+  type Sub = { key: string; label: React.ReactNode; agg: Agg; list: any[] };
+  type Group = { key: string; label: React.ReactNode; agg: Agg; subs: Map<string, Sub> };
+  const groups = new Map<string, Group>();
+  const total = zero();
+  for (const e of rows) {
+    const [k1, l1, k2, l2] = groupBy === 'month'
+      ? [monthOf(e), monthLabel(monthOf(e)), e.entityNo, partyLabel(e)]
+      : [e.entityNo, partyLabel(e), monthOf(e), monthLabel(monthOf(e))];
+    if (!groups.has(k1)) groups.set(k1, { key: k1, label: l1, agg: zero(), subs: new Map() });
+    const g = groups.get(k1)!;
+    add(g.agg, e); add(total, e);
+    if (!g.subs.has(k2)) g.subs.set(k2, { key: k2, label: l2, agg: zero(), list: [] });
+    const sub = g.subs.get(k2)!;
+    add(sub.agg, e); sub.list.push(e);
+  }
+  const byAmount = (a: { agg: Agg }, b: { agg: Agg }) => Math.abs(b.agg.pay + b.agg.ref) - Math.abs(a.agg.pay + a.agg.ref);
+  const byMonth = (a: { key: string }, b: { key: string }) => (b.key || '0').localeCompare(a.key || '0');
+  const groupList = Array.from(groups.values()).sort(groupBy === 'month' ? byMonth : byAmount);
   const td = 'px-3 py-2 text-right tabular-nums whitespace-nowrap';
   const th = 'px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-gray-500 whitespace-nowrap';
   const cells = (a: Agg) => (
@@ -520,6 +533,7 @@ function SummaryTable({ side, entries, year, nf, dateEs }: { side: 'Customer' | 
       <td className={`${td} font-semibold`}>{nf(a.pay + a.ref)}</td>
     </>
   );
+  const party = side === 'Vendor' ? 'Proveedor' : 'Cliente';
   const who = side === 'Vendor' ? 'proveedores' : 'clientes';
 
   return (
@@ -527,16 +541,24 @@ function SummaryTable({ side, entries, year, nf, dateEs }: { side: 'Customer' | 
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 border-b border-gray-200">
         <h2 className="font-bold text-gray-900 flex items-center gap-2">
           {side === 'Vendor' ? <Building2 size={16} /> : <User size={16} />}
-          {side === 'Vendor' ? 'Proveedores' : 'Clientes'} · payments y refunds abiertos por mes
+          {side === 'Vendor' ? 'Proveedores' : 'Clientes'} · payments y refunds abiertos
         </h2>
+        <label className="inline-flex items-center gap-2 text-xs font-semibold text-gray-500">
+          Agrupar por
+          <select value={groupBy} onChange={e => changeGroup(e.target.value as 'month' | 'party')}
+            className="border border-gray-300 rounded-lg px-2 py-1 text-xs font-semibold text-gray-800 bg-white">
+            <option value="month">Mes</option>
+            <option value="party">{party}</option>
+          </select>
+        </label>
         <AmazonSwitch value={amazonMode} onChange={change} count={amazonCount} />
-        <p className="ml-auto text-xs text-gray-500">{rows.length} movimientos · importes pendientes en divisa local · pulsa un mes para ver los {who}</p>
+        <p className="ml-auto text-xs text-gray-500">{rows.length} movimientos · importes pendientes en divisa local · pulsa {groupBy === 'month' ? `un mes para ver los ${who}` : `un ${party.toLowerCase()} para ver sus meses`}</p>
       </div>
       <div className="max-h-[70vh] overflow-auto">
         <table className="w-full text-sm">
           <thead className="sticky top-0 z-10 bg-gray-50 border-b border-gray-200">
             <tr>
-              <th className={`${th} text-left`}>Mes</th>
+              <th className={`${th} text-left`}>{groupBy === 'month' ? 'Mes' : party}</th>
               <th className={`${th} text-right`}>Nº payments</th>
               <th className={`${th} text-right`}>Payments</th>
               <th className={`${th} text-right`}>Nº refunds</th>
@@ -545,26 +567,25 @@ function SummaryTable({ side, entries, year, nf, dateEs }: { side: 'Customer' | 
             </tr>
           </thead>
           <tbody>
-            {monthKeys.length === 0 && <tr><td colSpan={6} className="px-3 py-8 text-center text-gray-500">No hay payments ni refunds abiertos.</td></tr>}
-            {monthKeys.map(m => {
-              const g = months.get(m)!;
-              const mk = `${side}|${m}`;
-              const parties = Array.from(g.parties.values()).sort((a, b) => Math.abs(b.agg.pay + b.agg.ref) - Math.abs(a.agg.pay + a.agg.ref));
+            {groupList.length === 0 && <tr><td colSpan={6} className="px-3 py-8 text-center text-gray-500">No hay payments ni refunds abiertos.</td></tr>}
+            {groupList.map(g => {
+              const gk = `${side}|${groupBy}|${g.key}`;
+              const subs = Array.from(g.subs.values()).sort(groupBy === 'month' ? byAmount : byMonth);
               return (
-                <React.Fragment key={mk}>
-                  <tr onClick={() => toggle(mk)} className="border-b border-gray-100 cursor-pointer hover:bg-gray-50 font-semibold">
-                    <td className="px-3 py-2"><span className="inline-flex items-center gap-1">{open.has(mk) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{monthLabel(m)}</span></td>
+                <React.Fragment key={gk}>
+                  <tr onClick={() => toggle(gk)} className="border-b border-gray-100 cursor-pointer hover:bg-gray-50 font-semibold">
+                    <td className="px-3 py-2"><span className="inline-flex items-center gap-1">{open.has(gk) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{g.label}</span></td>
                     {cells(g.agg)}
                   </tr>
-                  {open.has(mk) && parties.map(p => {
-                    const pk = `${mk}|${p.no}`;
+                  {open.has(gk) && subs.map(sub => {
+                    const sk = `${gk}|${sub.key}`;
                     return (
-                      <React.Fragment key={pk}>
-                        <tr onClick={() => toggle(pk)} className="border-b border-gray-100 cursor-pointer hover:bg-gray-50 bg-gray-50/60">
-                          <td className="px-3 py-1.5 pl-9"><span className="inline-flex items-center gap-1">{open.has(pk) ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<span className="text-gray-500">{p.no}</span> {p.name}</span></td>
-                          {cells(p.agg)}
+                      <React.Fragment key={sk}>
+                        <tr onClick={() => toggle(sk)} className="border-b border-gray-100 cursor-pointer hover:bg-gray-50 bg-gray-50/60">
+                          <td className="px-3 py-1.5 pl-9"><span className="inline-flex items-center gap-1">{open.has(sk) ? <ChevronDown size={13} /> : <ChevronRight size={13} />}{sub.label}</span></td>
+                          {cells(sub.agg)}
                         </tr>
-                        {open.has(pk) && (
+                        {open.has(sk) && (
                           <tr className="border-b border-gray-100">
                             <td colSpan={6} className="pl-16 pr-3 py-2">
                               <table className="w-full text-xs">
@@ -573,7 +594,7 @@ function SummaryTable({ side, entries, year, nf, dateEs }: { side: 'Customer' | 
                                     <th key={h} className={`px-2 py-1 font-semibold ${h.startsWith('Pendiente') ? 'text-right' : ''}`}>{h}</th>))}
                                 </tr></thead>
                                 <tbody>
-                                  {[...p.list].sort((a, b) => Math.abs(lcy(b)) - Math.abs(lcy(a))).map(e => (
+                                  {[...sub.list].sort((a, b) => Math.abs(lcy(b)) - Math.abs(lcy(a))).map(e => (
                                     <tr key={e.entryNo} className="border-t border-gray-100">
                                       <td className="px-2 py-1 whitespace-nowrap">{dateEs(e.postingDate || '')}</td>
                                       <td className="px-2 py-1">{e.documentType}</td>
@@ -596,7 +617,7 @@ function SummaryTable({ side, entries, year, nf, dateEs }: { side: 'Customer' | 
                 </React.Fragment>
               );
             })}
-            {monthKeys.length > 0 && (
+            {groupList.length > 0 && (
               <tr className="border-t-2 border-gray-300 font-bold">
                 <td className="px-3 py-2">Total</td>
                 {cells(total)}
