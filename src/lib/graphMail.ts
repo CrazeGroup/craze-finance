@@ -75,7 +75,7 @@ export async function sendAsUser(username: string, mail: { to: string; cc?: stri
   if (!res.ok) throw await graphError(res);
 }
 
-// ---- Buzón común (permiso de aplicación Mail.Send, limitado por IT a este buzón con ApplicationAccessPolicy) ----
+// ---- Buzón común (Exchange RBAC para aplicaciones: Application Mail.Send, ámbito AI CRAZE - ACCOUNTING) ----
 // Los recordatorios a clientes salen siempre desde aquí, sea quien sea el usuario que los envía.
 export const SHARED_MAILBOX = process.env.REMINDER_MAILBOX || 'invoice@craze-group.com';
 let appTok: { token: string; exp: number; roles: string[] } | null = null;
@@ -92,26 +92,24 @@ async function appToken() {
   if (!res.ok || !t.access_token) throw new Error(`Microsoft no dio acceso a la app (${t.error_description?.split('\n')[0] || res.status})`);
   let roles: string[] = [];
   try { roles = JSON.parse(Buffer.from(t.access_token.split('.')[1], 'base64url').toString()).roles || []; } catch { /* token opaco */ }
-  const tok = { token: t.access_token, exp: Date.now() + (t.expires_in || 3600) * 1000, roles };
-  // Sin Mail.Send no se guarda: en cuanto IT conceda el permiso, el siguiente intento ya lo recoge
-  appTok = roles.includes('Mail.Send') ? tok : null;
-  return tok;
+  appTok = { token: t.access_token, exp: Date.now() + (t.expires_in || 3600) * 1000, roles };
+  return appTok;
 }
 
-// ¿Tiene la app el permiso Mail.Send de aplicación (con consentimiento de administrador)?
+// El permiso lo da Exchange Online (RBAC para aplicaciones: rol "Application Mail.Send" limitado al ámbito
+// "AI CRAZE - ACCOUNTING", que incluye invoice@), no Entra ID: el token NO lleva el rol Mail.Send y Exchange lo
+// comprueba al enviar. Aquí solo se comprueba que la app obtiene token; un permiso que falte sale como error al enviar.
 export async function sharedMailStatus(): Promise<{ mailbox: string; ok: boolean; error?: string }> {
   try {
-    const t = await appToken();
-    return t.roles.includes('Mail.Send')
-      ? { mailbox: SHARED_MAILBOX, ok: true }
-      : { mailbox: SHARED_MAILBOX, ok: false, error: `La app (${entraConfig()?.clientId}) no tiene el permiso de aplicación Mail.Send con consentimiento de administrador. Permisos de aplicación que tiene: ${t.roles.join(', ') || 'ninguno'}` };
+    await appToken();
+    return { mailbox: SHARED_MAILBOX, ok: true };
   } catch (e: any) {
     return { mailbox: SHARED_MAILBOX, ok: false, error: e.message };
   }
 }
 
-// Envía desde el buzón común. Hasta ~3,9 MB en una sola llamada; si pesa más, borrador + adjuntos uno a uno + envío
-// (cada adjunto < 3 MB; se guarda igualmente en Elementos enviados de invoice@).
+// Envía desde el buzón común. Hasta ~3,9 MB en una sola llamada (solo necesita Mail.Send); si pesa más, borrador +
+// adjuntos uno a uno + envío, que además necesita el rol "Application Mail.ReadWrite" en el mismo ámbito.
 export async function sendAsMailbox(mail: { to: string; cc?: string; subject: string; html: string; attachments: GraphAttachment[] }, mailbox = SHARED_MAILBOX) {
   const { token } = await appToken();
   const h = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -123,6 +121,7 @@ export async function sendAsMailbox(mail: { to: string; cc?: string; subject: st
     return;
   }
   const draft = await fetch(`${base}/messages`, { method: 'POST', headers: h, body: JSON.stringify(messageOf(mail)) });
+  if (draft.status === 403) throw new Error('El correo pasa de ~4 MB y para enviarlo hace falta que IT añada el rol "Application Mail.ReadWrite" (mismo ámbito). Envíalo sin los PDF de las facturas o con menos facturas.');
   if (!draft.ok) throw await graphError(draft);
   const { id } = await draft.json();
   const msg = `${base}/messages/${encodeURIComponent(id)}`;
