@@ -118,6 +118,13 @@ export default function MovimientosPage() {
     setSelectedPaymentMethods([]);
   }, [viewMode]);
 
+  // Resumen: filtro por año (de los payments / refunds abiertos), se recuerda en el navegador
+  const [summaryYear, setSummaryYear] = useState('');
+  useEffect(() => { try { setSummaryYear(localStorage.getItem('movimientos:resumen:anio') || ''); } catch { /* sin almacenamiento */ } }, []);
+  const changeSummaryYear = (y: string) => { setSummaryYear(y); try { localStorage.setItem('movimientos:resumen:anio', y); } catch { /* sin almacenamiento */ } };
+  const summaryYears = useMemo(() => Array.from(new Set(entries.filter(e => SUMMARY_TYPES.includes(e.documentType) && e.postingDate)
+    .map(e => String(e.postingDate).substring(0, 4)))).sort().reverse(), [entries]);
+
   const nf = (v: number) => v.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const dateEs = (d: string) => (d ? d.substring(0, 10).split('-').reverse().join('.') : '—');
   const toggle = (list: string[], set: (f: (p: string[]) => string[]) => void, v: string) => set(p => (p.includes(v) ? p.filter(x => x !== v) : [...p, v]));
@@ -212,8 +219,14 @@ export default function MovimientosPage() {
           </div>
         ) : viewMode === 'Summary' ? (
           <div className="space-y-6">
-            <SummaryTable side="Vendor" entries={entries} nf={nf} dateEs={dateEs} />
-            <SummaryTable side="Customer" entries={entries} nf={nf} dateEs={dateEs} />
+            <section className="bg-white rounded-xl border border-gray-200 p-4 flex flex-wrap items-center gap-2">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mr-2">Año</p>
+              {['', ...summaryYears].map(y => (
+                <button key={y || 'all'} onClick={() => changeSummaryYear(y)} className={chip(summaryYear === y)}>{y || 'Todos'}</button>
+              ))}
+            </section>
+            <SummaryTable side="Vendor" entries={entries} year={summaryYear} nf={nf} dateEs={dateEs} />
+            <SummaryTable side="Customer" entries={entries} year={summaryYear} nf={nf} dateEs={dateEs} />
           </div>
         ) : filteredEntries.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 py-16 text-center">
@@ -465,7 +478,7 @@ function SuggestionCell({ s, nf, dateEs }: { s?: Sug | null; nf: (v: number) => 
 // Importes en divisa local (Remaining Amt. LCY). Cada tabla tiene su opción con / sin Amazon (se recuerda en el navegador).
 // Un mes se abre en sus proveedores / clientes y cada uno en sus movimientos.
 const SUMMARY_TYPES = ['Payment', 'Refund'];
-function SummaryTable({ side, entries, nf, dateEs }: { side: 'Customer' | 'Vendor'; entries: any[]; nf: (v: number) => string; dateEs: (d: string) => string }) {
+function SummaryTable({ side, entries, year, nf, dateEs }: { side: 'Customer' | 'Vendor'; entries: any[]; year: string; nf: (v: number) => string; dateEs: (d: string) => string }) {
   const key = `movimientos:resumen:sinAmazon:${side}`;
   const [noAmazon, setNoAmazon] = useState(false);
   useEffect(() => { try { setNoAmazon(localStorage.getItem(key) === '1'); } catch { /* sin almacenamiento */ } }, [key]);
@@ -474,7 +487,7 @@ function SummaryTable({ side, entries, nf, dateEs }: { side: 'Customer' | 'Vendo
   const toggle = (k: string) => setOpen(p => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; });
 
   const isAmazon = (e: any) => /amazon/i.test(e.entityName || '');
-  const base = entries.filter(e => e.type === side && SUMMARY_TYPES.includes(e.documentType));
+  const base = entries.filter(e => e.type === side && SUMMARY_TYPES.includes(e.documentType) && (!year || String(e.postingDate || '').startsWith(year)));
   const amazonCount = base.filter(isAmazon).length;
   const rows = base.filter(e => !noAmazon || !isAmazon(e));
   const lcy = (e: any) => Number(e.remainingAmountLCY ?? e.remainingAmount) || 0;
