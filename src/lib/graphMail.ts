@@ -92,8 +92,10 @@ async function appToken() {
   if (!res.ok || !t.access_token) throw new Error(`Microsoft no dio acceso a la app (${t.error_description?.split('\n')[0] || res.status})`);
   let roles: string[] = [];
   try { roles = JSON.parse(Buffer.from(t.access_token.split('.')[1], 'base64url').toString()).roles || []; } catch { /* token opaco */ }
-  appTok = { token: t.access_token, exp: Date.now() + (t.expires_in || 3600) * 1000, roles };
-  return appTok;
+  const tok = { token: t.access_token, exp: Date.now() + (t.expires_in || 3600) * 1000, roles };
+  // Sin Mail.Send no se guarda: en cuanto IT conceda el permiso, el siguiente intento ya lo recoge
+  appTok = roles.includes('Mail.Send') ? tok : null;
+  return tok;
 }
 
 // ¿Tiene la app el permiso Mail.Send de aplicación (con consentimiento de administrador)?
@@ -102,7 +104,7 @@ export async function sharedMailStatus(): Promise<{ mailbox: string; ok: boolean
     const t = await appToken();
     return t.roles.includes('Mail.Send')
       ? { mailbox: SHARED_MAILBOX, ok: true }
-      : { mailbox: SHARED_MAILBOX, ok: false, error: 'La app no tiene el permiso de aplicación Mail.Send (o falta el consentimiento de administrador)' };
+      : { mailbox: SHARED_MAILBOX, ok: false, error: `La app (${entraConfig()?.clientId}) no tiene el permiso de aplicación Mail.Send con consentimiento de administrador. Permisos de aplicación que tiene: ${t.roles.join(', ') || 'ninguno'}` };
   } catch (e: any) {
     return { mailbox: SHARED_MAILBOX, ok: false, error: e.message };
   }
