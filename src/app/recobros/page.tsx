@@ -606,7 +606,9 @@ function CollectionsSummary({ invoices, loading, commentsFor, onComment }: {
   const isAmazon = (inv: any) => /amazon/i.test(inv.customer?.name || '') || /amazon/i.test(inv.paymentMethod || '');
   // Intercompañía: forma de pago INTERGROUP o cliente del grupo ("CRAZE …")
   const isIntergroup = (inv: any) => /^intergroup$/i.test(inv.paymentMethod || '') || /^craze\b/i.test(inv.customer?.name || '');
-  const base = invoices.filter(inv => inv.isOverdue && !inv.confirmedPaymentDate && !isAmazon(inv) && !isIntergroup(inv));
+  // Ventas B2C (cliente "B2C Sales Ticket"): no se reclaman a un cliente
+  const isB2C = (inv: any) => /^b2c sales ticket/i.test(inv.customer?.name || '');
+  const base = invoices.filter(inv => inv.isOverdue && !inv.confirmedPaymentDate && !isAmazon(inv) && !isIntergroup(inv) && !isB2C(inv));
   const info = (inv: any) => {
     const comments = commentsFor(`invoice:${inv.id}`);
     const lastComment = comments.reduce((m: string, c: any) => (c.createdAt > m ? c.createdAt : m), '');
@@ -663,7 +665,7 @@ function CollectionsSummary({ invoices, loading, commentsFor, onComment }: {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {kpi(t('Overdue (no Amazon, no intercompany, no confirmed date)'), rows.length, amt(rows))}
+        {kpi(t('Overdue (no Amazon, intercompany, B2C or confirmed date)'), rows.length, amt(rows))}
         {kpi(t('With some action'), acted.length, amt(acted), 'text-emerald-700')}
         {kpi(t('No action yet'), none.length, amt(none), 'text-red-700')}
         <div className="bg-white rounded-xl border border-gray-200 p-4 text-sm text-gray-700 space-y-1">
@@ -731,7 +733,7 @@ function CollectionsSummary({ invoices, loading, commentsFor, onComment }: {
           </tbody>
         </table>
       </div>
-      <p className="text-xs text-gray-500">{t('Overdue invoices of every customer except Amazon and intercompany (INTERGROUP), without a Confirmed Payment Date. Reminders and calls are the same as in Cashflow; comments include those of the invoice and of its Cashflow line.')}</p>
+      <p className="text-xs text-gray-500">{t('Overdue invoices of every customer except Amazon, intercompany (INTERGROUP) and B2C Sales Ticket, without a Confirmed Payment Date. Reminders and calls are the same as in Cashflow; comments include those of the invoice and of its Cashflow line.')}</p>
     </div>
   );
 }

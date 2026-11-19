@@ -54,7 +54,7 @@ const es: Record<string, string> = {
   'No action yet': 'Sin ninguna acción',
   'Reminded': 'Reclamadas',
   'With comments': 'Con comentarios',
-  'Overdue (no Amazon, no intercompany, no confirmed date)': 'Vencido (sin Amazon, intercompañía ni fecha confirmada)',
+  'Overdue (no Amazon, intercompany, B2C or confirmed date)': 'Vencido (sin Amazon, intercompañía, B2C ni fecha confirmada)',
   'With some action': 'Con alguna acción',
   '{n} invoices reminded': '{n} facturas reclamadas',
   '{n} invoices called': '{n} facturas con llamada',
@@ -68,7 +68,7 @@ const es: Record<string, string> = {
   'No overdue invoices match the filters.': 'No hay facturas vencidas con estos filtros.',
   'up to {n} days': 'hasta {n} días',
   'due {date}': 'vence {date}',
-  'Overdue invoices of every customer except Amazon and intercompany (INTERGROUP), without a Confirmed Payment Date. Reminders and calls are the same as in Cashflow; comments include those of the invoice and of its Cashflow line.': 'Facturas vencidas de todos los clientes salvo Amazon e intercompañía (INTERGROUP), sin Confirmed Payment Date. Las reclamaciones y llamadas son las mismas que en Cashflow; los comentarios incluyen los de la factura y los de su línea de Cashflow.',
+  'Overdue invoices of every customer except Amazon, intercompany (INTERGROUP) and B2C Sales Ticket, without a Confirmed Payment Date. Reminders and calls are the same as in Cashflow; comments include those of the invoice and of its Cashflow line.': 'Facturas vencidas de todos los clientes salvo Amazon, intercompañía (INTERGROUP) y B2C Sales Ticket, sin Confirmed Payment Date. Las reclamaciones y llamadas son las mismas que en Cashflow; los comentarios incluyen los de la factura y los de su línea de Cashflow.',
   '{n} of {m} invoices': '{n} de {m} facturas',
   'With calls': 'Con llamada',
 };
