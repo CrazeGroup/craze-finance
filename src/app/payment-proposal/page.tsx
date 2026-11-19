@@ -145,8 +145,6 @@ export default function PaymentProposalPage() {
               <Kpi label={t('Total proposal ({lcy})', { lcy })} value={money(sum(entries, e => e.remainingLCY), locale)} sub={t('Due {from} – {to}', { from: dateEs(range.from), to: dateEs(range.to) })} />
             </div>
 
-            <RemindersTable entries={reminders} lcy={lcy} />
-
             <ProposalTable title="Approved for Payment" subtitle={`% Payment Approval ≥ ${APPROVED_PCT}`} entries={approved} currencies={currencies} lcy={lcy} />
             {data.usersSource === 'none' && data.entries.length > 0 && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900">
@@ -330,94 +328,3 @@ function ProposalTable({ title, subtitle, entries, currencies, lcy, groupByPendi
   );
 }
 
-// Facturas con el check Reminder (el proveedor nos ha reclamado): proveedor → facturas, con la fecha y el comentario
-function RemindersTable({ entries, lcy }: { entries: ReminderEntry[]; lcy: string }) {
-  const { t, locale } = useT();
-  const [open, setOpen] = useState<Set<string>>(new Set());
-  const toggle = (key: string) => setOpen(s => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; });
-  const today = new Date().toISOString().substring(0, 10);
-  const days = (d: string) => (d && d < today ? Math.round((Date.parse(today) - Date.parse(d)) / 86400000) : 0);
-  const groups = Array.from(entries.reduce((m, e) => m.set(e.vendorName, [...(m.get(e.vendorName) || []), e]), new Map<string, ReminderEntry[]>()).entries())
-    .sort((a, b) => Math.abs(sum(b[1], e => e.remainingLCY)) - Math.abs(sum(a[1], e => e.remainingLCY)));
-  return (
-    <section className="bg-white rounded-xl border border-red-200 overflow-hidden">
-      <div className="px-4 py-3 border-b border-red-200 bg-red-50/60 flex flex-wrap items-baseline gap-x-3">
-        <h2 className="text-sm font-bold text-red-800 inline-flex items-center gap-1.5"><BellRing size={15} /> {t('Vendor invoices with Reminder')}</h2>
-        <span className="text-xs text-gray-600">{t('Open invoices with the Reminder check in Vendor Ledger Entries (any due date and payment method) · {docs} documents · {vendors} vendors · {amount} {lcy}', { docs: entries.length, vendors: groups.length, amount: money(sum(entries, e => e.remainingLCY), locale), lcy })}</span>
-      </div>
-      <div className="table-scroll">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-500">
-            <tr>
-              <th className="text-left px-3 py-2">{t('Vendor')}</th>
-              <th className="text-left px-3 py-2">{t('Last reminder')}</th>
-              <th className="text-right px-3 py-2">{t('Max. days overdue')}</th>
-              <th className="text-right px-3 py-2">Total ({lcy})</th>
-            </tr>
-          </thead>
-          <tbody>
-            {!entries.length && <tr><td colSpan={4} className="px-3 py-6 text-center text-gray-500">{t('No open vendor invoice has the Reminder check.')}</td></tr>}
-            {groups.map(([vendor, docs]) => {
-              const isOpen = open.has(vendor);
-              const last = docs.map(d => d.lastReminderDate).filter(Boolean).sort().at(-1) || '';
-              return (
-                <React.Fragment key={vendor}>
-                  <tr onClick={() => toggle(vendor)} className="border-t border-gray-100 cursor-pointer hover:bg-gray-50 text-gray-900">
-                    <td className="px-3 py-2"><span className="inline-flex items-center gap-1.5">
-                      {isOpen ? <ChevronDown size={14} className="text-gray-400" /> : <ChevronRight size={14} className="text-gray-400" />}
-                      {vendor} <span className="text-xs text-gray-400">({docs.length})</span></span></td>
-                    <td className="px-3 py-2 whitespace-nowrap">{last ? dateEs(last) : '—'}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{Math.max(...docs.map(d => days(d.dueDate)))}</td>
-                    <td className="px-3 py-2 text-right tabular-nums font-semibold">{money(sum(docs, e => e.remainingLCY), locale)}</td>
-                  </tr>
-                  {isOpen && (
-                    <tr className="bg-gray-50/70">
-                      <td colSpan={4} className="py-2 pr-3 pl-8">
-                        <table className="w-full text-xs">
-                          <thead className="text-gray-500">
-                            <tr>
-                              <th className="text-left py-1 pr-3">{t('Document No.')}</th>
-                              <th className="text-left py-1 pr-3">{t('Ext. doc. no.')}</th>
-                              <th className="text-left py-1 pr-3">{t('Due date')}</th>
-                              <th className="text-left py-1 pr-3">{t('Last reminder')}</th>
-                              <th className="text-left py-1 pr-3">{t('Reminder comment')}</th>
-                              <th className="text-left py-1 pr-3">{t('Payment method')}</th>
-                              <th className="text-right py-1 pr-3">{t('% Appr.')}</th>
-                              <th className="text-left py-1 pr-3">{t('Status')}</th>
-                              <th className="text-right py-1 pr-3">{t('Amount')}</th>
-                              <th className="text-right py-1">{lcy}</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {docs.map(d => (
-                              <tr key={d.entryNo} className="border-t border-gray-200 text-gray-800">
-                                <td className="py-1 pr-3 font-mono whitespace-nowrap">{d.docNo}<DocPdfLink documentNo={d.docNo} kind={purchasePdfKind(d.docType)} /></td>
-                                <td className="py-1 pr-3">{d.extDocNo}</td>
-                                <td className="py-1 pr-3 whitespace-nowrap">{dateEs(d.dueDate)}{days(d.dueDate) ? <span className="text-red-600"> · {t('{n} days', { n: days(d.dueDate) })}</span> : null}</td>
-                                <td className="py-1 pr-3 whitespace-nowrap">{d.lastReminderDate ? dateEs(d.lastReminderDate) : '—'}</td>
-                                <td className="py-1 pr-3">{d.reminderComment || '—'}</td>
-                                <td className="py-1 pr-3">{d.paymentMethod || '—'}</td>
-                                <td className="py-1 pr-3 text-right tabular-nums">{d.approvalPct}</td>
-                                <td className="py-1 pr-3 whitespace-nowrap">
-                                  {d.noPayment || d.onHold ? <span className="text-amber-700">{t('No Payment')}{d.onHold ? ` (${d.onHold})` : ''}</span>
-                                    : d.inProposal ? <span className="text-emerald-700">{t('In the proposal')}</span>
-                                    : <span className="text-gray-500">{t('Outside the proposal dates / method')}</span>}
-                                </td>
-                                <td className="py-1 pr-3 text-right tabular-nums whitespace-nowrap">{money(d.remaining, locale)} {d.currency}</td>
-                                <td className="py-1 text-right tabular-nums">{money(d.remainingLCY, locale)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
