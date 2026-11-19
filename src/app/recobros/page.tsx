@@ -589,7 +589,8 @@ export default function RecobrosPage() {
 }
 
 // ---- Summary: facturas vencidas de todos los clientes y lo que se ha hecho con cada una ----
-// Vencidas sin Confirmed Payment Date y sin Amazon (cliente con "Amazon" en el nombre o forma de pago AMAZON).
+// Vencidas sin Confirmed Payment Date, sin Amazon (cliente con "Amazon" en el nombre o forma de pago AMAZON) ni
+// intercompañía (forma de pago INTERGROUP o cliente "CRAZE …").
 // Acciones: reclamaciones (nº y última fecha, las mismas que en Cashflow), llamadas (marca "Llamado" de Cashflow) y
 // comentarios de la factura o de su línea de Cashflow. Por cliente, desplegable a sus facturas.
 type ActionFilter = 'all' | 'none' | 'reminded' | 'called' | 'commented';
@@ -603,7 +604,9 @@ function CollectionsSummary({ invoices, loading, commentsFor, onComment }: {
   const toggle = (k: string) => setOpen(p => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; });
 
   const isAmazon = (inv: any) => /amazon/i.test(inv.customer?.name || '') || /amazon/i.test(inv.paymentMethod || '');
-  const base = invoices.filter(inv => inv.isOverdue && !inv.confirmedPaymentDate && !isAmazon(inv));
+  // Intercompañía: forma de pago INTERGROUP o cliente del grupo ("CRAZE …")
+  const isIntergroup = (inv: any) => /^intergroup$/i.test(inv.paymentMethod || '') || /^craze\b/i.test(inv.customer?.name || '');
+  const base = invoices.filter(inv => inv.isOverdue && !inv.confirmedPaymentDate && !isAmazon(inv) && !isIntergroup(inv));
   const info = (inv: any) => {
     const comments = commentsFor(`invoice:${inv.id}`);
     const lastComment = comments.reduce((m: string, c: any) => (c.createdAt > m ? c.createdAt : m), '');
@@ -660,7 +663,7 @@ function CollectionsSummary({ invoices, loading, commentsFor, onComment }: {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {kpi(t('Overdue (no Amazon, no confirmed date)'), rows.length, amt(rows))}
+        {kpi(t('Overdue (no Amazon, no intercompany, no confirmed date)'), rows.length, amt(rows))}
         {kpi(t('With some action'), acted.length, amt(acted), 'text-emerald-700')}
         {kpi(t('No action yet'), none.length, amt(none), 'text-red-700')}
         <div className="bg-white rounded-xl border border-gray-200 p-4 text-sm text-gray-700 space-y-1">
@@ -728,7 +731,7 @@ function CollectionsSummary({ invoices, loading, commentsFor, onComment }: {
           </tbody>
         </table>
       </div>
-      <p className="text-xs text-gray-500">{t('Overdue invoices of every customer except Amazon, without a Confirmed Payment Date. Reminders and calls are the same as in Cashflow; comments include those of the invoice and of its Cashflow line.')}</p>
+      <p className="text-xs text-gray-500">{t('Overdue invoices of every customer except Amazon and intercompany (INTERGROUP), without a Confirmed Payment Date. Reminders and calls are the same as in Cashflow; comments include those of the invoice and of its Cashflow line.')}</p>
     </div>
   );
 }
