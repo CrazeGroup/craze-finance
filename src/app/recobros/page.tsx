@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { tabCompany, useCompany } from '@/contexts/CompanyContext';
 import { useComments, CommentBadge, CommentsDialog } from '@/components/InvoiceComments';
 import { syncFromBc } from '@/lib/syncClient';
@@ -23,6 +23,11 @@ export default function RecobrosPage() {
 
   // Recordatorio al cliente (diálogo común con Cashflow)
   const [reminder, setReminder] = useState<{ customer: any; invoices: any[] } | null>(null);
+
+  // Pestañas: clientes (gestión) / resumen de acciones sobre las vencidas; se recuerda en el navegador
+  const [tab, setTab] = useState<'customers' | 'summary'>('customers');
+  useEffect(() => { try { if (localStorage.getItem('recobros:tab') === 'summary') setTab('summary'); } catch { /* sin almacenamiento */ } }, []);
+  const changeTab = (v: 'customers' | 'summary') => { setTab(v); try { localStorage.setItem('recobros:tab', v); } catch { /* sin almacenamiento */ } };
 
   // UI State
   const [searchQuery, setSearchQuery] = useState('');
@@ -258,6 +263,17 @@ export default function RecobrosPage() {
         </div>
       </header>
 
+      <div className="mb-6 inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm bg-white">
+        {([['customers', t('Customers')], ['summary', t('Summary')]] as const).map(([v, label]) => (
+          <button key={v} onClick={() => changeTab(v)}
+            className={`px-4 py-1.5 font-semibold ${tab === v ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>{label}</button>
+        ))}
+      </div>
+
+      {tab === 'summary' ? (
+        <CollectionsSummary invoices={rawInvoices} loading={loading} commentsFor={commentsFor}
+          onComment={(key, label) => setCommentTarget({ key, label })} />
+      ) : (<>
       {/* Sorting & Search Controls */}
       <div className="mb-6 flex flex-col md:flex-row gap-6 bg-gray-50 p-4 rounded-xl border border-gray-200 backdrop-blur-sm">
         <div className="flex-1">
@@ -548,6 +564,8 @@ export default function RecobrosPage() {
         </div>
       )}
 
+      </>)}
+
       {commentTarget && (
         <CommentsDialog label={commentTarget.label} items={commentsFor(commentTarget.key)} onClose={() => setCommentTarget(null)}
           onAdd={text => addComment(commentTarget.key, text, commentTarget.label)} onDelete={removeComment} />
@@ -566,6 +584,151 @@ export default function RecobrosPage() {
       )}
 
 
+    </div>
+  );
+}
+
+// ---- Summary: facturas vencidas de todos los clientes y lo que se ha hecho con cada una ----
+// Vencidas sin Confirmed Payment Date y sin Amazon (cliente con "Amazon" en el nombre o forma de pago AMAZON).
+// Acciones: reclamaciones (nº y última fecha, las mismas que en Cashflow), llamadas (marca "Llamado" de Cashflow) y
+// comentarios de la factura o de su línea de Cashflow. Por cliente, desplegable a sus facturas.
+type ActionFilter = 'all' | 'none' | 'reminded' | 'called' | 'commented';
+function CollectionsSummary({ invoices, loading, commentsFor, onComment }: {
+  invoices: any[]; loading: boolean; commentsFor: (key: string) => any[]; onComment: (key: string, label: string) => void;
+}) {
+  const { t, locale } = useT();
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<ActionFilter>('all');
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const toggle = (k: string) => setOpen(p => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+
+  const isAmazon = (inv: any) => /amazon/i.test(inv.customer?.name || '') || /amazon/i.test(inv.paymentMethod || '');
+  const base = invoices.filter(inv => inv.isOverdue && !inv.confirmedPaymentDate && !isAmazon(inv));
+  const info = (inv: any) => {
+    const comments = commentsFor(`invoice:${inv.id}`);
+    const lastComment = comments.reduce((m: string, c: any) => (c.createdAt > m ? c.createdAt : m), '');
+    const dates = [inv.lastReminderSentAt, inv.lastCallDate, lastComment].filter(Boolean).map((d: string) => String(d));
+    return {
+      reminders: inv.reminderCount || 0, lastReminder: inv.lastReminderSentAt as string | null,
+      calls: inv.lastCallDate ? inv.callCount || 1 : 0, lastCall: inv.lastCallDate as string | null,
+      comments, lastAction: dates.sort().at(-1) || null,
+    };
+  };
+  const rows = base.map(inv => ({ inv, ...info(inv) }));
+  const matches = (r: typeof rows[number]) => filter === 'all' ? true
+    : filter === 'none' ? !r.reminders && !r.calls && !r.comments.length
+    : filter === 'reminded' ? r.reminders > 0 : filter === 'called' ? r.calls > 0 : r.comments.length > 0;
+  const q = search.trim().toLowerCase();
+  const shown = rows.filter(r => matches(r) && (!q || [r.inv.customer?.name, r.inv.customer?.bcId, r.inv.bcId].some(x => String(x || '').toLowerCase().includes(q))));
+
+  // KPIs sobre todas las vencidas (sin filtro)
+  const amt = (list: typeof rows) => list.reduce((s, r) => s + (r.inv.amount || 0), 0);
+  const acted = rows.filter(r => r.reminders || r.calls || r.comments.length);
+  const none = rows.filter(r => !r.reminders && !r.calls && !r.comments.length);
+
+  // Por cliente
+  const groups = new Map<string, { key: string; name: string; no: string; rows: typeof rows }>();
+  for (const r of shown) {
+    const k = r.inv.customer?.bcId || String(r.inv.customerId);
+    if (!groups.has(k)) groups.set(k, { key: k, name: r.inv.customer?.name || k, no: r.inv.customer?.bcId || '', rows: [] });
+    groups.get(k)!.rows.push(r);
+  }
+  const groupList = Array.from(groups.values()).map(g => {
+    const max = (f: (r: any) => string | null) => g.rows.map(f).filter(Boolean).sort().at(-1) || null;
+    return {
+      ...g, amount: amt(g.rows), maxDays: Math.max(...g.rows.map(r => r.inv.daysOverdue || 0)),
+      reminded: g.rows.filter(r => r.reminders).length, lastReminder: max(r => r.lastReminder),
+      called: g.rows.filter(r => r.calls).length, lastCall: max(r => r.lastCall),
+      commented: g.rows.filter(r => r.comments.length).length, lastAction: max(r => r.lastAction),
+    };
+  }).sort((a, b) => b.amount - a.amount);
+
+  const money = (v: number) => `€${(v || 0).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const date = (d: string | null) => (d ? new Date(d).toLocaleDateString(locale) : '—');
+  const th = 'px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-gray-500 whitespace-nowrap';
+  const td = 'px-3 py-2 whitespace-nowrap';
+  const kpi = (label: string, n: number, v: number, tone = 'text-gray-900') => (
+    <div className="bg-white rounded-xl border border-gray-200 p-4">
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">{label}</p>
+      <p className={`text-2xl font-bold tabular-nums ${tone}`}>{money(v)}</p>
+      <p className="text-xs text-gray-500">{t('{n} invoices', { n })}</p>
+    </div>
+  );
+  const filters: [ActionFilter, string][] = [['all', t('All')], ['none', t('No action yet')], ['reminded', t('Reminded')], ['called', t('Called')], ['commented', t('With comments')]];
+
+  if (loading && !invoices.length) return <p className="text-sm text-gray-500">{t('Loading…')}</p>;
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {kpi(t('Overdue (no Amazon, no confirmed date)'), rows.length, amt(rows))}
+        {kpi(t('With some action'), acted.length, amt(acted), 'text-emerald-700')}
+        {kpi(t('No action yet'), none.length, amt(none), 'text-red-700')}
+        <div className="bg-white rounded-xl border border-gray-200 p-4 text-sm text-gray-700 space-y-1">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">{t('Actions')}</p>
+          <p className="flex items-center gap-2"><Send size={13} /> {t('{n} invoices reminded', { n: rows.filter(r => r.reminders).length })}</p>
+          <p className="flex items-center gap-2"><PhoneCall size={13} /> {t('{n} invoices called', { n: rows.filter(r => r.calls).length })}</p>
+          <p className="flex items-center gap-2"><MessageSquare size={13} /> {t('{n} invoices with comments', { n: rows.filter(r => r.comments.length).length })}</p>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-center gap-3">
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder={t('Search by customer or invoice no....')}
+          className="flex-1 min-w-[220px] border border-gray-300 rounded-lg px-3 py-1.5 text-sm" />
+        <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-xs font-semibold">
+          {filters.map(([v, label]) => (
+            <button key={v} onClick={() => setFilter(v)} className={`px-2.5 py-1 ${filter === v ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}>{label}</button>
+          ))}
+        </div>
+        <p className="ml-auto text-xs text-gray-500">{t('{n} customers · {m} invoices', { n: groupList.length, m: shown.length })}</p>
+      </div>
+
+      <div className="table-scroll bg-white rounded-xl border border-gray-200 [--table-offset:120px]">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b border-gray-200">
+            <tr>
+              <th className={`${th} text-left`}>{t('Customer / invoice')}</th>
+              <th className={`${th} text-right`}>{t('Overdue amount')}</th>
+              <th className={`${th} text-right`}>{t('Days overdue')}</th>
+              <th className={`${th} text-left`}>{t('Reminders')}</th>
+              <th className={`${th} text-left`}>{t('Calls')}</th>
+              <th className={`${th} text-left`}>{t('Comments')}</th>
+              <th className={`${th} text-left`}>{t('Last action')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {groupList.length === 0 && <tr><td colSpan={7} className="px-3 py-10 text-center text-gray-500">{t('No overdue invoices match the filters.')}</td></tr>}
+            {groupList.map(g => (
+              <React.Fragment key={g.key}>
+                <tr onClick={() => toggle(g.key)} className="border-b border-gray-100 cursor-pointer hover:bg-gray-50 font-semibold">
+                  <td className={td}><span className="inline-flex items-center gap-1">{open.has(g.key) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}<span className="text-gray-500">{g.no}</span> {g.name} <span className="text-xs font-normal text-gray-500">· {t('{n} invoices', { n: g.rows.length })}</span></span></td>
+                  <td className={`${td} text-right tabular-nums`}>{money(g.amount)}</td>
+                  <td className={`${td} text-right tabular-nums`}>{t('up to {n} days', { n: g.maxDays })}</td>
+                  <td className={td}>{g.reminded ? <span className="text-amber-700">{t('{n} of {m}', { n: g.reminded, m: g.rows.length })} · {date(g.lastReminder)}</span> : <span className="text-gray-400">—</span>}</td>
+                  <td className={td}>{g.called ? <span className="text-violet-700">{t('{n} of {m}', { n: g.called, m: g.rows.length })} · {date(g.lastCall)}</span> : <span className="text-gray-400">—</span>}</td>
+                  <td className={td}>{g.commented ? <span className="text-sky-700">{t('{n} of {m}', { n: g.commented, m: g.rows.length })}</span> : <span className="text-gray-400">—</span>}</td>
+                  <td className={td}>{g.lastAction ? date(g.lastAction) : <span className="text-red-700 text-xs font-bold uppercase">{t('No action yet')}</span>}</td>
+                </tr>
+                {open.has(g.key) && [...g.rows].sort((a, b) => (b.inv.daysOverdue || 0) - (a.inv.daysOverdue || 0)).map(r => (
+                  <tr key={r.inv.id} className="border-b border-gray-100 bg-gray-50/60 text-[13px]">
+                    <td className={`${td} pl-10`}><span className="font-semibold">{r.inv.bcId}</span> <span className="text-gray-500">· {t('due {date}', { date: date(r.inv.dueDate) })}</span>{r.inv.paymentMethod ? <span className="text-gray-400"> · {r.inv.paymentMethod}</span> : null}</td>
+                    <td className={`${td} text-right tabular-nums`}>{money(r.inv.amount)}{r.inv.currencyCode && r.inv.currencyCode !== 'EUR' ? <span className="text-gray-400"> {r.inv.currencyCode}</span> : null}</td>
+                    <td className={`${td} text-right tabular-nums`}>{t('{n} days', { n: r.inv.daysOverdue })}</td>
+                    <td className={td}>{r.reminders ? <span className="text-amber-700 font-semibold">{t('{n}× · {date}', { n: r.reminders, date: date(r.lastReminder) })}</span> : <span className="text-gray-400">—</span>}</td>
+                    <td className={td}>{r.calls ? <span className="text-violet-700 font-semibold inline-flex items-center gap-1"><PhoneCall size={11} /> {t('{n}× · {date}', { n: r.calls, date: date(r.lastCall) })}</span> : <span className="text-gray-400">—</span>}</td>
+                    <td className={`${td} max-w-xs`}>
+                      {r.comments.length
+                        ? <CommentBadge items={r.comments} onClick={() => onComment(`invoice:${r.inv.id}`, r.inv.bcId)} />
+                        : <button onClick={() => onComment(`invoice:${r.inv.id}`, r.inv.bcId)} className="text-gray-400 hover:text-black" title={t('Add a comment')}><MessageSquare size={14} /></button>}
+                    </td>
+                    <td className={td}>{r.lastAction ? date(r.lastAction) : <span className="text-red-700 text-xs font-bold uppercase">{t('No action yet')}</span>}</td>
+                  </tr>
+                ))}
+              </React.Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-gray-500">{t('Overdue invoices of every customer except Amazon, without a Confirmed Payment Date. Reminders and calls are the same as in Cashflow; comments include those of the invoice and of its Cashflow line.')}</p>
     </div>
   );
 }
