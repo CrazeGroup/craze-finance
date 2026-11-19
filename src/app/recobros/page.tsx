@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { tabCompany, useCompany } from '@/contexts/CompanyContext';
 import { useComments, CommentBadge, CommentsDialog } from '@/components/InvoiceComments';
 import { syncFromBc } from '@/lib/syncClient';
-import { RefreshCcw, Send, CheckCircle, ChevronDown, ChevronRight, Filter, Briefcase, MessageSquare } from 'lucide-react';
+import { RefreshCcw, Send, CheckCircle, ChevronDown, ChevronRight, Filter, Briefcase, MessageSquare, PhoneCall } from 'lucide-react';
 import ReminderDialog from '@/components/ReminderDialog';
 import MailConnectNotice from '@/components/MailConnectNotice';
 
@@ -510,7 +510,14 @@ export default function RecobrosPage() {
                                   <span className="text-gray-900 font-bold">Al día</span>
                                 )}
                               </td>
-                              <td className="py-2">{inv.reminderCount ? <span className="font-semibold text-amber-700">{inv.reminderCount}º</span> : '0'}</td>
+                              <td className="py-2">
+                                {inv.reminderCount ? <span className="font-semibold text-amber-700">{inv.reminderCount}º</span> : '0'}
+                                {inv.lastCallDate && (
+                                  <span className="inline-flex items-center gap-0.5 ml-1.5 text-violet-700 font-semibold text-xs" title={`Llamado ${inv.callCount || 1}× · última llamada ${new Date(inv.lastCallDate).toLocaleDateString('es-ES')} (marcado en Cashflow)`}>
+                                    <PhoneCall size={11} />{(inv.callCount || 1) > 1 ? inv.callCount : ''}
+                                  </span>
+                                )}
+                              </td>
                               <td className="py-2 text-gray-700 font-semibold">
                                 {inv.lastReminderSentAt ? new Date(inv.lastReminderSentAt).toLocaleDateString() : '-'}
                               </td>

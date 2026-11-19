@@ -53,6 +53,8 @@ model Invoice {
   isArchived           Boolean   @default(false)
   lastReminderDate     DateTime?
   claimCount           Int        @default(0)
+  lastCallDate         DateTime?
+  callCount            Int        @default(0)
   reminders            Reminder[]
 
   @@unique([bcId, companyId])

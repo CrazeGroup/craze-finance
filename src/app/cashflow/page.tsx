@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Save, X, ChevronRight, ChevronDown, Download, Upload, Archive, Send, Calendar, Search, MailCheck, AlertTriangle, MessageSquare } from 'lucide-react';
+import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Save, X, ChevronRight, ChevronDown, Download, Upload, Archive, Send, Calendar, Search, MailCheck, AlertTriangle, MessageSquare, PhoneCall } from 'lucide-react';
 import ReminderDialog from '@/components/ReminderDialog';
 import MailConnectNotice from '@/components/MailConnectNotice';
 import { lineKey, matchComments } from '@/components/InvoiceComments';
@@ -40,6 +40,7 @@ export default function CashflowPage() {
   const [excludeClaimed, setExcludeClaimed] = useState(false);
   // Menú del botón de reclamar en facturas ya reclamadas: otra reclamación o quitarla
   const [claimMenu, setClaimMenu] = useState<{ x: number; y: number; invoiceIds: number[]; next: number } | null>(null);
+  const [callMenu, setCallMenu] = useState<{ x: number; y: number; invoiceIds: number[] } | null>(null);
   // Comentarios por factura ("invoice:<id>") o por línea (entry.id)
   const [comments, setComments] = useState<any[]>([]);
   const [commentTarget, setCommentTarget] = useState<{ key: string; label: string } | null>(null);
@@ -666,6 +667,34 @@ export default function CashflowPage() {
     }
   };
 
+  // Marca "Llamado": cliente llamado por teléfono para reclamar (Invoice.lastCallDate / callCount, se ve también en Recobros)
+  const calledInvoices = (entry: any) => (entry.invoices || []).filter((i: any) => i.lastCallDate);
+  const onCallClick = (e: React.MouseEvent, invoices: any[]) => {
+    e.stopPropagation();
+    const ids = invoices.map((i: any) => i.id);
+    if (!invoices.some((i: any) => i.lastCallDate)) { toggleCall(ids, true); return; }
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setCallMenu({ x: Math.max(8, rect.right - 224), y: rect.bottom + 4, invoiceIds: ids });
+  };
+  const toggleCall = async (invoiceIds: number[], called: boolean) => {
+    setCallMenu(null);
+    try {
+      const res = await fetch('/api/invoices/call', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoiceIds, called })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      const updated = new Map<number, any>((data.invoices || []).map((i: any) => [i.id, i]));
+      setEntries(prev => prev.map(e => e.invoices?.some((i: any) => updated.has(i.id))
+        ? { ...e, invoices: e.invoices.map((i: any) => updated.has(i.id) ? { ...i, ...updated.get(i.id) } : i) }
+        : e));
+    } catch (err: any) {
+      alert(`No se pudo guardar la llamada: ${err.message || err}`);
+    }
+  };
+  const callText = (count: number) => count > 1 ? `Llamado ${count}×` : 'Llamado';
+
   // Con "Excluir reclamadas" el importe de las facturas reclamadas no cuenta en el saldo acumulado
   let runningBalance = initialBalance;
   const balancedEntries = entries.map(e => {
@@ -1036,6 +1065,16 @@ export default function CashflowPage() {
                                   </span>
                                 );
                               })()}
+                              {calledInvoices(entry).length > 0 && (() => {
+                                const called = calledInvoices(entry);
+                                const last = called.map((i: any) => i.lastCallDate).sort().pop();
+                                const maxCount = Math.max(...called.map((i: any) => i.callCount || 1));
+                                return (
+                                  <span className="flex items-center gap-1 bg-violet-500/15 text-violet-800 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-violet-500/30" title={`Última llamada: ${claimLabel(last)}`}>
+                                    <PhoneCall size={11} /> {callText(maxCount)}{called.length < entry.invoices.length ? ` ${called.length}/${entry.invoices.length}` : ''} · {claimLabel(last)}
+                                  </span>
+                                );
+                              })()}
                               {commentsFor(lineKey(entry)).length > 0 && (
                                 <button onClick={(e) => openComments(e, lineKey(entry), entry.description)} className="flex items-center gap-1 max-w-xs bg-sky-500/10 text-sky-800 font-semibold px-1.5 py-0.5 rounded text-[10px] border border-sky-500/30 hover:bg-sky-500/20" title={commentsFor(lineKey(entry)).map(c => c.text).join('\n')}>
                                   <MessageSquare size={11} className="shrink-0" /> <span className="truncate">{commentsFor(lineKey(entry)).at(-1).text}</span>
@@ -1085,6 +1124,14 @@ export default function CashflowPage() {
                                   </button>
                                 );
                               })()}
+                              {entry.isGroup && entry.invoices?.length > 0 && (() => {
+                                const anyCalled = calledInvoices(entry).length > 0;
+                                return (
+                                  <button onClick={(e) => onCallClick(e, entry.invoices)} className={`p-1.5 rounded-md transition-colors hover:bg-violet-400/20 ${anyCalled ? 'text-violet-700' : 'text-black'}`} title={anyCalled ? 'Otra llamada o quitar la marca de llamado' : 'Marcar como llamado (cliente llamado para reclamar el cobro)'}>
+                                    <PhoneCall size={14} />
+                                  </button>
+                                );
+                              })()}
                               {entry.isGroup && entry.customer && (
                                 <>
                                   <button onClick={(e) => { e.stopPropagation(); openEmailModal(entry); }} className="p-1.5 text-gray-900 font-bold hover:bg-emerald-400/20 rounded-md transition-colors" title="Enviar recordatorio al cliente (1º, 2º con comercial en copia, 3º con aviso de aseguradora); sin facturas marcadas, todas las de la línea">
@@ -1122,6 +1169,11 @@ export default function CashflowPage() {
                                   <MailCheck size={11} /> {claimCountOf(inv) > 1 ? `${claimCountOf(inv)}ª reclamación` : 'Reclamada'} {claimLabel(inv.lastReminderDate)}
                                 </span>
                               )}
+                              {inv.lastCallDate && (
+                                <span className="inline-flex items-center gap-1 ml-2 bg-violet-500/15 text-violet-800 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-violet-500/30">
+                                  <PhoneCall size={11} /> {callText(inv.callCount || 1)} {claimLabel(inv.lastCallDate)}
+                                </span>
+                              )}
                               {commentsFor(`invoice:${inv.id}`).length > 0 && (
                                 <button onClick={(e) => openComments(e, `invoice:${inv.id}`, inv.bcId)} className="inline-flex items-center gap-1 ml-2 max-w-xs align-middle bg-sky-500/10 text-sky-800 font-semibold px-1.5 py-0.5 rounded text-[10px] border border-sky-500/30 hover:bg-sky-500/20" title={commentsFor(`invoice:${inv.id}`).map(c => c.text).join('\n')}>
                                   <MessageSquare size={11} className="shrink-0" /> <span className="truncate">{commentsFor(`invoice:${inv.id}`).at(-1).text}</span>
@@ -1137,6 +1189,9 @@ export default function CashflowPage() {
                               <div className="flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                 <button onClick={(e) => onClaimClick(e, [inv])} className={`p-1 rounded transition-colors hover:bg-amber-400/20 ${inv.lastReminderDate ? 'text-amber-700' : 'text-black/70 hover:text-black'}`} title={inv.lastReminderDate ? 'Otra reclamación o quitar la marca de reclamada' : 'Marcar como reclamada'}>
                                   <MailCheck size={12} />
+                                </button>
+                                <button onClick={(e) => onCallClick(e, [inv])} className={`p-1 rounded transition-colors hover:bg-violet-400/20 ${inv.lastCallDate ? 'text-violet-700' : 'text-black/70 hover:text-black'}`} title={inv.lastCallDate ? 'Otra llamada o quitar la marca de llamado' : 'Marcar como llamado'}>
+                                  <PhoneCall size={12} />
                                 </button>
                                 <button onClick={(e) => openComments(e, `invoice:${inv.id}`, inv.bcId)} className={`p-1 rounded transition-colors hover:bg-sky-400/20 ${commentsFor(`invoice:${inv.id}`).length ? 'text-sky-700' : 'text-black/70 hover:text-black'}`} title="Comentarios de la factura">
                                   <MessageSquare size={12} />
@@ -1169,6 +1224,20 @@ export default function CashflowPage() {
               </button>
               <button onClick={() => toggleClaim(claimMenu.invoiceIds, false)} className="w-full flex items-center gap-2 px-3 py-2 text-left text-red-700 hover:bg-red-50">
                 <X size={14} /> Quitar reclamación
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Menú de llamada (factura o línea ya llamada) */}
+        {callMenu && (
+          <div className="fixed inset-0 z-50" onClick={() => setCallMenu(null)}>
+            <div className="fixed w-56 bg-white border border-gray-200 rounded-lg shadow-xl py-1 text-sm" style={{ left: callMenu.x, top: callMenu.y }} onClick={e => e.stopPropagation()}>
+              <button onClick={() => toggleCall(callMenu.invoiceIds, true)} className="w-full flex items-center gap-2 px-3 py-2 text-left text-gray-900 hover:bg-violet-50">
+                <PhoneCall size={14} className="text-violet-700" /> Registrar otra llamada (hoy)
+              </button>
+              <button onClick={() => toggleCall(callMenu.invoiceIds, false)} className="w-full flex items-center gap-2 px-3 py-2 text-left text-red-700 hover:bg-red-50">
+                <X size={14} /> Quitar marca de llamado
               </button>
             </div>
           </div>

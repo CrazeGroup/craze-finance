@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "concurrently \"next dev\" \"npx tsx src/scripts/cron.ts\"",
-    "build": "prisma generate && next build",
+    "build": "prisma db push --skip-generate && prisma generate && next build",
     "start": "next start",
     "lint": "eslint"
   },
