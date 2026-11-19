@@ -6,28 +6,12 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { LogOut, Building2, ChevronDown, ChevronRight, FolderPlus, GripVertical, Pencil, Trash2, Check, Languages, Menu as MenuIcon, PanelLeftClose, PanelLeftOpen, Star } from 'lucide-react';
 import { useCompany, COMPANIES, companyLabel } from '@/contexts/CompanyContext';
-import { useLanguage, LANGS, LANG_NAMES, type Lang } from '@/contexts/LanguageContext';
+import { useLanguage, useT, LANGS, LANG_NAMES, type Lang } from '@/contexts/LanguageContext';
 
 type Section = { id: string; name: string; items: string[]; collapsed?: boolean };
 type Layout = { sections: Section[] };
 type MenuItem = { href: string; label: string; module: string };
 
-// Textos del menú (los nombres de las secciones son los que pone cada usuario)
-const TEXT: Record<Lang, Record<string, string>> = {
-  en: {
-    menu: 'Menu', hide: 'Hide menu', show: 'Show menu', hello: 'Hi,', activeCompany: 'Active company', allCompanies: 'ALL COMPANIES', language: 'Language',
-    noSection: 'No section', dragHere: 'Drag items here', newSection: 'New section', organize: 'Organize menu', done: 'Done', rename: 'Rename', dragSection: 'Drag to reorder the section',
-    deleteSection: 'Delete section (its items go back to "No section")', logout: 'Log out', favorites: 'Favorites', addFav: 'Add to favorites', removeFav: 'Remove from favorites',
-    '/': 'Main Dashboard', '/riesgos': 'Risks', '/recobros': 'Collections', '/movimientos': 'Open Entries', '/pagos': 'Vendor Payments',
-    '/cierre-mensual': 'Month-End Close Tracking', '/inventario': 'Inventory (Closing)', '/inventory-analysis': 'Inventory Analysis', '/logistic-cost': 'Logistic Cost', '/customer-margin': 'Customer Margin', '/notas-compra': 'Purchase Notes', '/aduanas': 'Customs', '/insurances': 'Insurance', '/contracts': 'Contracts',
-    '/settings/users': 'Users', '/settings/logs': 'Audit Log', '/settings': 'Settings',
-  },
-  es: {
-    menu: 'Menú', hide: 'Ocultar menú', show: 'Mostrar menú', hello: 'Hola,', activeCompany: 'Empresa activa', allCompanies: 'TODAS LAS EMPRESAS', language: 'Idioma',
-    noSection: 'Sin sección', dragHere: 'Arrastra aquí los apartados', newSection: 'Nueva sección', organize: 'Organizar menú', done: 'Terminar', rename: 'Renombrar', dragSection: 'Arrastra para cambiar el orden de la sección',
-    deleteSection: 'Eliminar sección (sus apartados vuelven a «Sin sección»)', logout: 'Cerrar sesión', favorites: 'Favoritos', addFav: 'Añadir a favoritos', removeFav: 'Quitar de favoritos',
-  },
-};
 const HIDDEN_KEY = 'crz-menu-hidden';
 const COLLAPSED_KEY = 'crz-menu-collapsed';
 
@@ -44,7 +28,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
   const router = useRouter();
   const { selectedCompany, setSelectedCompany } = useCompany();
   const { lang, setLang } = useLanguage();
-  const tx = (k: string) => TEXT[lang][k] ?? TEXT.es[k] ?? k;
+  const { t } = useT();
   const [hidden, setHidden] = useState(false);
   const [layout, setLayout] = useState<Layout>({ sections: [] });
   const [editing, setEditing] = useState(false);
@@ -107,17 +91,17 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
   };
 
   const baseItems: MenuItem[] = [
-    { href: '/', label: 'Dashboard Principal', module: 'dashboard' },
-    { href: '/riesgos', label: 'Riesgos', module: 'riesgos' },
-    { href: '/recobros', label: 'Recobros', module: 'recobros' },
-    { href: '/movimientos', label: 'Mov. Abiertos', module: 'movimientos' },
-    { href: '/pagos', label: 'Pagos a Prov.', module: 'pagos' },
+    { href: '/', label: 'Main Dashboard', module: 'dashboard' },
+    { href: '/riesgos', label: 'Risks', module: 'riesgos' },
+    { href: '/recobros', label: 'Collections', module: 'recobros' },
+    { href: '/movimientos', label: 'Open Entries', module: 'movimientos' },
+    { href: '/pagos', label: 'Payments to Vendors', module: 'pagos' },
     { href: '/cashflow', label: 'Cashflow', module: 'cashflow' },
-    { href: '/banco', label: 'BANCO', module: 'banco' },
-    { href: '/cierre-mensual', label: 'Tracking Cierre Mensual', module: 'cierre' },
-    { href: '/inventario', label: 'Inventario (Cierre)', module: 'inventario' },
+    { href: '/banco', label: 'BANK', module: 'banco' },
+    { href: '/cierre-mensual', label: 'Month-End Close Tracking', module: 'cierre' },
+    { href: '/inventario', label: 'Inventory (Closing)', module: 'inventario' },
     { href: '/reporting', label: 'Reporting', module: 'reporting' },
-    { href: '/inventory-analysis', label: 'Análisis Inventario', module: 'reporting' },
+    { href: '/inventory-analysis', label: 'Inventory Analysis', module: 'reporting' },
     { href: '/controlling', label: 'Controlling', module: 'controlling' },
     { href: '/royalties', label: 'Royalties', module: 'royalties' },
     { href: '/commercial', label: 'Commercial Analysis', module: 'commercial' },
@@ -126,23 +110,23 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
     ...(selectedCompany === 'CRAZE' ? [{ href: '/logistic-cost', label: 'Logistic Cost', module: 'logistic_cost' }, { href: '/customer-margin', label: 'Customer Margin', module: 'customer_margin' }] : []),
     { href: '/intercompany', label: 'Intercompany', module: 'intercompany' },
     { href: '/payment-proposal', label: 'Payment Proposal', module: 'payment_proposal' },
-    { href: '/notas-compra', label: 'Notas de compra', module: 'notas_compra' },
-    { href: '/aduanas', label: 'Aduanas', module: 'aduanas' },
+    { href: '/notas-compra', label: 'Purchase Notes', module: 'notas_compra' },
+    { href: '/aduanas', label: 'Customs', module: 'aduanas' },
     { href: '/ocr', label: 'OCR', module: 'ocr' },
-    { href: '/feedback', label: 'Feedback OCR / Banco', module: 'ocr|banco' },
+    { href: '/feedback', label: 'OCR / Bank Feedback', module: 'ocr|banco' },
     // Solo para Craze Entertainment
     ...(selectedCompany === 'Craze Entertainment' ? [
       { href: '/magazines', label: 'D-FORCE/MF', module: 'dforce' },
       { href: '/magazine-profitability', label: 'Magazine Profitability', module: 'magazine_profitability' },
     ] : []),
-    { href: '/insurances', label: 'Seguros', module: 'seguros' },
-    { href: '/contracts', label: 'Contratos', module: 'contratos' },
-    ...(authEnabled ? [{ href: '/settings/users', label: 'Usuarios', module: 'admin' }] : []),
-    { href: '/settings/logs', label: 'Auditoría', module: 'auditoria' },
-    { href: '/settings', label: 'Configuración', module: 'configuracion' },
+    { href: '/insurances', label: 'Insurance', module: 'seguros' },
+    { href: '/contracts', label: 'Contracts', module: 'contratos' },
+    ...(authEnabled ? [{ href: '/settings/users', label: 'Users', module: 'admin' }] : []),
+    { href: '/settings/logs', label: 'Audit Log', module: 'auditoria' },
+    { href: '/settings', label: 'Settings', module: 'configuracion' },
   ];
   const menuItems = baseItems.map(i => {
-    const label = TEXT[lang][i.href] ?? i.label;
+    const label = t(i.label);
     // Feedback OCR / Banco: casos pendientes entre paréntesis
     return i.href === '/feedback' && feedbackPending ? { ...i, label: `${label} (${feedbackPending})` } : { ...i, label };
   });
@@ -157,13 +141,13 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
   // Oculto: una franja estrecha a la izquierda (ocupa su propio espacio, no tapa la página) con el botón para abrirlo
   if (hidden) return (
     <aside className="app-menu-toggle w-11 flex-shrink-0 border-r border-gray-200 bg-white flex flex-col items-center h-full">
-      <button type="button" onClick={() => toggleHidden(false)} title={tx('show')} aria-label={tx('show')}
+      <button type="button" onClick={() => toggleHidden(false)} title={t('Show menu')} aria-label={t('Show menu')}
         className="mt-2 p-2 rounded-md text-gray-500 hover:text-black hover:bg-gray-100">
         <PanelLeftOpen size={18} />
       </button>
-      <button type="button" onClick={() => toggleHidden(false)} title={tx('show')}
+      <button type="button" onClick={() => toggleHidden(false)} title={t('Show menu')}
         className="mt-3 text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400 hover:text-black [writing-mode:vertical-rl] rotate-180">
-        {tx('menu')}
+        {t('Menu')}
       </button>
     </aside>
   );
@@ -172,8 +156,8 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
   const languageSelect = (
     <label key="lang" className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-gray-600">
       <Languages size={15} className="text-gray-400 shrink-0" />
-      <span className="flex-1">{tx('language')}</span>
-      <select value={lang} onChange={e => setLang(e.target.value as Lang)} aria-label={tx('language')}
+      <span className="flex-1">{t('Language')}</span>
+      <select value={lang} onChange={e => setLang(e.target.value as Lang)} aria-label={t('Language')}
         className="bg-gray-100 border-none text-xs font-semibold rounded-md px-2 py-1 text-gray-900 focus:ring-2 focus:ring-black outline-none cursor-pointer">
         {LANGS.map(l => <option key={l} value={l}>{l.toUpperCase()} · {LANG_NAMES[l]}</option>)}
       </select>
@@ -184,8 +168,8 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
   return (
     <aside className="w-64 flex-shrink-0 border-r border-gray-200 bg-white flex flex-col h-full">
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
-        <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-gray-500"><MenuIcon size={15} /> {tx('menu')}</span>
-        <button type="button" onClick={() => toggleHidden(true)} title={tx('hide')} aria-label={tx('hide')}
+        <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-gray-500"><MenuIcon size={15} /> {t('Menu')}</span>
+        <button type="button" onClick={() => toggleHidden(true)} title={t('Hide menu')} aria-label={t('Hide menu')}
           className="p-1.5 rounded-md text-gray-400 hover:text-black hover:bg-gray-100">
           <PanelLeftClose size={17} />
         </button>
@@ -193,14 +177,14 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
       <div className="p-6 border-b border-gray-200 flex flex-col items-start justify-center min-h-[100px]">
         <Image src="/logo.png" alt="Craze Group Logo" width={140} height={40} className="mb-2 object-contain" />
         {username && (
-          <p className="text-gray-500 text-sm font-medium">{tx('hello')} {username}</p>
+          <p className="text-gray-500 text-sm font-medium">{t('Hi,')} {username}</p>
         )}
         
         {/* Company Selector */}
         <div className="mt-4 w-full">
           <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
             <Building2 size={14} />
-            {tx('activeCompany')}
+            {t('Active company')}
           </label>
           <select
             value={selectedCompany}
@@ -216,7 +200,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
             className="w-full bg-gray-100 border-none text-sm font-semibold rounded-md px-3 py-2 text-gray-900 focus:ring-2 focus:ring-black outline-none cursor-pointer"
           >
             {COMPANIES.map(comp => (
-              <option key={comp} value={comp}>{comp === 'ALL' ? tx('allCompanies') : companyLabel(comp)}</option>
+              <option key={comp} value={comp}>{comp === 'ALL' ? t('ALL COMPANIES') : companyLabel(comp)}</option>
             ))}
           </select>
         </div>
@@ -281,7 +265,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
                   {item.label}
                 </Link>
                 <button type="button" onClick={() => toggleFavorite(item.href)}
-                  title={tx(fav ? 'removeFav' : 'addFav')} aria-label={tx(fav ? 'removeFav' : 'addFav')} aria-pressed={fav}
+                  title={(fav ? t('Remove from favorites') : t('Add to favorites'))} aria-label={(fav ? t('Remove from favorites') : t('Add to favorites'))} aria-pressed={fav}
                   className={`absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded transition-opacity ${fav ? 'text-amber-400 opacity-100' : `${isActive ? 'text-gray-400 hover:text-white' : 'text-gray-300 hover:text-amber-500'} opacity-60 group-hover:opacity-100`}`}>
                   <Star size={14} fill={fav ? 'currentColor' : 'none'} />
                 </button>
@@ -295,7 +279,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
               {favItems.length > 0 && (
                 <div className="pb-2 mb-1 border-b border-gray-100 space-y-1.5">
                   <p className="flex items-center gap-1 px-2 mb-1 text-[11px] font-bold uppercase tracking-wider text-gray-400">
-                    <Star size={11} className="text-amber-400" fill="currentColor" /> {tx('favorites')}
+                    <Star size={11} className="text-amber-400" fill="currentColor" /> {t('Favorites')}
                   </p>
                   {favItems.map(i => link(i, null))}
                 </div>
@@ -304,7 +288,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
               {/* Apartados sin sección */}
               <div onDragOver={over('loose')} onDrop={onDrop(null)}
                 className={`space-y-1.5 ${editing ? `min-h-[40px] rounded-lg p-1 border border-dashed ${dropTarget === 'loose' ? 'border-black bg-gray-50' : 'border-gray-200'}` : ''}`}>
-                {editing && <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 px-1">{tx('noSection')}</p>}
+                {editing && <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 px-1">{t('No section')}</p>}
                 {loose.map(i => link(i, null))}
               </div>
 
@@ -316,7 +300,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
                 return (
                   <div key={sec.id} className="pt-3" onDragOver={over(`sec:${sec.id}`)} onDrop={onDrop(sec.id)}>
                     <div className={`flex items-center gap-1 px-2 mb-1 ${editing ? 'cursor-grab active:cursor-grabbing' : ''}`} draggable={editing && renaming !== sec.id}
-                      title={editing ? tx('dragSection') : undefined}
+                      title={editing ? t('Drag to reorder the section') : undefined}
                       onDragStart={e => { e.stopPropagation(); draggedSec.current = sec.id; }} onDragEnd={() => { draggedSec.current = null; setDropTarget(null); }}>
                       {editing && <GripVertical size={12} className="text-gray-400 shrink-0" />}
                       {editing && renaming === sec.id ? (
@@ -333,8 +317,8 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
                       )}
                       {editing && (
                         <>
-                          <button type="button" title={tx('rename')} onClick={() => setRenaming(sec.id)} className="p-1 text-gray-400 hover:text-gray-800"><Pencil size={12} /></button>
-                          <button type="button" title={tx('deleteSection')}
+                          <button type="button" title={t('Rename')} onClick={() => setRenaming(sec.id)} className="p-1 text-gray-400 hover:text-gray-800"><Pencil size={12} /></button>
+                          <button type="button" title={t('Delete section (its items go back to "No section")')}
                             onClick={() => save({ sections: layout.sections.filter(x => x.id !== sec.id) })} className="p-1 text-gray-400 hover:text-red-600"><Trash2 size={12} /></button>
                         </>
                       )}
@@ -342,7 +326,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
                     {open && (
                       <div className={`space-y-1.5 ${editing ? `min-h-[40px] rounded-lg p-1 border border-dashed ${dropTarget === `sec:${sec.id}` ? 'border-black bg-gray-50' : 'border-gray-200'}` : ''}`}>
                         {items.map(i => link(i, sec.id))}
-                        {editing && !items.length && <p className="text-xs text-gray-400 px-2 py-2">{tx('dragHere')}</p>}
+                        {editing && !items.length && <p className="text-xs text-gray-400 px-2 py-2">{t('Drag items here')}</p>}
                         {isConfig && !editing && languageSelect}
                       </div>
                     )}
@@ -354,14 +338,14 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
                 {!configSection && !editing && languageSelect}
                 {editing && (
                   <button type="button"
-                    onClick={() => { const id = `s${Date.now()}`; save({ sections: [...layout.sections, { id, name: tx('newSection'), items: [] }] }); setRenaming(id); }}
+                    onClick={() => { const id = `s${Date.now()}`; save({ sections: [...layout.sections, { id, name: t('New section'), items: [] }] }); setRenaming(id); }}
                     className="flex items-center gap-2 px-3 py-2 text-sm font-semibold text-gray-700 border border-dashed border-gray-300 rounded-lg hover:border-black">
-                    <FolderPlus size={15} /> {tx('newSection')}
+                    <FolderPlus size={15} /> {t('New section')}
                   </button>
                 )}
                 <button type="button" onClick={() => { setEditing(e => !e); setRenaming(null); }}
                   className={`flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg ${editing ? 'bg-black text-white' : 'text-gray-400 hover:text-gray-800'}`}>
-                  {editing ? <><Check size={14} /> {tx('done')}</> : <><Pencil size={13} /> {tx('organize')}</>}
+                  {editing ? <><Check size={14} /> {t('Done')}</> : <><Pencil size={13} /> {t('Organize menu')}</>}
                 </button>
               </div>
             </>
@@ -374,7 +358,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
           onClick={handleLogout}
           className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
         >
-          <LogOut size={18} /> {tx('logout')}
+          <LogOut size={18} /> {t('Log out')}
         </button>
       </div>
       )}

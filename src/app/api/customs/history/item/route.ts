@@ -10,7 +10,7 @@ export async function POST(req: Request) {
   try {
     const company = (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
     const { no } = await req.json();
-    if (!no) return NextResponse.json({ error: 'Falta el artículo.' }, { status: 400 });
+    if (!no) return NextResponse.json({ error: 'The item is missing.' }, { status: 400 });
     return NextResponse.json(await refreshHistoryItem(await getBcContext(company), company, String(no)));
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

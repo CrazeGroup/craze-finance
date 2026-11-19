@@ -9,11 +9,13 @@ import {
 import Link from 'next/link';
 import { useCompany } from '@/contexts/CompanyContext';
 import { syncFromBc } from '@/lib/syncClient';
+import { useT } from '@/contexts/LanguageContext';
 
 export default function Dashboard() {
   const [kpis, setKpis] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const { selectedCompany } = useCompany();
+  const { t, tx, locale } = useT();
   const [syncing, setSyncing] = useState<string | null>(null);
   const [syncErrors, setSyncErrors] = useState<string[]>([]);
   const [lastSync, setLastSync] = useState<Record<string, string>>({});
@@ -38,20 +40,20 @@ export default function Dashboard() {
   const syncNow = async () => {
     setSyncErrors([]);
     const errors = await syncFromBc(selectedCompany, setSyncing);
-    setSyncing('Recalculando el dashboard…');
+    setSyncing(t('Recalculating the dashboard…'));
     await fetchKpis(true);
     setSyncErrors(errors);
     setSyncing(null);
   };
   const lastIso = selectedCompany === 'ALL' ? Object.values(lastSync).sort()[0] : lastSync[selectedCompany];
   const ago = (iso?: string) => {
-    if (!iso) return 'nunca';
+    if (!iso) return t('never');
     const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
-    return min < 1 ? 'hace menos de 1 min' : min < 60 ? `hace ${min} min` : min < 48 * 60 ? `hace ${Math.round(min / 60)} h` : new Date(iso).toLocaleString('es-ES');
+    return min < 1 ? t('less than 1 min ago') : min < 60 ? t('{n} min ago', { n: min }) : min < 48 * 60 ? t('{n} h ago', { n: Math.round(min / 60) }) : new Date(iso).toLocaleString(locale);
   };
 
   const formatCurrency = (val: number, currencyCode: string = 'EUR') => {
-    return new Intl.NumberFormat('es-ES', { style: 'currency', currency: currencyCode }).format(val || 0);
+    return new Intl.NumberFormat(locale, { style: 'currency', currency: currencyCode }).format(val || 0);
   };
 
   const KPICard = ({ title, value, icon, trend, link, currency }: any) => (
@@ -85,33 +87,33 @@ export default function Dashboard() {
         <header className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <h1 className="text-4xl font-black text-black tracking-tight">
-              Dashboard Contable
+              {t('Accounting Dashboard')}
             </h1>
-            <p className="text-gray-500 mt-2 font-medium">Visión global de cobros, pagos y métricas financieras.</p>
+            <p className="text-gray-500 mt-2 font-medium">{t('Overview of collections, payments and financial metrics.')}</p>
             {selectedCompany === 'ALL' && (
               <p className="text-xs text-gray-500 mt-1">
-                <span className="font-bold text-gray-800">CRAZE Consolidated</span> · todas las empresas en EUR (tipo de cambio de CRAZE GmbH), sin cobros ni pagos intercompañía; el disponible se suma por divisa
+                <span className="font-bold text-gray-800">CRAZE Consolidated</span> · {t('all companies in EUR (CRAZE GmbH exchange rate), excluding intercompany receivables and payables; available cash is summed per currency')}
               </p>
             )}
           </div>
           <div className="text-right">
             <button onClick={syncNow} disabled={!!syncing}
               className="inline-flex items-center gap-2 bg-black text-white text-sm font-semibold px-4 py-2.5 rounded-lg hover:bg-gray-800 disabled:opacity-60">
-              <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} /> {syncing ? 'Actualizando…' : 'Actualizar desde BC'}
+              <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} /> {syncing ? t('Updating…') : t('Update from BC')}
             </button>
             <p className="text-xs text-gray-500 mt-1.5">
-              {syncing || `Última sincronización: ${ago(lastIso)} · automática cada hora`}
+              {syncing ? tx(syncing) : t('Last sync: {ago} · automatic every hour', { ago: ago(lastIso) })}
             </p>
           </div>
         </header>
         {kpis?.fxErrors?.length > 0 && (
           <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-            Sin tipo de cambio a EUR (esos importes se suman sin convertir): {kpis.fxErrors.join(' · ')}
+            {t('No EUR exchange rate (those amounts are added unconverted):')} {kpis.fxErrors.map((e: string) => tx(e)).join(' · ')}
           </div>
         )}
         {syncErrors.length > 0 && (
           <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-            Algunos pasos no se han podido sincronizar: {syncErrors.join(' · ')}
+            {t('Some steps could not be synced:')} {syncErrors.map(e => tx(e)).join(' · ')}
           </div>
         )}
 
@@ -126,18 +128,18 @@ export default function Dashboard() {
             <div>
               <h2 className="text-xl font-bold text-black mb-4 flex items-center gap-2 border-b border-gray-200 pb-2">
                 <ArrowDownRight className="text-gray-700" /> 
-                Gestión de Cobros (Clientes)
+                {t('Collections Management (Customers)')}
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <KPICard 
-                  title="Cartera de Clientes" 
+                  title={t('Customer Portfolio')} 
                   value={kpis?.totalCarteraClientes} 
                   icon={<Banknote size={24} />} 
 
                   link="/recobros"
                 />
                 <KPICard 
-                  title="Total Vencido" 
+                  title={t('Total Overdue')} 
                   value={kpis?.totalVencido} 
                   icon={<AlertCircle size={24} />} 
 
@@ -165,16 +167,16 @@ export default function Dashboard() {
                   icon={<ShoppingCart size={24} />} 
                 />
                 <KPICard 
-                  title="Confirmado Markant" 
+                  title={t('Markant Confirmed')} 
                   value={kpis?.totalConfirmadoMarkant} 
                   icon={<CheckCircle2 size={24} />} 
-                  trend="Con fecha de pago confirmada"
+                  trend={t('With confirmed payment date')}
                 />
                 <KPICard 
-                  title="Pendiente de confirmar Markant" 
+                  title={t('Markant Pending Confirmation')} 
                   value={kpis?.totalPendienteMarkant} 
                   icon={<Clock size={24} />} 
-                  trend="Sin fecha de pago confirmada"
+                  trend={t('No confirmed payment date')}
                 />
               </div>
             </div>
@@ -183,24 +185,24 @@ export default function Dashboard() {
             <div>
               <h2 className="text-xl font-bold text-black mb-4 flex items-center gap-2 border-b border-gray-200 pb-2">
                 <ArrowUpRight className="text-gray-700" /> 
-                Gestión de Pagos (Proveedores)
+                {t('Payments Management (Vendors)')}
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <KPICard 
-                  title="Cartera Proveedores" 
+                  title={t('Vendor Portfolio')} 
                   value={kpis?.totalCarteraProveedores} 
                   icon={<Banknote size={24} />} 
                   link="/pagos"
                 />
                 <KPICard 
-                  title="Vencida Aprobada" 
+                  title={t('Overdue Approved')} 
                   value={kpis?.totalCarteraVencidaAprobada} 
                   icon={<CheckCircle2 size={24} />} 
 
                   link="/pagos"
                 />
                 <KPICard 
-                  title="Vencida NO Aprobada" 
+                  title={t('Overdue NOT Approved')} 
                   value={kpis?.totalCarteraVencidaNoAprobada} 
                   icon={<Clock size={24} />} 
                   link="/pagos"
@@ -212,7 +214,7 @@ export default function Dashboard() {
             <div>
               <h2 className="text-xl font-bold text-black mb-4 flex items-center gap-2 border-b border-gray-200 pb-2">
                 <Globe2 className="text-gray-700" /> 
-                Pagos Internacionales (China)
+                {t('International Payments (China)')}
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <KPICard 
@@ -222,13 +224,13 @@ export default function Dashboard() {
 
                 />
                 <KPICard 
-                  title="Confirmado China" 
+                  title={t('China Confirmed')} 
                   value={kpis?.totalConfirmadoChina} 
                   icon={<CheckCircle2 size={24} />} 
 
                 />
                 <KPICard 
-                  title="Pendiente China" 
+                  title={t('China Pending')} 
                   value={kpis?.totalPendienteChina} 
                   icon={<Clock size={24} />} 
 
@@ -240,7 +242,7 @@ export default function Dashboard() {
             <div>
               <h2 className="text-xl font-bold text-black mb-4 flex items-center gap-2 border-b border-gray-200 pb-2">
                 <MessageSquareText className="text-gray-700" />
-                Notas de compra
+                {t('Purchase notes')}
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <Link href="/notas-compra" className="bg-white border border-gray-200 p-6 rounded-xl shadow-sm hover:shadow-md hover:border-gray-300 transition-all group">
@@ -248,10 +250,10 @@ export default function Dashboard() {
                     <div className={`p-3 rounded-lg ${kpis?.unreadPurchaseNotes ? 'bg-amber-50 text-amber-700' : 'bg-gray-50 text-gray-700'}`}><MessageSquareText size={24} /></div>
                     <ArrowUpRight size={20} className="text-gray-400 group-hover:text-black group-hover:scale-110 transition-transform" />
                   </div>
-                  <p className="text-xs text-gray-500 font-bold mb-1 uppercase tracking-wider">Notas sin leer</p>
+                  <p className="text-xs text-gray-500 font-bold mb-1 uppercase tracking-wider">{t('Unread notes')}</p>
                   <h3 className="text-2xl font-black text-black tracking-tight">{kpis?.unreadPurchaseNotes ?? '—'}</h3>
                   <p className="text-xs text-gray-500 mt-2">
-                    {kpis?.unreadPurchaseNotes == null ? 'No disponible (BC no publica las Notes)' : 'Facturas y abonos de compra'}
+                    {kpis?.unreadPurchaseNotes == null ? t('Not available (BC does not publish the Notes)') : t('Purchase invoices and credit memos')}
                   </p>
                 </Link>
               </div>
@@ -261,17 +263,17 @@ export default function Dashboard() {
             <div>
               <h2 className="text-xl font-bold text-black mb-4 flex items-center gap-2 border-b border-gray-200 pb-2">
                 <Undo2 className="text-gray-700" /> 
-                Devoluciones y Refunds
+                {t('Returns and Refunds')}
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <KPICard 
-                  title="Refunds Abiertos (Cliente)" 
+                  title={t('Open Refunds (Customer)')} 
                   value={Math.abs(kpis?.totalRefundsAbiertosCliente || 0)} 
                   icon={<Undo2 size={24} />} 
 
                 />
                 <KPICard 
-                  title="Refunds Abiertos (Prov.)" 
+                  title={t('Open Refunds (Vendor)')} 
                   value={Math.abs(kpis?.totalRefundsAbiertoProveedor || 0)} 
                   icon={<Undo2 size={24} />} 
 
@@ -289,13 +291,13 @@ export default function Dashboard() {
             <div>
               <h2 className="text-xl font-bold text-black mb-4 flex items-center gap-2 border-b border-gray-200 pb-2">
                 <Landmark className="text-gray-700" /> 
-                Tesorería (Disponible Hoy)
+                {t('Treasury (Available Today)')}
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {kpis?.cashflowAvailable && Object.keys(kpis.cashflowAvailable).map(currency => (
                   <KPICard 
                     key={currency}
-                    title={`Disponible ${currency}`} 
+                    title={t('Available {currency}', { currency })} 
                     value={kpis.cashflowAvailable[currency]} 
                     icon={<Wallet size={24} />} 
                     currency={currency}
@@ -316,35 +318,35 @@ export default function Dashboard() {
               <div className="flex items-center justify-between mb-4 border-b border-gray-200 pb-2">
                 <h2 className="text-xl font-bold text-black flex items-center gap-2">
                   <PackageSearch className="text-gray-700" /> 
-                  Inventario (Coste Medio)
+                  {t('Inventory (Average Cost)')}
                 </h2>
                 {kpis?.latestValuation && (
                   <span className="text-sm text-gray-500 font-medium">
-                    Último cierre: {new Date(kpis.latestValuation.month).toLocaleDateString(undefined, {month: 'long', year: 'numeric'})}
+                    {t('Last close:')} {new Date(kpis.latestValuation.month).toLocaleDateString(locale, {month: 'long', year: 'numeric'})}
                   </span>
                 )}
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <KPICard 
-                  title="Valoración Sistema (BC)" 
+                  title={t('System Valuation (BC)')} 
                   value={kpis?.latestValuation?.totalSystemVal || 0} 
                   icon={<PackageSearch size={24} />} 
                 />
                 <KPICard 
-                  title="Valoración Coste Medio" 
+                  title={t('Average Cost Valuation')} 
                   value={kpis?.latestValuation?.totalNewVal || 0} 
                   icon={<ShoppingCart size={24} />} 
                 />
                 <div className={`p-6 rounded-xl border flex flex-col justify-between shadow-sm transition-all hover:shadow-md ${kpis?.latestValuation?.difference > 0 ? 'bg-green-50 border-green-200' : kpis?.latestValuation?.difference < 0 ? 'bg-red-50 border-red-200' : 'bg-white border-gray-100'}`}>
                   <div className="flex justify-between items-start mb-4">
-                    <p className="text-sm font-semibold text-gray-600 uppercase tracking-wider">Diferencia Total</p>
+                    <p className="text-sm font-semibold text-gray-600 uppercase tracking-wider">{t('Total Difference')}</p>
                     <div className="p-2 rounded-lg bg-gray-50/50">
                       <TrendingDown size={24} className={kpis?.latestValuation?.difference > 0 ? "text-green-600" : "text-red-600"} />
                     </div>
                   </div>
                   <h3 className={`text-3xl font-black ${kpis?.latestValuation?.difference > 0 ? 'text-green-700' : kpis?.latestValuation?.difference < 0 ? 'text-red-700' : 'text-gray-900'}`}>
                     {kpis?.latestValuation?.difference > 0 ? '+' : ''}
-                    {kpis?.latestValuation ? `€${kpis.latestValuation.difference.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '€0.00'}
+                    {kpis?.latestValuation ? `€${kpis.latestValuation.difference.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '€0.00'}
                   </h3>
                 </div>
               </div>

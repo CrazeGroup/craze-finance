@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useCompany } from '@/contexts/CompanyContext';
 import { makeT } from '../reporting/i18n';
+import { useT } from '@/contexts/LanguageContext';
 import PurchaseItemsView from './PurchaseItemsView';
 import PurchaseVendorsView from './PurchaseVendorsView';
 import ConsumedProvisionsView from './ConsumedProvisionsView';
@@ -12,18 +13,19 @@ import BwaPbiView from './BwaPbiView';
 
 // Controlling: varios reportes de control que se cambian con las pestañas de la cabecera (como en Reporting).
 const REPORTS = [
-  { id: 'purchase-items', label: 'Compras por artículo' },
-  { id: 'purchase-vendors', label: 'Compras por proveedor' },
+  { id: 'purchase-items', label: 'Purchases by item' },
+  { id: 'purchase-vendors', label: 'Purchases by vendor' },
   { id: 'consumed-provisions', label: 'Consumed Provisions' },
-  { id: 'license-sales', label: 'Ventas por licencia' },
-  { id: 'order-intake', label: 'Facturación según Order Date' },
+  { id: 'license-sales', label: 'Sales by license' },
+  { id: 'order-intake', label: 'Invoicing by Order Date' },
   { id: 'bwa-pbi', label: 'BWA (Power BI)' },
 ] as const;
 type ReportId = typeof REPORTS[number]['id'];
 
 export default function ControllingPage() {
   const { selectedCompany } = useCompany();
-  const fmt = useMemo(() => makeT('es'), []);
+  const { t, lang } = useT();
+  const fmt = useMemo(() => makeT(lang), [lang]);
   const [report, setReport] = useState<ReportId>('purchase-items');
 
   useEffect(() => {
@@ -49,7 +51,7 @@ export default function ControllingPage() {
             {REPORTS.map(r => (
               <button key={r.id} onClick={() => change(r.id)}
                 className={`px-4 py-1.5 rounded-md text-sm font-semibold ${report === r.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
-                {r.label}
+                {t(r.label)}
               </button>
             ))}
           </div>

@@ -4,7 +4,7 @@ import React, { Fragment, useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 import { useCompany } from '@/contexts/CompanyContext';
-import { useLanguage } from '@/contexts/LanguageContext';
+import { useLanguage, useT } from '@/contexts/LanguageContext';
 import { makeT } from '../reporting/i18n';
 import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
 
@@ -28,7 +28,7 @@ const toDoc = (r: (string | number)[]): Doc => {
   return o;
 };
 const add = (a: Agg, d: Doc) => { for (const k of COLS) a[k] += d[k]; if (d.credit) a.cr += d.sales; else a.inv += d.sales; a.n++; };
-const DEDUCT: [ColKey, string][] = [['cost', 'Coste producto'], ['logistic', 'Logística'], ['skonto', 'Skonto'], ['conditions', 'Conditions out of invoice'], ['bonus', 'Bonus'], ['marketing', 'Marketing fee'], ['partner', 'Accounting Partner']];
+const DEDUCT: [ColKey, string][] = [['cost', 'Product cost'], ['logistic', 'Logistics'], ['skonto', 'Skonto'], ['conditions', 'Conditions out of invoice'], ['bonus', 'Bonus'], ['marketing', 'Marketing fee'], ['partner', 'Accounting Partner']];
 const margin = (a: Pick<Agg, ColKey>) => a.sales - DEDUCT.reduce((t, [k]) => t + a[k], 0);
 const mPct = (a: Pick<Agg, ColKey>) => (a.sales ? (margin(a) / a.sales) * 100 : null);
 
@@ -42,6 +42,7 @@ export default function CustomerMarginPage() {
   const { lang } = useLanguage();
   const fmt = useMemo(() => makeT(lang), [lang]);
   const { eur, pct, num } = fmt;
+  const { t, tx, locale, lang: appLang } = useT();
   const thisYear = new Date().getFullYear();
   const [year, setYear] = useState(thisYear);
   const [reload, setReload] = useState({ n: 0, force: false });
@@ -128,13 +129,13 @@ export default function CustomerMarginPage() {
     return [...list].sort((x, y) => {
       const gx = get(x), gy = get(y);
       const vx = sortVal(gx.a, gx.ly, gx.name, sort.key), vy = sortVal(gy.a, gy.ly, gy.name, sort.key);
-      if (typeof vx === 'string' || typeof vy === 'string') return String(vx).localeCompare(String(vy), 'es', { numeric: true }) * sort.dir;
+      if (typeof vx === 'string' || typeof vy === 'string') return String(vx).localeCompare(String(vy), appLang, { numeric: true }) * sort.dir;
       return (vx === vy ? 0 : vx < vy ? -1 : 1) * sort.dir;
     });
   };
   const sh = (key: SortKey, label: React.ReactNode, left = false) => (
     <th key={key} className={`${th} ${left ? 'text-left' : ''}`}>
-      <button onClick={() => sortBy(key)} title="Ordenar" className={`inline-flex items-center gap-1 uppercase tracking-wider hover:text-gray-900 ${sort?.key === key ? 'text-gray-900' : ''}`}>
+      <button onClick={() => sortBy(key)} title={t('Sort')} className={`inline-flex items-center gap-1 uppercase tracking-wider hover:text-gray-900 ${sort?.key === key ? 'text-gray-900' : ''}`}>
         {label}{sort?.key === key && (sort.dir === 1 ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
       </button>
     </th>
@@ -169,30 +170,30 @@ export default function CustomerMarginPage() {
               <p className="font-bold text-gray-900 leading-tight">Customer Margin</p>
               <p className="text-xs text-gray-500">
                 {periodText} · CRAZE GmbH
-                {data && <> · calculado {new Date(data.cur.computedAt).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}</>}
+                {data && <> · {t('calculated {date}', { date: new Date(data.cur.computedAt).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) })}</>}
               </p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
-              {([[false, '€'], [true, '% venta']] as const).map(([v, l]) => (
-                <button key={l} onClick={() => changeAsPct(v)} className={`px-3 py-1.5 font-semibold ${asPct === v ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>{l}</button>
+              {([[false, '€'], [true, '% sales']] as const).map(([v, l]) => (
+                <button key={l} onClick={() => changeAsPct(v)} className={`px-3 py-1.5 font-semibold ${asPct === v ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>{t(l)}</button>
               ))}
             </div>
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 hidden sm:inline">Meses</span>
-            <select value={fromM} onChange={e => { const v = Number(e.target.value); setFromM(v); if (v > toM) setToM(v); }} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-semibold bg-white" title="Desde">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 hidden sm:inline">{t('Months')}</span>
+            <select value={fromM} onChange={e => { const v = Number(e.target.value); setFromM(v); if (v > toM) setToM(v); }} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-semibold bg-white" title={t('From')}>
               {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={m}>{fmt.monthCode(ymOf(m))}</option>)}
             </select>
             <span className="text-gray-400">–</span>
-            <select value={toM} onChange={e => { const v = Number(e.target.value); setToM(v); if (v < fromM) setFromM(v); }} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-semibold bg-white" title="Hasta">
+            <select value={toM} onChange={e => { const v = Number(e.target.value); setToM(v); if (v < fromM) setFromM(v); }} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-semibold bg-white" title={t('Until')}>
               {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={m}>{fmt.monthCode(ymOf(m))}</option>)}
             </select>
-            {(fromM !== 1 || toM !== 12) && <button onClick={() => { setFromM(1); setToM(12); }} className="text-xs text-gray-500 underline hover:text-gray-900">Todo el año</button>}
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 hidden sm:inline">Año</span>
+            {(fromM !== 1 || toM !== 12) && <button onClick={() => { setFromM(1); setToM(12); }} className="text-xs text-gray-500 underline hover:text-gray-900">{t('Whole year')}</button>}
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 hidden sm:inline">{t('Year')}</span>
             <select value={year} onChange={e => { setYear(Number(e.target.value)); setOpenG(new Set()); setOpenC(new Set()); }} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold bg-white">
               {years.map(y => <option key={y} value={y}>{y}</option>)}
             </select>
-            <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={state.loading} title="Recalcular desde BC"
+            <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={state.loading} title={t('Recalculate from BC')}
               className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">
               <RefreshCw size={16} className={state.loading ? 'animate-spin' : ''} />
             </button>
@@ -201,36 +202,36 @@ export default function CustomerMarginPage() {
       </header>
 
       <main className="w-full px-4 md:px-8 pt-6 space-y-8">
-        {!isGmbh ? <p className="text-sm text-gray-600">Customer Margin solo está disponible para CRAZE GmbH: selecciónala en el menú.</p>
-          : state.error ? <ErrorBox message={state.error} />
-          : !data || !view ? <Loading text="Calculando el margen por cliente (la primera vez puede tardar un par de minutos)…" />
+        {!isGmbh ? <p className="text-sm text-gray-600">{t('Customer Margin is only available for CRAZE GmbH: select it in the menu.')}</p>
+          : state.error ? <ErrorBox message={tx(state.error)} />
+          : !data || !view ? <Loading text={t('Calculating the margin by customer (the first time it can take a couple of minutes)…')} />
           : (
             <>
-              <Section title={`Customer Margin ${fromM === 1 && toM >= lastMonth ? data.cur.year : periodText}`} source={`Facturas y abonos de venta (Documents LM Components) · condiciones de Conditions por grupo · logística de Logistic Cost${data.prev ? ` · vs mismo periodo ${data.prev.year}` : ''}`}>
+              <Section title={`Customer Margin ${fromM === 1 && toM >= lastMonth ? data.cur.year : periodText}`} source={`${t('Sales invoices and credit memos (Documents LM Components) · conditions from Conditions by group · logistics from Logistic Cost')}${data.prev ? ` · ${t('vs same period {year}', { year: data.prev.year })}` : ''}`}>
                 <Grid cols={5}>
-                  <Kpi label="Venta neta" value={eur(view.total.cur.sales)} sub={`facturas ${eur(view.total.cur.inv)} · abonos ${eur(view.total.cur.cr)}`} />
-                  <Kpi label="Coste producto" value={eur(view.total.cur.cost)} sub={view.total.cur.sales ? pct((view.total.cur.cost / view.total.cur.sales) * 100) : undefined} />
-                  <Kpi label="Logística" value={eur(view.total.cur.logistic)} sub={view.total.cur.sales ? pct((view.total.cur.logistic / view.total.cur.sales) * 100) : undefined} />
-                  <Kpi label="Condiciones" value={eur(DEDUCT.slice(2).reduce((t, [k]) => t + view.total.cur[k], 0))}
+                  <Kpi label={t('Net sales')} value={eur(view.total.cur.sales)} sub={t('invoices {inv} · credit memos {cr}', { inv: eur(view.total.cur.inv), cr: eur(view.total.cur.cr) })} />
+                  <Kpi label={t('Product cost')} value={eur(view.total.cur.cost)} sub={view.total.cur.sales ? pct((view.total.cur.cost / view.total.cur.sales) * 100) : undefined} />
+                  <Kpi label={t('Logistics')} value={eur(view.total.cur.logistic)} sub={view.total.cur.sales ? pct((view.total.cur.logistic / view.total.cur.sales) * 100) : undefined} />
+                  <Kpi label={t('Conditions')} value={eur(DEDUCT.slice(2).reduce((t, [k]) => t + view.total.cur[k], 0))}
                     sub={view.total.cur.sales ? `${pct((DEDUCT.slice(2).reduce((t, [k]) => t + view.total.cur[k], 0) / view.total.cur.sales) * 100)} · Skonto, Conditions, Bonus, Marketing, Partner` : undefined} />
-                  <Kpi label="Margen" value={eur(margin(view.total.cur))} tone="main" highlight
+                  <Kpi label={t('Margin')} value={eur(margin(view.total.cur))} tone="main" highlight
                     extra={<p className="text-xs text-gray-500 mt-1">{mPct(view.total.cur) !== null ? pct(mPct(view.total.cur)!) : '–'}{data.prev ? <> · {data.prev.year}: {mPct(view.total.prev) !== null ? pct(mPct(view.total.prev)!) : '–'} · {dpp(view.total.cur, view.total.prev)}</> : null}</p>} />
                 </Grid>
               </Section>
 
-              <Section title="Por Customer Group" source="Clic en un grupo para ver sus clientes y en un cliente para ver sus facturas y abonos · pasa el ratón por un importe para ver su % (o al revés)">
+              <Section title={t('By Customer Group')} source={t('Click a group to see its customers and a customer to see its invoices and credit memos · hover over an amount to see its % (or the other way round)')}>
                 <div className="bg-white rounded-xl border border-gray-200 table-scroll">
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 border-b border-gray-200">
                       <tr>
-                        {sh('name', 'Customer Group / cliente', true)}
-                        {sh('inv', 'Facturas')}
-                        {sh('cr', 'Abonos')}
-                        {sh('sales', 'Venta neta')}
-                        {DEDUCT.map(([k, l]) => sh(k, l))}
-                        {sh('margin', 'Margen')}
-                        {sh('mpct', 'Margen %')}
-                        {data.prev && sh('lypct', `Margen % ${data.prev.year}`)}
+                        {sh('name', t('Customer Group / customer'), true)}
+                        {sh('inv', t('Invoices'))}
+                        {sh('cr', t('Credit memos'))}
+                        {sh('sales', t('Net sales'))}
+                        {DEDUCT.map(([k, l]) => sh(k, t(l)))}
+                        {sh('margin', t('Margin'))}
+                        {sh('mpct', t('Margin %'))}
+                        {data.prev && sh('lypct', t('Margin % {year}', { year: data.prev.year }))}
                         {data.prev && sh('delta', 'Δ')}
                       </tr>
                     </thead>
@@ -243,7 +244,7 @@ export default function CustomerMarginPage() {
                           <Fragment key={r.code || '—'}>
                             <tr className={`border-t border-gray-100 cursor-pointer hover:bg-gray-50 ${open ? 'bg-gray-50' : ''}`} onClick={() => toggle(setOpenG, r.code)}>
                               <td className="py-1.5 px-2 whitespace-nowrap">
-                                <span className="inline-flex items-center gap-1 font-semibold text-gray-900">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{r.code || '(sin grupo)'}</span>
+                                <span className="inline-flex items-center gap-1 font-semibold text-gray-900">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{r.code || t('(no group)')}</span>
                                 {(data.cur.groups[r.code] || data.prev?.groups[r.code]) && <span className="text-xs text-gray-500"> · {data.cur.groups[r.code] || data.prev?.groups[r.code]}</span>}
                               </td>
                               {cells(r.cur, r.prev)}
@@ -267,29 +268,29 @@ export default function CustomerMarginPage() {
                                         <tr className="border-t border-gray-100 bg-white cursor-pointer hover:bg-gray-50" onClick={() => toggleDoc(d.no)}>
                                           <td className="py-1 px-2 pl-14 whitespace-nowrap text-xs">
                                             <span className="inline-flex items-center gap-1">{lo ? <ChevronDown size={12} /> : <ChevronRight size={12} />}<span className="font-mono text-gray-900">{d.no}</span></span>
-                                            <span className="text-gray-500"> · {fmt.date(d.date)}{d.credit ? ' · abono' : ''}</span>
+                                            <span className="text-gray-500"> · {fmt.date(d.date)}{d.credit ? ` · ${t('credit memo')}` : ''}</span>
                                           </td>
                                           {cells({ ...d, inv: d.credit ? 0 : d.sales, cr: d.credit ? d.sales : 0, n: 1 }, null, true)}
                                         </tr>
                                         {lo && (
                                           <tr className="bg-gray-50/70">
                                             <td colSpan={99} className="pl-20 pr-2 py-2">
-                                              {!ls ? <span className="text-xs text-gray-500">Cargando líneas…</span>
-                                                : 'error' in ls ? <span className="text-xs text-red-600">{ls.error}</span>
-                                                : !ls.lines.length ? <span className="text-xs text-gray-500">Sin líneas</span>
+                                              {!ls ? <span className="text-xs text-gray-500">{t('Loading lines…')}</span>
+                                                : 'error' in ls ? <span className="text-xs text-red-600">{tx(ls.error)}</span>
+                                                : !ls.lines.length ? <span className="text-xs text-gray-500">{t('No lines')}</span>
                                                 : (
                                                   <table className="text-xs bg-white border border-gray-200 rounded">
                                                     <thead className="text-[10px] uppercase tracking-wider text-gray-500 bg-gray-50">
                                                       <tr>
-                                                        <th className="px-2 py-1 text-left">Artículo</th>
-                                                        <th className="px-2 py-1 text-left">Descripción</th>
-                                                        <th className="px-2 py-1 text-right">Cantidad</th>
-                                                        <th className="px-2 py-1 text-right">Precio unit.</th>
-                                                        <th className="px-2 py-1 text-right">Dto. %</th>
-                                                        <th className="px-2 py-1 text-right">Importe</th>
-                                                        <th className="px-2 py-1 text-right">Coste unit.</th>
-                                                        <th className="px-2 py-1 text-right">Coste</th>
-                                                        <th className="px-2 py-1 text-right">Margen bruto %</th>
+                                                        <th className="px-2 py-1 text-left">{t('Item')}</th>
+                                                        <th className="px-2 py-1 text-left">{t('Description')}</th>
+                                                        <th className="px-2 py-1 text-right">{t('Quantity')}</th>
+                                                        <th className="px-2 py-1 text-right">{t('Unit price')}</th>
+                                                        <th className="px-2 py-1 text-right">{t('Disc. %')}</th>
+                                                        <th className="px-2 py-1 text-right">{t('Amount')}</th>
+                                                        <th className="px-2 py-1 text-right">{t('Unit cost')}</th>
+                                                        <th className="px-2 py-1 text-right">{t('Cost')}</th>
+                                                        <th className="px-2 py-1 text-right">{t('Gross margin %')}</th>
                                                       </tr>
                                                     </thead>
                                                     <tbody>
@@ -297,10 +298,10 @@ export default function CustomerMarginPage() {
                                                         const gm = l.amount ? ((l.amount - l.cost) / l.amount) * 100 : null;
                                                         return (
                                                           <tr key={i} className="border-t border-gray-100">
-                                                            <td className="px-2 py-1 font-mono whitespace-nowrap">{l.no}{l.component && <span className="ml-1 text-[10px] text-gray-400 font-sans">comp.</span>}</td>
+                                                            <td className="px-2 py-1 font-mono whitespace-nowrap">{l.no}{l.component && <span className="ml-1 text-[10px] text-gray-400 font-sans">{t('comp.')}</span>}</td>
                                                             <td className="px-2 py-1 max-w-[340px] truncate" title={l.description}>{l.description}</td>
                                                             <td className="px-2 py-1 text-right tabular-nums">{num(l.qty)}</td>
-                                                            <td className="px-2 py-1 text-right tabular-nums" title={l.listPrice ? `Precio de tarifa ${eur(l.listPrice, 4)}` : undefined}>{eur(l.unitPrice, 4)}</td>
+                                                            <td className="px-2 py-1 text-right tabular-nums" title={l.listPrice ? t('List price {price}', { price: eur(l.listPrice, 4) }) : undefined}>{eur(l.unitPrice, 4)}</td>
                                                             <td className="px-2 py-1 text-right tabular-nums">{l.discount ? num(l.discount, 2) : ''}</td>
                                                             <td className="px-2 py-1 text-right tabular-nums">{eur(l.amount, 2)}</td>
                                                             <td className="px-2 py-1 text-right tabular-nums">{eur(l.unitCost, 4)}</td>
@@ -332,8 +333,8 @@ export default function CustomerMarginPage() {
                   </table>
                 </div>
                 <p className="text-xs text-gray-500">
-                  Margen = venta neta − coste del producto − logística − Skonto − Conditions out of invoice − Bonus − Marketing fee − Accounting Partner (Markant).
-                  Las condiciones son las que BC calcula en cada línea con los % de Conditions del grupo; la logística, el Total Charges de cada factura (Logistic Cost).
+                  {t('Margin = net sales − product cost − logistics − Skonto − Conditions out of invoice − Bonus − Marketing fee − Accounting Partner (Markant).')}
+                  {' '}{t("The conditions are the ones BC calculates on each line with the group's Conditions %; logistics, each invoice's Total Charges (Logistic Cost).")}
                 </p>
               </Section>
             </>

@@ -7,6 +7,7 @@ import { syncFromBc } from '@/lib/syncClient';
 import { RefreshCcw, Send, CheckCircle, ChevronDown, ChevronRight, Filter, Briefcase, MessageSquare, PhoneCall } from 'lucide-react';
 import ReminderDialog from '@/components/ReminderDialog';
 import MailConnectNotice from '@/components/MailConnectNotice';
+import { useT } from '@/contexts/LanguageContext';
 
 // Empresa activa (cookie que escribe CompanyContext)
 
@@ -16,6 +17,7 @@ export default function RecobrosPage() {
 
   // Comentarios por factura, los mismos que en Cashflow ("invoice:<id>")
   const { selectedCompany } = useCompany();
+  const { t, lang, locale } = useT();
   const { commentsFor, add: addComment, remove: removeComment } = useComments(selectedCompany);
   const [commentTarget, setCommentTarget] = useState<{ key: string; label: string } | null>(null);
 
@@ -220,7 +222,7 @@ export default function RecobrosPage() {
   const openEmailModal = (group: any) => {
     const selectedList = group.invoices.filter((inv: any) => selectedInvoices[inv.id]);
     if (selectedList.length === 0) {
-      alert("Selecciona al menos una factura para este cliente.");
+      alert(t('Select at least one invoice for this customer.'));
       return;
     }
     setReminder({ customer: group.customer, invoices: selectedList });
@@ -232,9 +234,9 @@ export default function RecobrosPage() {
       <header className="flex flex-wrap justify-between items-end mb-8 gap-4">
         <div>
           <h1 className="text-4xl font-black text-black tracking-tight">
-            Gestión de Recobros
+            {t('Collections Management')}
           </h1>
-          <p className="text-gray-700 font-semibold font-medium mt-2">Agrupación por cliente y selección avanzada.</p>
+          <p className="text-gray-700 font-semibold font-medium mt-2">{t('Grouped by customer with advanced selection.')}</p>
         </div>
         <div className="flex gap-4">
           <button 
@@ -243,7 +245,7 @@ export default function RecobrosPage() {
             disabled={loading || syncing}
           >
             <RefreshCcw size={18} className={loading && !syncing ? 'animate-spin' : ''} />
-            Actualizar Local
+            {t('Refresh Local')}
           </button>
           <button 
             onClick={handleSync}
@@ -251,7 +253,7 @@ export default function RecobrosPage() {
             disabled={loading || syncing}
           >
             <RefreshCcw size={18} className={syncing ? 'animate-spin' : ''} />
-            {syncing ? 'Sincronizando... (espera 1-2 min)' : 'Sincronizar BC'}
+            {syncing ? t('Syncing... (wait 1-2 min)') : t('Sync BC')}
           </button>
         </div>
       </header>
@@ -261,7 +263,7 @@ export default function RecobrosPage() {
         <div className="flex-1">
           <input 
             type="text" 
-            placeholder="Buscar por cliente o nº factura..."
+            placeholder={t('Search by customer or invoice no....')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full bg-white border border-gray-300 text-sm text-gray-900 rounded-lg px-4 py-2 outline-none focus:border-indigo-500 transition-colors placeholder-gray-500"
@@ -270,28 +272,28 @@ export default function RecobrosPage() {
         
         <div className="flex flex-wrap gap-6 items-center">
           <div className="flex items-center gap-3">
-            <span className="text-sm text-gray-800 font-medium font-medium">Ordenar Clientes por:</span>
+            <span className="text-sm text-gray-800 font-medium font-medium">{t('Sort Customers by:')}</span>
             <select 
               className="bg-white border border-gray-300 text-sm text-gray-900 rounded-lg px-3 py-1.5 outline-none"
               value={customerSortBy}
               onChange={(e) => setCustomerSortBy(e.target.value as any)}
             >
-              <option value="amtOverdue">Mayor Importe Vencido</option>
-              <option value="amtOpen">Mayor Importe Total Abierto</option>
-              <option value="amtConfirmed">Mayor Importe Confirmado</option>
+              <option value="amtOverdue">{t('Highest Overdue Amount')}</option>
+              <option value="amtOpen">{t('Highest Total Open Amount')}</option>
+              <option value="amtConfirmed">{t('Highest Confirmed Amount')}</option>
             </select>
           </div>
 
           <div className="flex items-center gap-3">
-            <span className="text-sm text-gray-800 font-medium font-medium">Ordenar Facturas por:</span>
+            <span className="text-sm text-gray-800 font-medium font-medium">{t('Sort Invoices by:')}</span>
             <select 
               className="bg-white border border-gray-300 text-sm text-gray-900 rounded-lg px-3 py-1.5 outline-none"
               value={invoiceSortBy}
               onChange={(e) => setInvoiceSortBy(e.target.value as any)}
             >
-              <option value="daysOverdue">Más días vencidos</option>
-              <option value="amount">Mayor importe</option>
-              <option value="reminders">Menos recordatorios</option>
+              <option value="daysOverdue">{t('Most days overdue')}</option>
+              <option value="amount">{t('Highest amount')}</option>
+              <option value="reminders">{t('Fewest reminders')}</option>
             </select>
           </div>
         </div>
@@ -300,7 +302,7 @@ export default function RecobrosPage() {
       {/* Payment Method Filters */}
       {availablePaymentMethods.length > 0 && (
         <div className="mb-6 flex flex-wrap gap-4 items-center bg-gray-50 p-4 rounded-xl border border-gray-200 backdrop-blur-sm">
-          <span className="text-sm text-gray-800 font-medium font-medium">Filtrar por Forma de Pago:</span>
+          <span className="text-sm text-gray-800 font-medium font-medium">{t('Filter by Payment Method:')}</span>
           <div className="flex flex-wrap gap-2">
             {availablePaymentMethods.map(pm => (
               <button
@@ -326,7 +328,7 @@ export default function RecobrosPage() {
                 onClick={() => setSelectedPaymentMethods([])}
                 className="px-2 py-1 text-xs text-gray-700 font-semibold font-bold hover:text-red-300 transition-colors underline decoration-red-400/30 underline-offset-2 ml-2"
               >
-                Limpiar Filtro
+                {t('Clear Filter')}
               </button>
             )}
           </div>
@@ -341,7 +343,7 @@ export default function RecobrosPage() {
       ) : groupedData.length === 0 ? (
         <div className="text-center py-20 bg-gray-50 rounded-2xl border border-gray-200 backdrop-blur-sm shadow-lg">
           <CheckCircle className="mx-auto text-gray-900 font-bold mb-4" size={48} />
-          <p className="text-xl text-gray-800 font-medium">No hay facturas abiertas.</p>
+          <p className="text-xl text-gray-800 font-medium">{t('There are no open invoices.')}</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -366,39 +368,39 @@ export default function RecobrosPage() {
                         <span className="text-gray-700 font-semibold font-normal mr-2">#{group.customer.bcId}</span>
                         {group.customer.name}
                       </h3>
-                      <p className="text-xs text-gray-700 font-semibold">{group.customer.email || 'Sin email configurado'}</p>
-                      {(() => { const n = group.invoices.filter((i: any) => commentsFor(`invoice:${i.id}`).length).length; return n ? <p className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-sky-700"><MessageSquare size={11} /> {n} factura(s) con comentarios</p> : null; })()}
+                      <p className="text-xs text-gray-700 font-semibold">{group.customer.email || t('No email configured')}</p>
+                      {(() => { const n = group.invoices.filter((i: any) => commentsFor(`invoice:${i.id}`).length).length; return n ? <p className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-sky-700"><MessageSquare size={11} /> {t('{n} invoice(s) with comments', { n })}</p> : null; })()}
                     </div>
                   </div>
                   
                   <div className="flex flex-wrap gap-6 text-sm flex-1 min-w-[350px]">
                     <div className="flex flex-col">
-                      <span className="text-indigo-700 font-bold text-xs">Total Abierto</span>
-                      <span className={`font-medium ${group.amtOpen > 0 ? 'text-gray-700 font-semibold font-bold' : group.amtOpen < 0 ? 'text-gray-900 font-bold' : 'text-gray-900'}`}>€{group.amtOpen.toLocaleString()}</span>
+                      <span className="text-indigo-700 font-bold text-xs">{t('Total Open')}</span>
+                      <span className={`font-medium ${group.amtOpen > 0 ? 'text-gray-700 font-semibold font-bold' : group.amtOpen < 0 ? 'text-gray-900 font-bold' : 'text-gray-900'}`}>€{group.amtOpen.toLocaleString(locale)}</span>
                     </div>
                     <div className="flex flex-col">
-                      <span className="text-indigo-700 font-bold text-xs">Total Vencido</span>
-                      <span className={`font-medium ${group.amtOverdue > 0 ? 'text-gray-700 font-semibold font-bold' : group.amtOverdue < 0 ? 'text-gray-900 font-bold' : 'text-gray-900'}`}>€{group.amtOverdue.toLocaleString()}</span>
+                      <span className="text-indigo-700 font-bold text-xs">{t('Total Overdue')}</span>
+                      <span className={`font-medium ${group.amtOverdue > 0 ? 'text-gray-700 font-semibold font-bold' : group.amtOverdue < 0 ? 'text-gray-900 font-bold' : 'text-gray-900'}`}>€{group.amtOverdue.toLocaleString(locale)}</span>
                     </div>
                     <div className="flex flex-col">
-                      <span className="text-indigo-700 font-bold text-xs">Total Confirmado</span>
-                      <span className={`font-medium ${group.amtConfirmed > 0 ? 'text-gray-700 font-semibold font-bold' : group.amtConfirmed < 0 ? 'text-gray-900 font-bold' : 'text-gray-900'}`}>€{group.amtConfirmed.toLocaleString()}</span>
+                      <span className="text-indigo-700 font-bold text-xs">{t('Total Confirmed')}</span>
+                      <span className={`font-medium ${group.amtConfirmed > 0 ? 'text-gray-700 font-semibold font-bold' : group.amtConfirmed < 0 ? 'text-gray-900 font-bold' : 'text-gray-900'}`}>€{group.amtConfirmed.toLocaleString(locale)}</span>
                     </div>
                     <div className="flex flex-col">
-                      <span className="text-indigo-700 font-bold text-xs">Facturas</span>
-                      <span className="font-medium text-gray-900">{group.totalCount} ({group.overdueCount} vencidas)</span>
+                      <span className="text-indigo-700 font-bold text-xs">{t('Invoices')}</span>
+                      <span className="font-medium text-gray-900">{t('{total} ({overdue} overdue)', { total: group.totalCount, overdue: group.overdueCount })}</span>
                     </div>
                     {/* Salesperson info */}
                     <div className="flex flex-col border-l border-gray-200 pl-4">
                       <span className="text-emerald-700 font-bold text-xs flex items-center gap-1">
-                        <Briefcase size={12} /> Comercial
+                        <Briefcase size={12} /> {t('Salesperson')}
                       </span>
                       <span className="font-medium text-gray-900">
-                        {group.customer.salespersonName || 'Sin asignar'}
+                        {group.customer.salespersonName || t('Unassigned')}
                       </span>
                       {group.customer.salespersonReminderCount > 0 && (
                         <span className="text-[10px] text-gray-900 font-bold/80">
-                          {group.customer.salespersonReminderCount} avisos (Últ: {new Date(group.customer.salespersonLastReminderDate).toLocaleDateString()})
+                          {t('{n} notices (Last: {date})', { n: group.customer.salespersonReminderCount, date: new Date(group.customer.salespersonLastReminderDate).toLocaleDateString(locale) })}
                         </span>
                       )}
                     </div>
@@ -414,7 +416,7 @@ export default function RecobrosPage() {
                       }`}
                     >
                       <Send size={16} />
-                      Enviar recordatorio ({selectedCount})
+                      {t('Send reminder ({n})', { n: selectedCount })}
                     </button>
                   </div>
                 </div>
@@ -432,25 +434,25 @@ export default function RecobrosPage() {
                             : 'bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-700 font-bold'
                         }`}
                       >
-                        Todas las Vencidas
+                        {t('All Overdue')}
                       </button>
                       <button 
                         onClick={() => toggleSelectCustomerInvoices(group.invoices, false)}
                         className="text-xs bg-white/10 hover:bg-gray-200 text-gray-800 font-medium px-3 py-1.5 rounded border border-gray-100"
                       >
-                        Deseleccionar
+                        {t('Deselect')}
                       </button>
                       <button 
                         onClick={() => applySmartSelection(group.customer.id, group.invoices, 'zero')}
                         className={`text-xs px-3 py-1.5 rounded flex items-center gap-1 border border-indigo-500/30 transition-colors ${smartFilters[group.customer.id] === 'zero' ? 'bg-indigo-500/40 text-indigo-100' : 'bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-700 font-bold'}`}
                       >
-                        <Filter size={12}/> 0 Recordatorios
+                        <Filter size={12}/> {t('0 Reminders')}
                       </button>
                       <button 
                         onClick={() => applySmartSelection(group.customer.id, group.invoices, 'seven_days')}
                         className={`text-xs px-3 py-1.5 rounded flex items-center gap-1 border border-orange-500/30 transition-colors ${smartFilters[group.customer.id] === 'seven_days' ? 'bg-orange-500/40 text-orange-100' : 'bg-orange-500/10 hover:bg-orange-500/20 text-orange-300'}`}
                       >
-                        <Filter size={12}/> Último &gt; 7 días
+                        <Filter size={12}/> {t('Last > 7 days')}
                       </button>
                     </div>
 
@@ -459,18 +461,18 @@ export default function RecobrosPage() {
                         <thead className="text-gray-900 font-bold border-b border-gray-200">
                           <tr>
                             <th className="pb-2 w-8"></th>
-                            <th className="pb-2 font-medium">Documento</th>
-                            <th className="pb-2 font-medium">Tipo</th>
-                            <th className="pb-2 font-medium">Forma Pago</th>
-                            <th className="pb-2 font-medium">Moneda</th>
-                            <th className="pb-2 font-medium">Imp. Original</th>
-                            <th className="pb-2 font-medium">Imp. Restante</th>
-                            <th className="pb-2 font-medium">Vencimiento</th>
-                            <th className="pb-2 font-medium">Estado</th>
-                            <th className="pb-2 font-medium">Recordatorios</th>
-                            <th className="pb-2 font-medium">Fecha Recordatorio</th>
-                            <th className="pb-2 font-medium">Fecha Pago Confirmado</th>
-                            <th className="pb-2 font-medium">Comentarios</th>
+                            <th className="pb-2 font-medium">{t('Document')}</th>
+                            <th className="pb-2 font-medium">{t('Type')}</th>
+                            <th className="pb-2 font-medium">{t('Payment Method')}</th>
+                            <th className="pb-2 font-medium">{t('Currency')}</th>
+                            <th className="pb-2 font-medium">{t('Original Amt.')}</th>
+                            <th className="pb-2 font-medium">{t('Remaining Amt.')}</th>
+                            <th className="pb-2 font-medium">{t('Due Date')}</th>
+                            <th className="pb-2 font-medium">{t('Status')}</th>
+                            <th className="pb-2 font-medium">{t('Reminders')}</th>
+                            <th className="pb-2 font-medium">{t('Reminder Date')}</th>
+                            <th className="pb-2 font-medium">{t('Confirmed Payment Date')}</th>
+                            <th className="pb-2 font-medium">{t('Comments')}</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
@@ -491,43 +493,43 @@ export default function RecobrosPage() {
                               </td>
                               <td className="py-2 text-indigo-200">{inv.paymentMethod || '-'}</td>
                               <td className="py-2 text-gray-600">{inv.currencyCode || '-'}</td>
-                              <td className="py-2 text-gray-900 font-bold">€{(inv.originalAmount || 0).toLocaleString()}</td>
+                              <td className="py-2 text-gray-900 font-bold">€{(inv.originalAmount || 0).toLocaleString(locale)}</td>
                               <td className="py-2 font-semibold">
                                 {inv.originalAmount && inv.originalAmount !== inv.amount ? (
                                   <div className="flex items-center gap-2">
-                                    <span className="text-amber-400">€{inv.amount.toLocaleString()}</span>
-                                    <span className="text-[10px] uppercase tracking-wider bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/30">Parcial</span>
+                                    <span className="text-amber-400">€{inv.amount.toLocaleString(locale)}</span>
+                                    <span className="text-[10px] uppercase tracking-wider bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/30">{t('Partial')}</span>
                                   </div>
                                 ) : (
-                                  <span className={inv.amount > 0 ? "text-gray-700 font-semibold font-bold" : inv.amount < 0 ? "text-gray-900 font-bold" : "text-gray-900"}>€{inv.amount.toLocaleString()}</span>
+                                  <span className={inv.amount > 0 ? "text-gray-700 font-semibold font-bold" : inv.amount < 0 ? "text-gray-900 font-bold" : "text-gray-900"}>€{inv.amount.toLocaleString(locale)}</span>
                                 )}
                               </td>
-                              <td className="py-2 text-gray-700 font-semibold">{new Date(inv.dueDate).toLocaleDateString()}</td>
+                              <td className="py-2 text-gray-700 font-semibold">{new Date(inv.dueDate).toLocaleDateString(locale)}</td>
                               <td className="py-2">
                                 {inv.isOverdue ? (
-                                  <span className="text-gray-700 font-semibold font-bold font-medium">{inv.daysOverdue} días</span>
+                                  <span className="text-gray-700 font-semibold font-bold font-medium">{t('{n} days', { n: inv.daysOverdue })}</span>
                                 ) : (
-                                  <span className="text-gray-900 font-bold">Al día</span>
+                                  <span className="text-gray-900 font-bold">{t('Up to date')}</span>
                                 )}
                               </td>
                               <td className="py-2">
-                                {inv.reminderCount ? <span className="font-semibold text-amber-700">{inv.reminderCount}º</span> : '0'}
+                                {inv.reminderCount ? <span className="font-semibold text-amber-700">{lang === 'es' ? `${inv.reminderCount}º` : `#${inv.reminderCount}`}</span> : '0'}
                                 {inv.lastCallDate && (
-                                  <span className="inline-flex items-center gap-0.5 ml-1.5 text-violet-700 font-semibold text-xs" title={`Llamado ${inv.callCount || 1}× · última llamada ${new Date(inv.lastCallDate).toLocaleDateString('es-ES')} (marcado en Cashflow)`}>
+                                  <span className="inline-flex items-center gap-0.5 ml-1.5 text-violet-700 font-semibold text-xs" title={t('Called {n}× · last call {date} (marked in Cashflow)', { n: inv.callCount || 1, date: new Date(inv.lastCallDate).toLocaleDateString(locale) })}>
                                     <PhoneCall size={11} />{(inv.callCount || 1) > 1 ? inv.callCount : ''}
                                   </span>
                                 )}
                               </td>
                               <td className="py-2 text-gray-700 font-semibold">
-                                {inv.lastReminderSentAt ? new Date(inv.lastReminderSentAt).toLocaleDateString() : '-'}
+                                {inv.lastReminderSentAt ? new Date(inv.lastReminderSentAt).toLocaleDateString(locale) : '-'}
                               </td>
                               <td className="py-2 font-medium text-gray-900 font-bold">
-                                {inv.confirmedPaymentDate ? new Date(inv.confirmedPaymentDate).toLocaleDateString() : '-'}
+                                {inv.confirmedPaymentDate ? new Date(inv.confirmedPaymentDate).toLocaleDateString(locale) : '-'}
                               </td>
                               <td className="py-2">
                                 <div className="flex items-center gap-1.5">
                                   <button onClick={() => setCommentTarget({ key: `invoice:${inv.id}`, label: inv.bcId })}
-                                    className={`p-1 rounded hover:bg-sky-400/20 ${commentsFor(`invoice:${inv.id}`).length ? 'text-sky-700' : 'text-gray-400 hover:text-black'}`} title="Comentarios de la factura (los mismos que en Cashflow)">
+                                    className={`p-1 rounded hover:bg-sky-400/20 ${commentsFor(`invoice:${inv.id}`).length ? 'text-sky-700' : 'text-gray-400 hover:text-black'}`} title={t('Invoice comments (the same as in Cashflow)')}>
                                     <MessageSquare size={14} />
                                   </button>
                                   <CommentBadge items={commentsFor(`invoice:${inv.id}`)} onClick={() => setCommentTarget({ key: `invoice:${inv.id}`, label: inv.bcId })} />

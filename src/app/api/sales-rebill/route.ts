@@ -14,17 +14,17 @@ export const maxDuration = 300;
 export async function POST(req: Request) {
   try {
     const company = (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
-    if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
+    if (company === 'ALL') return NextResponse.json({ error: 'Select a specific company.' }, { status: 400 });
     const body = await req.json();
     const invoice = String(body?.invoice || '').trim();
     const markup = Number(body?.markup);
-    if (!invoice || !Number.isFinite(markup) || markup < 0 || markup > 5) return NextResponse.json({ error: 'Parámetros no válidos' }, { status: 400 });
+    if (!invoice || !Number.isFinite(markup) || markup < 0 || markup > 5) return NextResponse.json({ error: 'Invalid parameters' }, { status: 400 });
     const ctx = await getBcContext(company);
     // Repara un abono ya creado: precio y descuento de la factura original
     if (body.fixCreditMemo) {
       const [inv] = await bcFetchAll(odataUrl(`${ctx.apiBase}/salesInvoices`, { $filter: `number eq '${invoice.replace(/'/g, "''")}'`, $select: 'id' }), ctx.token);
       const [cm] = await bcFetchAll(odataUrl(`${ctx.apiBase}/salesCreditMemos`, { $filter: `number eq '${String(body.fixCreditMemo).replace(/'/g, "''")}'`, $select: 'id,totalAmountExcludingTax' }), ctx.token);
-      if (!inv || !cm) return NextResponse.json({ error: 'No encuentro la factura o el abono' }, { status: 404 });
+      if (!inv || !cm) return NextResponse.json({ error: 'Invoice or credit memo not found' }, { status: 404 });
       await restorePrices(ctx, inv.id, cm.id);
       const [after] = await bcFetchAll(odataUrl(`${ctx.apiBase}/salesCreditMemos`, { $filter: `number eq '${String(body.fixCreditMemo).replace(/'/g, "''")}'`, $select: 'number,totalAmountExcludingTax' }), ctx.token);
       return NextResponse.json({ fixed: after });
@@ -45,7 +45,7 @@ export async function POST(req: Request) {
     }
     if (body.dryRun) return NextResponse.json(await planRebill(ctx, company, invoice, markup));
     const result = await runRebill(ctx, company, invoice, markup);
-    await logAction('Refacturación por precio', `${invoice} → abono ${result.done.creditMemo || '—'} · factura ${result.done.invoice || '—'} (precio = coste +${Math.round(markup * 100)} %)`, company);
+    await logAction('Price re-invoicing', `${invoice} → credit memo ${result.done.creditMemo || '—'} · invoice ${result.done.invoice || '—'} (price = cost +${Math.round(markup * 100)} %)`, company);
     return NextResponse.json(result);
   } catch (error: any) {
     console.error('Refacturación:', error);

@@ -4,8 +4,10 @@ import { useState, useEffect } from 'react';
 import { SYNC_STEPS } from '@/lib/syncSteps';
 import * as XLSX from 'xlsx';
 import { Settings, Upload, Save, Database, Key, Mail } from 'lucide-react';
+import { useT } from '@/contexts/LanguageContext';
 
 export default function SettingsPage() {
+  const { t, tx } = useT();
   const [apiUrl, setApiUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -64,12 +66,12 @@ export default function SettingsPage() {
         body: JSON.stringify(bcConfig),
       });
       if (res.ok) {
-        setMessage('Configuración de Business Central guardada correctamente.');
+        setMessage(t('Business Central settings saved successfully.'));
       } else {
-        setMessage('Error al guardar configuración.');
+        setMessage(t('Error saving settings.'));
       }
     } catch (error) {
-      setMessage('Error de conexión al guardar BC.');
+      setMessage(t('Connection error while saving BC.'));
     } finally {
       setLoading(false);
     }
@@ -92,7 +94,7 @@ export default function SettingsPage() {
         const steps = SYNC_STEPS;
 
         for (const step of steps) {
-          setMessage(`Sincronizando ${comp} (${step.label})... Por favor espera.`);
+          setMessage(t('Syncing {company} ({step})... Please wait.', { company: comp, step: tx(step.label) }));
           const res = await fetch('/api/sync-bc', { 
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -100,15 +102,15 @@ export default function SettingsPage() {
           });
           const data = await res.json();
           if (!res.ok) {
-            throw new Error(`Error en ${comp} al sincronizar ${step.label}: ${data.error || 'Desconocido'}`);
+            throw new Error(t('Error in {company} while syncing {step}: {error}', { company: comp, step: tx(step.label), error: data.error ? tx(data.error) : t('Unknown') }));
           }
           totalCust += data.stats?.customers || 0;
           totalInv += data.stats?.invoices || 0;
         }
       }
-      setMessage(`Sincronización completada con éxito. Clientes procesados: ${totalCust}, Facturas procesadas: ${totalInv}`);
+      setMessage(t('Sync completed successfully. Customers processed: {customers}, invoices processed: {invoices}', { customers: totalCust, invoices: totalInv }));
     } catch (error: any) {
-      setMessage(`Error de conexión al sincronizar: ${error.message}`);
+      setMessage(t('Connection error while syncing: {error}', { error: error.message }));
     } finally {
       setSyncingBc(false);
     }
@@ -123,12 +125,12 @@ export default function SettingsPage() {
         body: JSON.stringify(emailConfig),
       });
       if (res.ok) {
-        setMessage('Configuración de correo (SMTP) guardada correctamente.');
+        setMessage(t('Mail (SMTP) settings saved successfully.'));
       } else {
-        setMessage('Error al guardar configuración de correo.');
+        setMessage(t('Error saving mail settings.'));
       }
     } catch (error) {
-      setMessage('Error de conexión al guardar.');
+      setMessage(t('Connection error while saving.'));
     } finally {
       setSavingEmail(false);
     }
@@ -140,9 +142,9 @@ export default function SettingsPage() {
         <header className="mb-12">
           <h1 className="text-4xl font-extrabold text-black tracking-tight flex items-center gap-4">
             <Settings size={36} className="text-black" />
-            Configuración
+            {t('Settings')}
           </h1>
-          <p className="text-gray-500 mt-2">Gestiona conexiones API y carga de datos manual.</p>
+          <p className="text-gray-500 mt-2">{t('Manage API connections and manual data upload.')}</p>
         </header>
 
         {message && (
@@ -157,7 +159,7 @@ export default function SettingsPage() {
             <div className="absolute top-0 right-0 p-32 bg-blue-500/10 rounded-full blur-3xl -mr-16 -mt-16 transition-transform group-hover:scale-110"></div>
             <div className="relative z-10">
               <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-3">
-                <Database className="text-black" /> API de Business Central
+                <Database className="text-black" /> {t('Business Central API')}
               </h2>
               
               <div className="space-y-5">
@@ -173,7 +175,7 @@ export default function SettingsPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">Entorno</label>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">{t('Environment')}</label>
                     <input 
                       type="text" 
                       value={bcConfig.environment}
@@ -183,12 +185,12 @@ export default function SettingsPage() {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">Company ID (Opcional)</label>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">{t('Company ID (Optional)')}</label>
                     <input 
                       type="text" 
                       value={bcConfig.companyId}
                       onChange={(e) => setBcConfig({...bcConfig, companyId: e.target.value})}
-                      placeholder="Identificador de la empresa" 
+                      placeholder={t('Company identifier')} 
                       className="w-full bg-gray-500 border border-gray-200 rounded-xl py-2 px-4 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
                     />
                   </div>
@@ -223,14 +225,14 @@ export default function SettingsPage() {
                     disabled={loading}
                     className="flex-1 py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-gray-900 font-semibold flex items-center justify-center gap-2 transition-all shadow-lg"
                   >
-                    <Save size={18} /> {loading ? 'Guardando...' : 'Guardar'}
+                    <Save size={18} /> {loading ? t('Saving...') : t('Save')}
                   </button>
                   <button 
                     onClick={syncBcData}
                     disabled={syncingBc || !bcConfig.tenantId}
                     className="flex-2 px-6 py-3 bg-black hover:bg-gray-800 text-white rounded-xl text-gray-900 font-semibold flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <Database size={18} /> {syncingBc ? 'Sincronizando...' : 'Sincronizar Datos'}
+                    <Database size={18} /> {syncingBc ? t('Syncing...') : t('Sync Data')}
                   </button>
                 </div>
               </div>
@@ -244,15 +246,15 @@ export default function SettingsPage() {
           <div className="absolute top-0 right-0 p-32 bg-purple-500/10 rounded-full blur-3xl -mr-16 -mt-16 transition-transform group-hover:scale-110"></div>
           <div className="relative z-10">
             <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-3">
-              <Mail className="text-black" /> Configuración de Correo (SMTP)
+              <Mail className="text-black" /> {t('Mail Settings (SMTP)')}
             </h2>
             <p className="text-gray-300 text-sm mb-6">
-              Introduce las credenciales de tu cuenta de correo de Microsoft (u otro proveedor) para enviar los recordatorios reales.
+              {t('Enter the credentials of your Microsoft mail account (or another provider) to send the real reminders.')}
             </p>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Servidor SMTP (Host)</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">{t('SMTP Server (Host)')}</label>
                 <input 
                   type="text" 
                   value={emailConfig.host}
@@ -263,7 +265,7 @@ export default function SettingsPage() {
               </div>
               <div className="flex gap-4">
                 <div className="flex-1">
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Puerto</label>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">{t('Port')}</label>
                   <input 
                     type="number" 
                     value={emailConfig.port}
@@ -285,17 +287,17 @@ export default function SettingsPage() {
               </div>
               
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Usuario (Email)</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">{t('User (E-mail)')}</label>
                 <input 
                   type="email" 
                   value={emailConfig.user}
                   onChange={(e) => setEmailConfig({...emailConfig, user: e.target.value})}
-                  placeholder="tu_correo@empresa.com" 
+                  placeholder={t('your_email@company.com')} 
                   className="w-full bg-gray-500 border border-gray-200 rounded-xl py-2 px-4 text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Contraseña de Aplicación</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">{t('App Password')}</label>
                 <div className="relative">
                   <Key className="absolute left-3 top-2.5 text-gray-500" size={18} />
                   <input 
@@ -309,22 +311,22 @@ export default function SettingsPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Nombre Remitente</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">{t('Sender Name')}</label>
                 <input 
                   type="text" 
                   value={emailConfig.fromName}
                   onChange={(e) => setEmailConfig({...emailConfig, fromName: e.target.value})}
-                  placeholder='Ej: "Craze Finance"' 
+                  placeholder={t('E.g. "Craze Finance"')} 
                   className="w-full bg-gray-500 border border-gray-200 rounded-xl py-2 px-4 text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Email Remitente (Puede ser el mismo usuario)</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">{t('Sender E-mail (can be the same user)')}</label>
                 <input 
                   type="email" 
                   value={emailConfig.fromEmail}
                   onChange={(e) => setEmailConfig({...emailConfig, fromEmail: e.target.value})}
-                  placeholder="tu_correo@empresa.com" 
+                  placeholder={t('your_email@company.com')} 
                   className="w-full bg-gray-500 border border-gray-200 rounded-xl py-2 px-4 text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
                 />
               </div>
@@ -335,7 +337,7 @@ export default function SettingsPage() {
               disabled={savingEmail}
               className="w-full md:w-auto px-8 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 rounded-xl text-gray-900 font-semibold flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-purple-500/25"
             >
-              <Save size={18} /> {savingEmail ? 'Guardando...' : 'Guardar Configuración SMTP'}
+              <Save size={18} /> {savingEmail ? t('Saving...') : t('Save SMTP Settings')}
             </button>
           </div>
         </div>

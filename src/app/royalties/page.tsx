@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { AlertCircle, ArrowDown, ArrowUp, Download, RefreshCw, Search } from 'lucide-react';
 import { useCompany } from '@/contexts/CompanyContext';
+import { useT } from '@/contexts/LanguageContext';
 
 type Row = {
   company?: string; code: string; country: string; item: string; desc: string;
@@ -35,23 +36,31 @@ function quarter(offset: number) {
 const qRange = (y: number, q: number) => ({ from: iso(new Date(Date.UTC(y, q * 3 - 3, 1))), to: iso(new Date(Date.UTC(y, q * 3, 0))) });
 const yearToDate = () => ({ from: `${new Date().getUTCFullYear()}-01-01`, to: iso(new Date()) });
 
-const nf = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const qf = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 });
-const money = (v: number) => nf.format(v || 0);
-const pct = (v: number) => `${nf.format((v || 0) * 100)} %`;
-const pctOrDash = (v: number | null) => (v == null ? '—' : pct(v));
+// Formatos de número en el idioma de la app
+function makeFmt(locale: string) {
+  const nf = new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const qf = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 });
+  const money = (v: number) => nf.format(v || 0);
+  const pct = (v: number) => `${nf.format((v || 0) * 100)} %`;
+  const pctOrDash = (v: number | null) => (v == null ? '—' : pct(v));
+  return { qf, money, pct, pctOrDash };
+}
+function useFmt() {
+  const { locale } = useT();
+  return useMemo(() => makeFmt(locale), [locale]);
+}
 const dateEs = (d: string) => d.split('-').reverse().join('/');
 
 const COLUMNS: { key: SortKey; label: string; num?: boolean }[] = [
-  { key: 'company', label: 'Empresa' },
+  { key: 'company', label: 'Company' },
   { key: 'code', label: 'Royalty Code' },
-  { key: 'country', label: 'País fact.' },
-  { key: 'item', label: 'Nº' },
-  { key: 'desc', label: 'Descripción' },
-  { key: 'qty', label: 'Cantidad', num: true },
-  { key: 'turnover', label: 'Turnover neto de provisión', num: true },
-  { key: 'price', label: 'Precio por unidad', num: true },
-  { key: 'provision', label: 'Provisión royalties', num: true },
+  { key: 'country', label: 'Bill-to ctry.' },
+  { key: 'item', label: 'No.' },
+  { key: 'desc', label: 'Description' },
+  { key: 'qty', label: 'Quantity', num: true },
+  { key: 'turnover', label: 'Turnover net of provision', num: true },
+  { key: 'price', label: 'Price per unit', num: true },
+  { key: 'provision', label: 'Royalty provision', num: true },
   { key: 'domestic', label: '% Domestic', num: true },
   { key: 'fob', label: '% FOB', num: true },
 ];
@@ -60,6 +69,8 @@ const sum = (rows: Row[], k: 'qty' | 'turnover' | 'turnoverFob' | 'provision') =
 
 export default function RoyaltiesPage() {
   const { selectedCompany } = useCompany();
+  const { t, tx } = useT();
+  const { qf, money, pct, pctOrDash } = useFmt();
   const [range, setRange] = useState(() => quarter(-1));
   const [reload, setReload] = useState({ n: 0, force: false });
   // Empresas del informe (una o varias; todas = CRAZE Consolidated, en EUR). Arranca con la del menú.
@@ -93,7 +104,7 @@ export default function RoyaltiesPage() {
       try {
         const res = await fetch(`/api/royalties?company=${encodeURIComponent(c)}&from=${range.from}&to=${range.to}${force ? '&force=1' : ''}`);
         const json = await res.json();
-        return res.ok ? { c, report: json as Report } : { c, error: { message: json.error || 'Error al cargar los royalties', details: json.details } };
+        return res.ok ? { c, report: json as Report } : { c, error: { message: json.error || t('Error loading royalties'), details: json.details } };
       } catch (e: any) {
         return { c, error: { message: e.message as string } };
       }
@@ -208,9 +219,9 @@ export default function RoyaltiesPage() {
   };
 
   const presets = [
-    { label: 'Último trimestre', ...quarter(-1) },
-    { label: 'Trimestre actual', ...quarter(0) },
-    { label: 'Año en curso', ...yearToDate() },
+    { label: t('Last quarter'), ...quarter(-1) },
+    { label: t('Current quarter'), ...quarter(0) },
+    { label: t('Year to date'), ...yearToDate() },
   ];
   // Selector Q1–Q4 del año de la fecha de inicio
   const qYear = Number(range.from.substring(0, 4)) || new Date().getUTCFullYear();
@@ -224,7 +235,7 @@ export default function RoyaltiesPage() {
         <div className="w-full px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="mr-auto">
             <p className="font-bold text-gray-900 leading-tight text-lg">Royalties</p>
-            <p className="text-xs text-gray-500">{companiesLabel} · {dateEs(range.from)} – {dateEs(range.to)} · importes en {cur}{fxNote ? ` (${fxNote})` : ''} · Royalty Code de la ficha de artículo (CRAZE GmbH) · sin Main Item ni intercompañía</p>
+            <p className="text-xs text-gray-500">{companiesLabel} · {dateEs(range.from)} – {dateEs(range.to)} · {t('amounts in {cur}', { cur })}{fxNote ? ` (${fxNote})` : ''} · {t('Royalty Code from the item card (CRAZE GmbH)')} · {t('excluding Main Item and intercompany')}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex bg-gray-100 rounded-lg p-1">
@@ -237,7 +248,7 @@ export default function RoyaltiesPage() {
             </div>
             <div className="flex items-center bg-gray-100 rounded-lg p-1">
               <select value={qYear} onChange={e => setRange(qRange(Number(e.target.value), activeQ || 1))}
-                className="bg-transparent text-xs font-semibold text-gray-900 px-1 py-1.5 focus:outline-none" title="Año del trimestre">
+                className="bg-transparent text-xs font-semibold text-gray-900 px-1 py-1.5 focus:outline-none" title={t('Quarter year')}>
                 {qYears.map(y => <option key={y} value={y}>{y}</option>)}
               </select>
               {[1, 2, 3, 4].map(q => (
@@ -253,9 +264,9 @@ export default function RoyaltiesPage() {
             <input type="date" value={range.to} min={range.from} onChange={e => e.target.value && setRange(r => ({ ...r, to: e.target.value }))}
               className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-semibold bg-white" />
             {multi && Array.from(new Set(loaded.map(r => r.currency).filter(c => c !== 'EUR'))).map(c => (
-              <label key={c} className="flex items-center gap-1 text-xs text-gray-500" title="Tipo de Currencies_Excel (CRAZE GmbH), editable">
+              <label key={c} className="flex items-center gap-1 text-xs text-gray-500" title={t('Currencies_Excel rate (CRAZE GmbH), editable')}>
                 1 {c} =
-                <input value={fxInputs[c] || ''} onChange={e => setFxInputs(f => ({ ...f, [c]: e.target.value }))} inputMode="decimal" placeholder="tipo"
+                <input value={fxInputs[c] || ''} onChange={e => setFxInputs(f => ({ ...f, [c]: e.target.value }))} inputMode="decimal" placeholder={t('rate')}
                   className="w-20 border border-gray-300 rounded-md px-2 py-1 text-sm font-semibold text-gray-900 bg-white text-right" />
                 EUR
               </label>
@@ -265,28 +276,28 @@ export default function RoyaltiesPage() {
                 <div className="flex bg-gray-100 rounded-lg p-1">
                   {[localCur, 'EUR'].map(c => (
                     <button key={c} onClick={() => setInEur(c === 'EUR')} disabled={c === 'EUR' && !canConvert}
-                      title={c === 'EUR' && !canConvert ? 'Indica el tipo de cambio' : `Ver importes en ${c}`}
+                      title={c === 'EUR' && !canConvert ? t('Enter the exchange rate') : t('Show amounts in {c}', { c })}
                       className={`px-3 py-1.5 rounded-md text-xs font-semibold disabled:opacity-40 ${cur === c ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
                       {c}
                     </button>
                   ))}
                 </div>
                 <label className="flex items-center gap-1 text-xs text-gray-500"
-                  title={data?.fx?.rate ? `Tipo de Currencies_Excel (CRAZE GmbH)${data.fx.date ? ' del ' + dateEs(data.fx.date) : ''}` : data?.fx?.error || ''}>
+                  title={data?.fx?.rate ? (data.fx.date ? t('Currencies_Excel rate (CRAZE GmbH) of {date}', { date: dateEs(data.fx.date) }) : t('Currencies_Excel rate (CRAZE GmbH)')) : tx(data?.fx?.error || '')}>
                   1 {localCur} =
-                  <input value={fxInputs[localCur] || ''} onChange={e => setFxInputs(f => ({ ...f, [localCur]: e.target.value }))} inputMode="decimal" placeholder="tipo"
+                  <input value={fxInputs[localCur] || ''} onChange={e => setFxInputs(f => ({ ...f, [localCur]: e.target.value }))} inputMode="decimal" placeholder={t('rate')}
                     className="w-20 border border-gray-300 rounded-md px-2 py-1 text-sm font-semibold text-gray-900 bg-white text-right" />
                   EUR
                 </label>
               </div>
             )}
-            <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={loading} title="Volver a leer de Business Central"
+            <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={loading} title={t('Reload from Business Central')}
               className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">
               <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             </button>
             <button onClick={exportExcel} disabled={loading || !visible.length}
               className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
-              <Download size={16} /> Exportar Excel
+              <Download size={16} /> {t('Export Excel')}
             </button>
           </div>
         </div>
@@ -299,14 +310,14 @@ export default function RoyaltiesPage() {
           {GROUP.map(c => {
             const on = companies.includes(c);
             return (
-              <button key={c} title={on && companies.length > 1 ? 'Quitar del informe' : 'Añadir al informe (clic con Alt: solo esta)'}
+              <button key={c} title={on && companies.length > 1 ? t('Remove from the report') : t('Add to the report (Alt+click: only this one)')}
                 onClick={e => setCompanies(prev => (e.altKey ? [c] : on ? (prev.length > 1 ? prev.filter(x => x !== c) : prev) : GROUP.filter(x => x === c || prev.includes(x))))}
                 className={`px-3 py-1.5 rounded-full border font-semibold ${on ? 'bg-indigo-50 text-indigo-700 border-indigo-300' : 'bg-white text-gray-500 border-gray-300 hover:text-gray-900'}`}>
                 {on ? '✓ ' : ''}{SHORT[c] || c}
               </button>
             );
           })}
-          {multi && <span className="text-gray-500 ml-1">Varias empresas: importes en EUR</span>}
+          {multi && <span className="text-gray-500 ml-1">{t('Several companies: amounts in EUR')}</span>}
         </div>
       </header>
 
@@ -320,68 +331,68 @@ export default function RoyaltiesPage() {
         ))}
         {missingFx.length > 0 && (
           <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900">
-            Falta el tipo de cambio a EUR de {missingFx.join(', ')}: esos importes se muestran sin convertir.
+            {t('Missing EUR exchange rate for {list}: those amounts are shown unconverted.', { list: missingFx.join(', ') })}
           </div>
         )}
         {loading && !loaded.length ? (
-          <p className="text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Leyendo líneas de royalties de Business Central…</p>
+          <p className="text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> {t('Reading royalty lines from Business Central…')}</p>
         ) : data && (
           <>
-            {loading && <p className="text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Leyendo las demás empresas de Business Central…</p>}
+            {loading && <p className="text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> {t('Reading the other companies from Business Central…')}</p>}
             {loaded.some(r => r.ratesSource === 'lm') && (
               <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-800">
-                No se han podido leer los % de royalty de RoyaltiesCRZ (CRAZE GmbH): la provisión mostrada es la que calcula la LM de BC, sin recalcular.
-                {loaded.find(r => r.ratesBcError)?.ratesBcError && <span className="block text-xs mt-1">{loaded.find(r => r.ratesBcError)!.ratesBcError}</span>}
+                {t("Couldn't read the royalty % from RoyaltiesCRZ (CRAZE GmbH): the provision shown is the one calculated by BC's LM, not recalculated.")}
+                {loaded.find(r => r.ratesBcError)?.ratesBcError && <span className="block text-xs mt-1">{tx(loaded.find(r => r.ratesBcError)!.ratesBcError!)}</span>}
               </div>
             )}
             {stats.excluded.map(r => (
               <div key={r.company} className="bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700">
-                {r.company} no puede vender <b>{r.stats.excluded.codes.join(', ')}</b>: excluido del informe
-                ({r.stats.excluded.lines} líneas, turnover {money(r.stats.excluded.turnover * factorOf(r))} {cur}).
+                {t('{company} cannot sell', { company: r.company })} <b>{r.stats.excluded.codes.join(', ')}</b>: {t('excluded from the report')}
+                ({t('{n} lines, turnover {amount} {cur}', { n: r.stats.excluded.lines, amount: money(r.stats.excluded.turnover * factorOf(r)), cur })}).
               </div>
             ))}
             {stats.noRate.length > 0 && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900">
-                Royalty Codes sin % en RoyaltiesCRZ (no provisionan): <b>{stats.noRate.join(', ')}</b>
+                {t('Royalty Codes without % in RoyaltiesCRZ (no provision):')} <b>{stats.noRate.join(', ')}</b>
               </div>
             )}
             {loaded.find(r => r.itemsError) ? (
               <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-800 flex items-start gap-2">
                 <AlertCircle size={16} className="mt-0.5 shrink-0" />
                 <div>
-                  No se han podido leer los Royalty Codes de las fichas de artículo de CRAZE GmbH: se muestran los de la LM, que pueden no ser correctos.
-                  <span className="block text-xs mt-1">{loaded.find(r => r.itemsError)!.itemsError}</span>
+                  {t("Couldn't read the Royalty Codes from the CRAZE GmbH item cards: the LM's codes are shown, which may not be correct.")}
+                  <span className="block text-xs mt-1">{tx(loaded.find(r => r.itemsError)!.itemsError!)}</span>
                 </div>
               </div>
             ) : stats.noItemCard.length > 0 && (
               <details className="bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700">
-                <summary className="cursor-pointer">{stats.noItemCard.length} artículos no existen en CRAZE GmbH: se usa su Royalty Code de la LM.</summary>
+                <summary className="cursor-pointer">{t("{n} items don't exist in CRAZE GmbH: their LM Royalty Code is used.", { n: stats.noItemCard.length })}</summary>
                 <p className="mt-2 font-mono text-xs break-words">{stats.noItemCard.join(', ')}</p>
               </details>
             )}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <Kpi label={`Provisión royalties (${cur})`} value={money(totals.provision)} sub={licensedTurnover ? `${pct(totals.provision / licensedTurnover)} sobre ventas con licencia` : undefined} />
-              <Kpi label={`Turnover neto de provisión (${cur})`} value={money(totals.turnover)} sub={`Con licencia: ${money(licensedTurnover)}`} />
-              <Kpi label="Cantidad" value={qf.format(totals.qty)} sub={`${visible.length} líneas de artículo`} />
-              <Kpi label={`Excluido intercompañía (${cur})`} value={money(stats.ic.turnover)}
-                sub={`${stats.ic.lines} líneas · provisión ${money(stats.ic.provision)}`} />
+              <Kpi label={t('Royalty provision ({cur})', { cur })} value={money(totals.provision)} sub={licensedTurnover ? t('{pct} of licensed sales', { pct: pct(totals.provision / licensedTurnover) }) : undefined} />
+              <Kpi label={t('Turnover net of provision ({cur})', { cur })} value={money(totals.turnover)} sub={t('Licensed: {amount}', { amount: money(licensedTurnover) })} />
+              <Kpi label={t('Quantity')} value={qf.format(totals.qty)} sub={t('{n} item lines', { n: visible.length })} />
+              <Kpi label={t('Intercompany excluded ({cur})', { cur })} value={money(stats.ic.turnover)}
+                sub={t('{n} lines · provision {amount}', { n: stats.ic.lines, amount: money(stats.ic.provision) })} />
             </div>
 
             <section className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <h2 className="px-4 py-3 text-sm font-bold text-gray-900 border-b border-gray-200">Resumen por Royalty Code</h2>
+              <h2 className="px-4 py-3 text-sm font-bold text-gray-900 border-b border-gray-200">{t('Summary by Royalty Code')}</h2>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-500">
                     <tr>
                       <th className="text-left px-4 py-2">Royalty Code</th>
-                      <th className="text-right px-4 py-2">Artículos</th>
-                      <th className="text-right px-4 py-2">Cantidad</th>
-                      <th className="text-right px-4 py-2">Turnover neto</th>
-                      <th className="text-right px-4 py-2">de ello FOB</th>
+                      <th className="text-right px-4 py-2">{t('Items')}</th>
+                      <th className="text-right px-4 py-2">{t('Quantity')}</th>
+                      <th className="text-right px-4 py-2">{t('Net turnover')}</th>
+                      <th className="text-right px-4 py-2">{t('of which FOB')}</th>
                       <th className="text-right px-4 py-2">% Domestic</th>
                       <th className="text-right px-4 py-2">% FOB</th>
-                      <th className="text-right px-4 py-2">Provisión royalties</th>
-                      <th className="text-right px-4 py-2">% efectivo</th>
+                      <th className="text-right px-4 py-2">{t('Royalty provision')}</th>
+                      <th className="text-right px-4 py-2">{t('Effective %')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -420,25 +431,25 @@ export default function RoyaltiesPage() {
 
             <section className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap items-center gap-3">
-                <h2 className="text-sm font-bold text-gray-900 mr-auto">Detalle por artículo y país</h2>
+                <h2 className="text-sm font-bold text-gray-900 mr-auto">{t('Detail by item and country')}</h2>
                 <div className="relative">
                   <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                  <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Nº o descripción"
+                  <input value={search} onChange={e => setSearch(e.target.value)} placeholder={t('No. or description')}
                     className="border border-gray-300 rounded-lg pl-8 pr-3 py-1.5 text-sm w-52" />
                 </div>
                 <select value={codeFilter} onChange={e => setCodeFilter(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white">
-                  <option value="">Todos los Royalty Codes</option>
+                  <option value="">{t('All Royalty Codes')}</option>
                   {codes.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
                 <select value={countryFilter} onChange={e => setCountryFilter(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white">
-                  <option value="">Todos los países</option>
-                  {countries.map(c => <option key={c} value={c}>{c || '(sin país)'}</option>)}
+                  <option value="">{t('All countries')}</option>
+                  {countries.map(c => <option key={c} value={c}>{c || t('(no country)')}</option>)}
                 </select>
                 <label className="flex items-center gap-2 text-sm text-gray-700">
                   <input type="checkbox" checked={hideNotApplied} onChange={e => setHideNotApplied(e.target.checked)} />
-                  Ocultar NON-ROYALTY
+                  {t('Hide NON-ROYALTY')}
                 </label>
-                <button onClick={exportExcel} disabled={loading || !visible.length} title="Descargar esta tabla (con los filtros aplicados) en Excel"
+                <button onClick={exportExcel} disabled={loading || !visible.length} title={t('Download this table (with the filters applied) to Excel')}
                   className="flex items-center gap-1.5 border border-gray-300 bg-white text-gray-700 text-sm font-semibold px-3 py-1.5 rounded-lg hover:bg-gray-50 disabled:opacity-40">
                   <Download size={14} /> Excel
                 </button>
@@ -451,7 +462,7 @@ export default function RoyaltiesPage() {
                         <th key={c.key} onClick={() => toggleSort(c.key)}
                           className={`px-3 py-2 cursor-pointer select-none whitespace-nowrap hover:text-gray-900 ${c.num ? 'text-right' : 'text-left'}`}>
                           <span className="inline-flex items-center gap-1">
-                            {c.label}
+                            {t(c.label)}
                             {sort?.key === c.key && (sort.dir === 1 ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
                           </span>
                         </th>
@@ -475,7 +486,7 @@ export default function RoyaltiesPage() {
                       </tr>
                     ))}
                     {!visible.length && (
-                      <tr><td colSpan={columns.length} className="px-3 py-6 text-center text-gray-500">No hay líneas de royalties para este periodo y filtros.</td></tr>
+                      <tr><td colSpan={columns.length} className="px-3 py-6 text-center text-gray-500">{t('No royalty lines for this period and filters.')}</td></tr>
                     )}
                   </tbody>
                   {visible.length > 0 && (
@@ -494,7 +505,7 @@ export default function RoyaltiesPage() {
               </div>
             </section>
             <p className="text-xs text-gray-500">
-              Fuente: página 60000 &quot;AIT Documents LM Components&quot; de Business Central (servicio {data.service}), sin líneas Main Item ni intercompañía. Royalty Code de la ficha de artículo y provisión = turnover × % Domestic Royalty de RoyaltiesCRZ (% FOB en envíos FOB), ambos de CRAZE GmbH. Precio por unidad = turnover ÷ cantidad; % efectivo = provisión ÷ turnover.
+              {t('Source: Business Central page 60000 "AIT Documents LM Components" (service {service}), without Main Item or intercompany lines. Royalty Code from the item card and provision = turnover × % Domestic Royalty from RoyaltiesCRZ (% FOB on FOB shipments), both from CRAZE GmbH. Price per unit = turnover ÷ quantity; effective % = provision ÷ turnover.', { service: data.service })}
             </p>
           </>
         )}
@@ -513,6 +524,8 @@ type GroupCompany = {
 const SHORT: Record<string, string> = { 'CRAZE': 'CRAZE GmbH', 'Craze Iberia SL': 'Iberia', 'Craze UK': 'UK', 'CRAZE Group AG': 'Group AG', 'Craze Entertainment': 'Entertainment' };
 
 function GroupSummary({ range, reload }: { range: { from: string; to: string }; reload: { n: number; force: boolean } }) {
+  const { t, tx } = useT();
+  const { money } = useFmt();
   const [companies, setCompanies] = useState<GroupCompany[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -527,7 +540,7 @@ function GroupSummary({ range, reload }: { range: { from: string; to: string }; 
       .then(async res => {
         const json = await res.json();
         if (cancelled) return;
-        if (!res.ok) { setError(json.error || 'Error al cargar el resumen del grupo'); return; }
+        if (!res.ok) { setError(json.error || t('Error loading the group summary')); return; }
         setCompanies(json.companies);
         // Tipos de BC como valor inicial (editables); se mantienen los que ya se hayan escrito
         setFx(prev => {
@@ -561,7 +574,7 @@ function GroupSummary({ range, reload }: { range: { from: string; to: string }; 
 
   const exportExcel = () => {
     const aoa: any[][] = [
-      [`PROVISIÓN ROYALTIES GRUPO (EUR) · ${dateEs(range.from)} – ${dateEs(range.to)} · ${currencies.map(c => `1 ${c} = ${fx[c]} EUR`).join(' · ')}`],
+      [`${t('GROUP ROYALTY PROVISION (EUR)')} · ${dateEs(range.from)} – ${dateEs(range.to)} · ${currencies.map(c => `1 ${c} = ${fx[c]} EUR`).join(' · ')}`],
       ['Royalty Code', ...cols.map(c => SHORT[c.company] || c.company), 'Total'],
       ...codes.map(r => [r.code, ...r.values, r.total]),
       ['Total', ...colTotals, grand],
@@ -573,8 +586,8 @@ function GroupSummary({ range, reload }: { range: { from: string; to: string }; 
     }
     ws['!cols'] = [{ wch: 24 }, ...cols.map(() => ({ wch: 14 })), { wch: 14 }];
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Grupo');
-    XLSX.writeFile(wb, `Royalties_Grupo_${range.from}_${range.to}_EUR.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, t('Group'));
+    XLSX.writeFile(wb, `Royalties_${t('Group')}_${range.from}_${range.to}_EUR.xlsx`);
   };
 
   return (
@@ -582,14 +595,14 @@ function GroupSummary({ range, reload }: { range: { from: string; to: string }; 
     <section className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap items-center gap-3">
         <h2 className="text-sm font-bold text-gray-900 mr-auto">
-          Provisión royalties del grupo por licencia (EUR)
+          {t('Group royalty provision by licence (EUR)')}
           {loading && <RefreshCw size={12} className="inline ml-2 animate-spin text-gray-400" />}
         </h2>
         {currencies.map(c => (
           <label key={c} className="flex items-center gap-1 text-xs text-gray-500"
-            title={(() => { const d = cols.find(x => x.currency === c)?.fxDate; return `Tipo de Currencies_Excel (CRAZE GmbH)${d ? ' del ' + dateEs(d) : ''}`; })()}>
+            title={(() => { const d = cols.find(x => x.currency === c)?.fxDate; return d ? t('Currencies_Excel rate (CRAZE GmbH) of {date}', { date: dateEs(d) }) : t('Currencies_Excel rate (CRAZE GmbH)'); })()}>
             1 {c} =
-            <input value={fx[c] || ''} onChange={e => setFx(f => ({ ...f, [c]: e.target.value }))} inputMode="decimal" placeholder="tipo"
+            <input value={fx[c] || ''} onChange={e => setFx(f => ({ ...f, [c]: e.target.value }))} inputMode="decimal" placeholder={t('rate')}
               className="w-20 border border-gray-300 rounded-md px-2 py-1 text-sm font-semibold text-gray-900 bg-white text-right" />
             EUR
           </label>
@@ -600,9 +613,9 @@ function GroupSummary({ range, reload }: { range: { from: string; to: string }; 
         </button>
       </div>
       {error ? (
-        <p className="px-4 py-3 text-sm text-red-700">{error}</p>
+        <p className="px-4 py-3 text-sm text-red-700">{tx(error)}</p>
       ) : !companies ? (
-        <p className="px-4 py-3 text-sm text-gray-500">Leyendo los royalties de todas las empresas…</p>
+        <p className="px-4 py-3 text-sm text-gray-500">{t('Reading the royalties of all companies…')}</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -629,7 +642,7 @@ function GroupSummary({ range, reload }: { range: { from: string; to: string }; 
                 </tr>
               ))}
               {!codes.length && (
-                <tr><td colSpan={cols.length + 2} className="px-4 py-6 text-center text-gray-500">No hay provisión de royalties en el grupo para este periodo.</td></tr>
+                <tr><td colSpan={cols.length + 2} className="px-4 py-6 text-center text-gray-500">{t('No royalty provision in the group for this period.')}</td></tr>
               )}
             </tbody>
             {codes.length > 0 && (
@@ -645,11 +658,11 @@ function GroupSummary({ range, reload }: { range: { from: string; to: string }; 
         </div>
       )}
       {omitted.length > 0 && companies && (
-        <p className="px-4 py-2 border-t border-gray-100 text-xs text-gray-500">Sin datos para el periodo (no se muestran): {omitted.join(', ')}.</p>
+        <p className="px-4 py-2 border-t border-gray-100 text-xs text-gray-500">{t('No data for the period (not shown): {list}.', { list: omitted.join(', ') })}</p>
       )}
       {missingFx.length > 0 && (
         <div className="px-4 py-2 border-t border-gray-100 text-xs text-amber-800 bg-amber-50 space-y-0.5">
-          {missingFx.length > 0 && <p>Falta el tipo de cambio de {missingFx.join(', ')}: esas empresas suman 0 hasta que lo indiques.</p>}
+          {missingFx.length > 0 && <p>{t('Missing exchange rate for {list}: those companies add 0 until you enter it.', { list: missingFx.join(', ') })}</p>}
         </div>
       )}
     </section>
@@ -674,6 +687,7 @@ type MgCompany = Omit<GroupCompany, 'byCode' | 'byCodeCountry'> & { dated: Recor
 function MgSummary({ to, reload, rate, fxReady }: {
   to: string; reload: { n: number; force: boolean }; rate: (cur: string) => number; fxReady: (cur: string) => boolean;
 }) {
+  const { t, tx } = useT();
   const [data, setData] = useState<{ contracts: MgContract[]; companies: MgCompany[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -687,7 +701,7 @@ function MgSummary({ to, reload, rate, fxReady }: {
       .then(async res => {
         const json = await res.json();
         if (cancelled) return;
-        if (!res.ok) setError(json.error || 'Error al cargar las Minimum Guarantees');
+        if (!res.ok) setError(json.error || t('Error loading the Minimum Guarantees'));
         else setData(json);
       })
       .catch(e => { if (!cancelled) setError(e.message); })
@@ -699,16 +713,16 @@ function MgSummary({ to, reload, rate, fxReady }: {
     <section className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       <div className="px-4 py-3 border-b border-gray-200">
         <h2 className="text-sm font-bold text-gray-900">
-          Minimum Guarantees por licencia (EUR)
+          {t('Minimum Guarantees by licence (EUR)')}
           {loading && <RefreshCw size={12} className="inline ml-2 animate-spin text-gray-400" />}
         </h2>
         <p className="text-xs text-gray-500 mt-0.5">
-          Provisión de royalties de todas las empresas del grupo desde el inicio de cada contrato hasta el {dateEs(to)}, asignada a cada garantía por país de facturación.
-          Solo la MG ya activa a esa fecha puede consumirse; la provisión que la supere la debería facturar el licenciante.
+          {t('Royalty provision of all group companies from the start of each contract up to {date}, assigned to each guarantee by billing country.', { date: dateEs(to) })}
+          {' '}{t('Only the MG already active on that date can be consumed; the licensor should invoice any provision above it.')}
         </p>
       </div>
-      {error ? <p className="px-4 py-3 text-sm text-red-700">{error}</p>
-        : !data ? <p className="px-4 py-3 text-sm text-gray-500">Calculando las Minimum Guarantees…</p>
+      {error ? <p className="px-4 py-3 text-sm text-red-700">{tx(error)}</p>
+        : !data ? <p className="px-4 py-3 text-sm text-gray-500">{t('Calculating the Minimum Guarantees…')}</p>
         : (
           <div className="divide-y divide-gray-200">
             {[...data.contracts].sort((a, b) => companyOrder(a.owner) - companyOrder(b.owner) || a.licence.localeCompare(b.licence)).map(c => <MgContractCard key={c.id} contract={c} companies={data.companies} to={to} rate={rate} fxReady={fxReady} />)}
@@ -726,6 +740,8 @@ const dayBefore = (d: string) => new Date(Date.parse(d) - 86400000).toISOString(
 function MgContractCard({ contract: c, companies, to, rate, fxReady }: {
   contract: MgContract; companies: MgCompany[]; to: string; rate: (cur: string) => number; fxReady: (cur: string) => boolean;
 }) {
+  const { t } = useT();
+  const { money } = useFmt();
   const withData = companies.filter(x => !x.error && x.source);
   // Provisión (EUR) de los códigos de la licencia por país y fecha, desde el inicio del contrato
   const byCountryDate: Record<string, Record<string, number>> = {};
@@ -750,12 +766,12 @@ function MgContractCard({ contract: c, companies, to, rate, fxReady }: {
     <div className="px-4 py-4 space-y-3">
       <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
         <h3 className="text-base font-bold text-gray-900">{c.licence}</h3>
-        <span className="text-xs font-semibold text-indigo-700 bg-indigo-50 rounded px-2 py-0.5">Contrato de {SHORT[c.owner] || c.owner}</span>
+        <span className="text-xs font-semibold text-indigo-700 bg-indigo-50 rounded px-2 py-0.5">{t('{company} contract', { company: SHORT[c.owner] || c.owner })}</span>
         <span className="text-xs text-gray-500">{c.codes.join(' + ')}</span>
         <span className="text-xs text-gray-500">{c.licensor} · {c.reference}</span>
-        <span className="text-xs text-gray-500">Contrato {dateEs(c.start)} – {dateEs(c.end)} · {c.rates}</span>
+        <span className="text-xs text-gray-500">{t('Contract {from} – {to}', { from: dateEs(c.start), to: dateEs(c.end) })} · {c.rates}</span>
       </div>
-      {c.start > to ? <p className="text-sm text-gray-500">El contrato empieza después de la fecha de corte.</p> : (
+      {c.start > to ? <p className="text-sm text-gray-500">{t('The contract starts after the cut-off date.')}</p> : (
         <div className="grid grid-cols-1 2xl:grid-cols-2 gap-4">
           {c.guarantees.map(g => {
             // Provisión del territorio entre dos fechas (incluidas)
@@ -788,20 +804,20 @@ function MgContractCard({ contract: c, companies, to, rate, fxReady }: {
               <div key={g.id} className="border border-gray-200 rounded-lg overflow-hidden">
                 <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex flex-wrap items-baseline gap-x-3">
                   <span className="text-sm font-semibold text-gray-900">{g.territory}</span>
-                  <span className="text-xs text-gray-500">MG total {money(total)} · activa a {dateEs(to)}: {money(active)} · futura: {money(future)}</span>
+                  <span className="text-xs text-gray-500">{t('MG total {total} · active at {date}: {active} · future: {future}', { total: money(total), date: dateEs(to), active: money(active), future: money(future) })}</span>
                 </div>
                 <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="text-xs uppercase tracking-wider text-gray-500 whitespace-nowrap">
                     <tr>
-                      <th className="text-left px-3 py-1.5">Vencimiento</th>
-                      <th className="text-left px-3 py-1.5">Concepto</th>
-                      <th className="text-left px-3 py-1.5">Periodo</th>
+                      <th className="text-left px-3 py-1.5">{t('Due date')}</th>
+                      <th className="text-left px-3 py-1.5">{t('Concept')}</th>
+                      <th className="text-left px-3 py-1.5">{t('Period')}</th>
                       <th className="text-right px-3 py-1.5">Minimum Guarantee</th>
                       <th className="text-right px-3 py-1.5">Provision Royalty</th>
                       <th className="text-right px-3 py-1.5">Royalty to MG</th>
                       <th className="text-right px-3 py-1.5">Royalty to Invoice</th>
-                      <th className="text-right px-3 py-1.5">MG abierta</th>
+                      <th className="text-right px-3 py-1.5">{t('Open MG')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -809,13 +825,13 @@ function MgContractCard({ contract: c, companies, to, rate, fxReady }: {
                       <tr key={i} className={`border-t border-gray-100 ${r.due ? 'text-gray-900' : 'text-gray-500'}`}>
                         <td className="px-3 py-1.5 whitespace-nowrap">{dateEs(r.date)}</td>
                         <td className="px-3 py-1.5">{r.label}</td>
-                        <td className="px-3 py-1.5 whitespace-nowrap text-xs">{r.due ? `${dateEs(r.from)} – ${dateEs(r.until)}` : <span className="uppercase text-[10px]">futura</span>}</td>
+                        <td className="px-3 py-1.5 whitespace-nowrap text-xs">{r.due ? `${dateEs(r.from)} – ${dateEs(r.until)}` : <span className="uppercase text-[10px]">{t('future')}</span>}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums">{money(r.amount)}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums">{r.due ? money(r.provision) : '—'}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums">{r.due ? money(r.toMg) : '—'}</td>
                         <td className={`px-3 py-1.5 text-right tabular-nums ${r.toInvoice > 0.005 ? 'text-amber-800 font-semibold' : ''}`}>{r.due ? money(r.toInvoice) : '—'}</td>
                         <td className={`px-3 py-1.5 text-right tabular-nums ${!r.due ? '' : r.open > 0.005 ? 'font-semibold' : 'text-green-700'}`}>
-                          {!r.due ? money(r.open) : r.open > 0.005 ? money(r.open) : 'Consumida'}
+                          {!r.due ? money(r.open) : r.open > 0.005 ? money(r.open) : t('Fully consumed')}
                         </td>
                       </tr>
                     ))}
@@ -835,9 +851,9 @@ function MgContractCard({ contract: c, companies, to, rate, fxReady }: {
                 <div className="px-3 py-2 border-t border-gray-100 text-xs text-gray-600">
                   Provision Royalty {money(provision)} = Royalty to MG {money(toMg)} + Royalty to Invoice {money(toInvoice)}.
                   {toInvoice > 0.005
-                    ? <span className="text-amber-800"> El licenciante debería facturar {money(toInvoice)} (provisión por encima de la MG activa en su periodo).</span>
-                    : <> Quedan {money(active - toMg)} de MG activa por consumir antes de que facturen royalties.</>}
-                  {future > 0 && <> MG futura (aún no activa): {money(future)}.</>}
+                    ? <span className="text-amber-800"> {t('The licensor should invoice {amount} (provision above the MG active in its period).', { amount: money(toInvoice) })}</span>
+                    : <> {t('{amount} of active MG left to consume before royalties are invoiced.', { amount: money(active - toMg) })}</>}
+                  {future > 0 && <> {t('Future MG (not active yet): {amount}.', { amount: money(future) })}</>}
                 </div>
               </div>
             );
@@ -848,9 +864,9 @@ function MgContractCard({ contract: c, companies, to, rate, fxReady }: {
         <div className="text-xs text-gray-500 space-y-0.5">
           {c.notes && <p>{c.notes}</p>}
           {outsideTotal !== 0 && (
-            <p>Provisión fuera de los territorios con garantía (no consume MG): {money(outsideTotal)} ({outside.map(([k, v]) => `${k || 'sin país'} ${money(v)}`).join(', ')}).</p>
+            <p>{t("Provision outside the guaranteed territories (doesn't consume MG): {amount} ({list}).", { amount: money(outsideTotal), list: outside.map(([k, v]) => `${k || t('no country')} ${money(v)}`).join(', ') })}</p>
           )}
-          {missingFx.length > 0 && <p className="text-amber-800">Falta el tipo de cambio de {missingFx.join(', ')}: esas empresas no suman.</p>}
+          {missingFx.length > 0 && <p className="text-amber-800">{t("Missing exchange rate for {list}: those companies don't add up.", { list: missingFx.join(', ') })}</p>}
         </div>
       )}
     </div>
@@ -876,14 +892,15 @@ function Kpi({ label, value, sub, warn }: { label: string; value: string; sub?: 
 }
 
 function SetupError({ error }: { error: { message: string; details?: any } }) {
+  const { t, tx } = useT();
   const d = error.details;
   const list: string[] | undefined = d?.availableFields || (d?.odataServices && [...d.odataServices, ...(d.apiEntities || [])]);
   return (
     <div className="bg-white border border-red-200 rounded-xl p-4 space-y-2">
-      <p className="text-sm font-semibold text-red-700 flex items-center gap-2"><AlertCircle size={16} /> {error.message}</p>
+      <p className="text-sm font-semibold text-red-700 flex items-center gap-2"><AlertCircle size={16} /> {tx(error.message)}</p>
       {list && list.length > 0 && (
         <details className="text-xs text-gray-600">
-          <summary className="cursor-pointer">{d.availableFields ? 'Campos disponibles en el servicio' : 'Servicios disponibles en Business Central'} ({list.length})</summary>
+          <summary className="cursor-pointer">{d.availableFields ? t('Fields available in the service') : t('Services available in Business Central')} ({list.length})</summary>
           <p className="mt-2 font-mono break-words">{list.join(', ')}</p>
         </details>
       )}

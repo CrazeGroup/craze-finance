@@ -8,7 +8,7 @@ export async function POST(req: Request) {
     const { username, password } = await req.json();
 
     if (!username || !password) {
-      return NextResponse.json({ error: 'Faltan credenciales' }, { status: 400 });
+      return NextResponse.json({ error: 'Missing credentials' }, { status: 400 });
     }
 
     const user = await prisma.user.findUnique({
@@ -17,13 +17,13 @@ export async function POST(req: Request) {
 
     // Usuarios sin contraseña: solo inicio de sesión con Microsoft
     if (!user || !user.passwordHash) {
-      return NextResponse.json({ error: 'Credenciales inválidas' }, { status: 401 });
+      return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
     }
 
     const passwordMatch = await bcrypt.compare(password, user.passwordHash);
 
     if (!passwordMatch) {
-      return NextResponse.json({ error: 'Credenciales inválidas' }, { status: 401 });
+      return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
     }
 
     const response = NextResponse.json({ success: true, permissions: JSON.parse(user.permissions) });
@@ -32,6 +32,6 @@ export async function POST(req: Request) {
     return response;
   } catch (error) {
     console.error('Login error:', error);
-    return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

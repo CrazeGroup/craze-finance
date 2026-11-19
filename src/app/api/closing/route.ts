@@ -9,8 +9,8 @@ const params = (req: Request) => {
   const { searchParams } = new URL(req.url);
   const company = searchParams.get('company') || '';
   const year = parseInt(searchParams.get('year') || '', 10);
-  if (!CLOSING_COMPANIES.includes(company)) throw new Error('Empresa no válida.');
-  if (!year) throw new Error('Año no válido.');
+  if (!CLOSING_COMPANIES.includes(company)) throw new Error('Invalid company.');
+  if (!year) throw new Error('Invalid year.');
   return { company, year };
 };
 
@@ -40,11 +40,11 @@ export async function POST(req: Request) {
       await prisma.closingTask.createMany({
         data: from.map((t, i) => ({ companyId: company, year, group: t.group, number: t.number, sortOrder: (last?.sortOrder ?? -1) + 1 + i, description: t.description, assignee: t.assignee, notes: t.notes })),
       });
-      await logAction('Cierre mensual: tareas copiadas', `${company} ${body.copyFrom} → ${year} · ${from.length} tareas`, company);
+      await logAction('Monthly closing: tasks copied', `${company}: tasks of ${body.copyFrom} copied to ${year} (${from.length})`, company);
       return NextResponse.json({ copied: from.length });
     }
     const description = String(body.description || '').trim();
-    if (!description) return NextResponse.json({ error: 'Falta la descripción.' }, { status: 400 });
+    if (!description) return NextResponse.json({ error: 'The description is missing.' }, { status: 400 });
     const group = String(body.group || '').trim() || null;
     const maxNumber = await prisma.closingTask.aggregate({ where: { companyId: company, year, group }, _max: { number: true } });
     const task = await prisma.closingTask.create({
@@ -54,7 +54,7 @@ export async function POST(req: Request) {
       },
       include: { cells: true },
     });
-    await logAction('Cierre mensual: tarea creada', `${company}${group ? ` / ${group}` : ''} ${year} · ${task.number}. ${description}`, company);
+    await logAction('Monthly closing: task created', `${company}${group ? ` / ${group}` : ''} ${year} · ${task.number}. ${description}`, company);
     return NextResponse.json(task);
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -67,9 +67,9 @@ export async function PATCH(req: Request) {
     const { company, year } = params(req);
     const { from, to } = await req.json();
     const name = String(to || '').trim();
-    if (!from || !name) return NextResponse.json({ error: 'Indica el nombre de la subempresa.' }, { status: 400 });
+    if (!from || !name) return NextResponse.json({ error: 'Enter the name of the sub-company.' }, { status: 400 });
     const r = await prisma.closingTask.updateMany({ where: { companyId: company, year, group: from }, data: { group: name } });
-    await logAction('Cierre mensual: subempresa renombrada', `${company} ${year} · ${from} → ${name} (${r.count} tareas)`, company);
+    await logAction('Monthly closing: sub-company renamed', `${company} ${year} · ${from} → ${name} (${r.count} tasks)`, company);
     return NextResponse.json({ updated: r.count });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -81,9 +81,9 @@ export async function DELETE(req: Request) {
   try {
     const { company, year } = params(req);
     const group = new URL(req.url).searchParams.get('group') || '';
-    if (!group) return NextResponse.json({ error: 'Falta la subempresa.' }, { status: 400 });
+    if (!group) return NextResponse.json({ error: 'The sub-company is missing.' }, { status: 400 });
     const r = await prisma.closingTask.deleteMany({ where: { companyId: company, year, group } });
-    await logAction('Cierre mensual: subempresa eliminada', `${company} ${year} · ${group} (${r.count} tareas)`, company);
+    await logAction('Monthly closing: sub-company deleted', `${company} ${year} · ${group} (${r.count} tasks)`, company);
     return NextResponse.json({ deleted: r.count });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

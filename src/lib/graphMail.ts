@@ -39,14 +39,14 @@ export async function disconnectMail(username: string) {
 async function accessToken(username: string): Promise<string> {
   const cfg = entraConfig();
   const row = await prisma.apiConfig.findUnique({ where: { key: keyOf(username) } });
-  if (!cfg || !row?.config) throw new Error('Correo no conectado');
+  if (!cfg || !row?.config) throw new Error('Mailbox not connected');
   const d = JSON.parse(row.config);
   const res = await fetch(`https://login.microsoftonline.com/${cfg.tenantId}/oauth2/v2.0/token`, {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ client_id: cfg.clientId, client_secret: cfg.clientSecret, grant_type: 'refresh_token', refresh_token: open(d.token), scope: GRAPH_MAIL_SCOPE }),
   });
   const t = await res.json();
-  if (!res.ok || !t.access_token) throw new Error(`Microsoft no renovó el acceso al correo (${t.error_description?.split('\n')[0] || res.status}). Vuelve a conectar tu correo.`);
+  if (!res.ok || !t.access_token) throw new Error(`Microsoft did not renew mailbox access (${t.error_description?.split('\n')[0] || res.status}). Reconnect your mailbox.`);
   if (t.refresh_token) await saveMailToken(username, t.refresh_token, d.email);
   return t.access_token;
 }
@@ -70,7 +70,7 @@ const graphError = async (res: Response) => Object.assign(new Error(`Microsoft G
 export async function sendAsUser(username: string, mail: { to: string; cc?: string; subject: string; html: string; attachments: GraphAttachment[] }) {
   const token = await accessToken(username);
   const body = JSON.stringify({ message: { ...messageOf(mail), attachments: mail.attachments.map(attachmentOf) }, saveToSentItems: true });
-  if (body.length > 3_900_000) throw Object.assign(new Error('Correo demasiado grande para Microsoft Graph'), { status: 413 });
+  if (body.length > 3_900_000) throw Object.assign(new Error('E-mail too large for Microsoft Graph'), { status: 413 });
   const res = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body });
   if (!res.ok) throw await graphError(res);
 }
@@ -83,13 +83,13 @@ let appTok: { token: string; exp: number; roles: string[] } | null = null;
 async function appToken() {
   if (appTok && appTok.exp > Date.now() + 60_000) return appTok;
   const cfg = entraConfig();
-  if (!cfg) throw new Error('Falta el registro de la app de Microsoft (AZURE_AD_*)');
+  if (!cfg) throw new Error('The Microsoft app registration is missing (AZURE_AD_*)');
   const res = await fetch(`https://login.microsoftonline.com/${cfg.tenantId}/oauth2/v2.0/token`, {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ client_id: cfg.clientId, client_secret: cfg.clientSecret, grant_type: 'client_credentials', scope: 'https://graph.microsoft.com/.default' }),
   });
   const t = await res.json();
-  if (!res.ok || !t.access_token) throw new Error(`Microsoft no dio acceso a la app (${t.error_description?.split('\n')[0] || res.status})`);
+  if (!res.ok || !t.access_token) throw new Error(`Microsoft did not grant the app access (${t.error_description?.split('\n')[0] || res.status})`);
   let roles: string[] = [];
   try { roles = JSON.parse(Buffer.from(t.access_token.split('.')[1], 'base64url').toString()).roles || []; } catch { /* token opaco */ }
   appTok = { token: t.access_token, exp: Date.now() + (t.expires_in || 3600) * 1000, roles };
@@ -121,13 +121,13 @@ export async function sendAsMailbox(mail: { to: string; cc?: string; subject: st
     return;
   }
   const draft = await fetch(`${base}/messages`, { method: 'POST', headers: h, body: JSON.stringify(messageOf(mail)) });
-  if (draft.status === 403) throw new Error('El correo pasa de ~4 MB y para enviarlo hace falta que IT añada el rol "Application Mail.ReadWrite" (mismo ámbito). Envíalo sin los PDF de las facturas o con menos facturas.');
+  if (draft.status === 403) throw new Error('The e-mail exceeds ~4 MB; to send it, IT must add the "Application Mail.ReadWrite" role (same scope). Send it without the invoice PDFs or with fewer invoices.');
   if (!draft.ok) throw await graphError(draft);
   const { id } = await draft.json();
   const msg = `${base}/messages/${encodeURIComponent(id)}`;
   try {
     for (const a of mail.attachments) {
-      if (a.content.length > 2_900_000) throw new Error(`El adjunto ${a.name} pesa demasiado (máx. 3 MB por fichero)`);
+      if (a.content.length > 2_900_000) throw new Error(`The attachment ${a.name} is too large (max. 3 MB per file)`);
       const r = await fetch(`${msg}/attachments`, { method: 'POST', headers: h, body: JSON.stringify(attachmentOf(a)) });
       if (!r.ok) throw await graphError(r);
     }

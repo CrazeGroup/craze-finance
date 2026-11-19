@@ -143,7 +143,7 @@ export function parseExcel(data: ArrayBuffer | Uint8Array) {
   const col = (name: string) => header.indexOf(name);
   const C = { title: col('TitelNr'), year: col('Ajahr'), issue: col('Anr'), vorgang: col('Vorgang'), text: col('Buchungstext'), country: col('Land'), qty: col('Menge'), price: col('Einzelpreis'), amount: col('Nettobetrag'), invoice: col('RechnungsNr') };
   const missing = Object.entries(C).filter(([, i]) => i < 0).map(([k]) => k);
-  if (missing.length) throw new Error(`El Excel no parece la exportación de Curasoft de D-FORCE (faltan columnas: ${missing.join(', ')}).`);
+  if (missing.length) throw new Error(`The Excel file does not look like the D-FORCE Curasoft export (missing columns: ${missing.join(', ')}).`);
   const num = (v: any) => (typeof v === 'number' ? v : parseFloat(String(v ?? '').replace(',', '.')) || 0);
   const out: ExcelRow[] = rows.slice(1).filter(r => r && r[C.vorgang] != null && r[C.title] != null).map(r => ({
     title: String(r[C.title]).trim(), issue: `${num(r[C.issue])}/${String(num(r[C.year])).slice(-2)}`,
@@ -194,9 +194,9 @@ export function buildDocuments(pdf: Awaited<ReturnType<typeof parsePdf>>, excel:
     const foreign = /A$/.test(x.appendix!) && x.r.country && x.r.country !== 'DE';
     addLine(x.appendix!, x.r.title, x.r.issue, foreign ? `Grosso - Ausland ${x.r.country}` : '', x.r.qty, x.r.price, x.r.amount);
   }
-  if (pdfDuplicates) warnings.push(`${pdfDuplicates} líneas del PDF estaban repetidas y se han incluido una sola vez.`);
-  if (pdfWithoutExcel) warnings.push(`${pdfWithoutExcel} líneas de venta del PDF no están en el Excel y no se incluyen (revisa que sean del mismo mes).`);
-  if (excelOnly.length) warnings.push(`${excelOnly.length} filas de venta del Excel no se han encontrado en el PDF: se incluyen${excelOnly.some(x => /I$/.test(x.appendix!)) ? ', las de Inland sin canal (Description 2)' : ''}.`);
+  if (pdfDuplicates) warnings.push(`${pdfDuplicates} PDF lines were duplicated and have been included only once.`);
+  if (pdfWithoutExcel) warnings.push(`${pdfWithoutExcel} PDF sales lines are not in the Excel file and are not included (check that both are from the same month).`);
+  if (excelOnly.length) warnings.push(`${excelOnly.length} Excel sales rows were not found in the PDF: they are included${excelOnly.some(x => /I$/.test(x.appendix!)) ? ', the Inland ones without channel (Description 2)' : ''}.`);
 
   invoice.forEach((l, i) => { l.lineNo = (i + 1) * 10000; });
   credit.forEach((l, i) => { l.lineNo = (i + 1) * 10000; });
@@ -231,15 +231,15 @@ export function buildDocuments(pdf: Awaited<ReturnType<typeof parsePdf>>, excel:
   }
   purchase.forEach((l, i) => { l.lineNo = (i + 1) * 10000; });
   const unknownVorgang = Array.from(new Set(excel.rows.map(r => r.vorgang))).filter(v => ![10, 11, 20, 21, 160, 161].includes(v) && !PURCHASE_TYPES.some(t => t.vorgang === v));
-  if (unknownVorgang.length) warnings.push(`El Excel tiene tipos de movimiento (Vorgang) que no se usan: ${unknownVorgang.join(', ')}.`);
-  if (unknownTitles.size) warnings.push(`Revistas sin artículo/proyecto configurado (no se incluyen): ${Array.from(unknownTitles).join(', ')}.`);
+  if (unknownVorgang.length) warnings.push(`The Excel file has entry types (Vorgang) that are not used: ${unknownVorgang.join(', ')}.`);
+  if (unknownTitles.size) warnings.push(`Magazines without a configured item/project (not included): ${Array.from(unknownTitles).join(', ')}.`);
 
   // Comprobaciones: ventas del PDF contra el Excel, y neto contra la Gutschrift
   const sum = (list: { amount: number }[]) => r2(list.reduce((s, l) => s + l.amount, 0));
   const excelSales = r2(excel.rows.filter(r => [10, 11, 20, 21, 160, 161].includes(r.vorgang)).reduce((s, r) => s + r.amount, 0));
   const pdfSales = r2(pdf.lines.reduce((s, l) => s + l.amount, 0));
-  if (Math.abs(excelSales - pdfSales) > 0.05) warnings.push(`Las ventas y devoluciones del PDF (${pdfSales}) no cuadran con las del Excel (${excelSales}).`);
-  if (excel.invoiceNo && pdf.creditNo && excel.invoiceNo !== pdf.creditNo) warnings.push(`El PDF (Gutschrift ${pdf.creditNo}) y el Excel (RechnungsNr ${excel.invoiceNo}) son de documentos distintos.`);
+  if (Math.abs(excelSales - pdfSales) > 0.05) warnings.push(`The PDF sales and returns (${pdfSales}) do not match those in the Excel file (${excelSales}).`);
+  if (excel.invoiceNo && pdf.creditNo && excel.invoiceNo !== pdf.creditNo) warnings.push(`The PDF (Gutschrift ${pdf.creditNo}) and the Excel file (RechnungsNr ${excel.invoiceNo}) belong to different documents.`);
   // El neto de la Gutschrift abona todas las devoluciones
   const returns = sum(credit);
   const totals = {
@@ -247,7 +247,7 @@ export function buildDocuments(pdf: Awaited<ReturnType<typeof parsePdf>>, excel:
     purchase: r2(purchase.reduce((s, l) => s + l.lineAmount, 0)), net: 0, pdfNet: pdf.netTotal,
   };
   totals.net = r2(totals.invoice - totals.returns - totals.purchase);
-  if (pdf.netTotal != null && Math.abs(totals.net - pdf.netTotal) > 0.05) warnings.push(`El neto calculado (${totals.net}) no cuadra con la Summe Netto del PDF (${pdf.netTotal}).`);
+  if (pdf.netTotal != null && Math.abs(totals.net - pdf.netTotal) > 0.05) warnings.push(`The calculated net (${totals.net}) does not match the Summe Netto of the PDF (${pdf.netTotal}).`);
 
   return { creditNo: pdf.creditNo || excel.invoiceNo, period: pdf.period, invoice, credit, purchase, totals, warnings };
 }

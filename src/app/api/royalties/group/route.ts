@@ -13,7 +13,7 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const from = searchParams.get('from');
     const to = searchParams.get('to');
-    if (!isDate(from) || !isDate(to) || from > to) return NextResponse.json({ error: 'Rango de fechas no válido' }, { status: 400 });
+    if (!isDate(from) || !isDate(to) || from > to) return NextResponse.json({ error: 'Invalid date range' }, { status: 400 });
     return NextResponse.json(await groupRoyaltiesReport(from, to, searchParams.get('force') === '1'));
   } catch (error: any) {
     console.error('Error in royalties group:', error);

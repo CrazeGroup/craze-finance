@@ -13,7 +13,7 @@ export async function GET(req: Request) {
     const company = searchParams.get('company') || '';
     const doc = searchParams.get('doc') || '';
     const kind = searchParams.get('kind') as typeof KINDS[number];
-    if (!company || !doc || !KINDS.includes(kind)) return NextResponse.json({ error: 'Parámetros no válidos' }, { status: 400 });
+    if (!company || !doc || !KINDS.includes(kind)) return NextResponse.json({ error: 'Invalid parameters' }, { status: 400 });
     return NextResponse.json({ lines: await documentLines(company, doc, kind) });
   } catch (error: any) {
     console.error('Error in BWA document lines:', error);

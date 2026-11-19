@@ -13,12 +13,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (body.number !== undefined) data.number = parseInt(body.number, 10) || 0;
     if (body.description !== undefined) {
       data.description = String(body.description).trim();
-      if (!data.description) return NextResponse.json({ error: 'La descripción no puede quedar vacía.' }, { status: 400 });
+      if (!data.description) return NextResponse.json({ error: 'The description cannot be empty.' }, { status: 400 });
     }
     if (body.assignee !== undefined) data.assignee = body.assignee || null;
     if (body.notes !== undefined) data.notes = String(body.notes).trim() || null;
     const task = await prisma.closingTask.update({ where: { id }, data, include: { cells: true } });
-    await logAction('Cierre mensual: tarea modificada', `${task.companyId} ${task.year} · ${task.number}. ${task.description}`, task.companyId);
+    await logAction('Monthly closing: task modified', `${task.companyId} ${task.year} · ${task.number}. ${task.description}`, task.companyId);
     return NextResponse.json(task);
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -28,7 +28,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const task = await prisma.closingTask.delete({ where: { id: Number((await params).id) } });
-    await logAction('Cierre mensual: tarea eliminada', `${task.companyId} ${task.year} · ${task.number}. ${task.description}`, task.companyId);
+    await logAction('Monthly closing: task deleted', `${task.companyId} ${task.year} · ${task.number}. ${task.description}`, task.companyId);
     return NextResponse.json({ ok: true });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import { tabCompany } from '@/contexts/CompanyContext';
+import { useT } from '@/contexts/LanguageContext';
 import { syncFromBc } from '@/lib/syncClient';
 import { RefreshCcw, CheckCircle, ChevronDown, ChevronRight, FileText, CheckCircle2, XCircle, Clock } from 'lucide-react';
 import DocPdfLink, { purchasePdfKind } from '@/components/DocPdfLink';
@@ -9,6 +10,7 @@ import DocPdfLink, { purchasePdfKind } from '@/components/DocPdfLink';
 // Empresa activa (cookie que escribe CompanyContext)
 
 export default function PagosPage() {
+  const { t, locale } = useT();
   const [rawInvoices, setRawInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -148,9 +150,9 @@ export default function PagosPage() {
       <header className="flex flex-wrap justify-between items-end mb-8 gap-4">
         <div>
           <h1 className="text-4xl font-extrabold text-black tracking-tight">
-            Pagos a Proveedores
+            {t('Vendor Payments')}
           </h1>
-          <p className="text-gray-700 font-semibold mt-2">Agrupación por proveedor y estado de aprobación de facturas.</p>
+          <p className="text-gray-700 font-semibold mt-2">{t('Grouped by vendor, with the approval status of the invoices.')}</p>
         </div>
         <div className="flex gap-4">
           <button 
@@ -159,7 +161,7 @@ export default function PagosPage() {
             disabled={loading || syncing}
           >
             <RefreshCcw size={18} className={loading && !syncing ? 'animate-spin' : ''} />
-            Actualizar Local
+            {t('Refresh Local')}
           </button>
           <button 
             onClick={handleSync}
@@ -167,7 +169,7 @@ export default function PagosPage() {
             disabled={loading || syncing}
           >
             <RefreshCcw size={18} className={syncing ? 'animate-spin' : ''} />
-            {syncing ? 'Sincronizando... (espera 1-2 min)' : 'Sincronizar BC'}
+            {syncing ? t('Syncing... (wait 1-2 min)') : t('Sync BC')}
           </button>
         </div>
       </header>
@@ -176,7 +178,7 @@ export default function PagosPage() {
         <div className="flex-1">
           <input 
             type="text" 
-            placeholder="Buscar por proveedor o nº factura..."
+            placeholder={t('Search by vendor or invoice no....')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full bg-white border border-gray-300 text-sm text-gray-900 rounded-lg px-4 py-2 outline-none focus:border-indigo-500 transition-colors placeholder-gray-500"
@@ -186,25 +188,25 @@ export default function PagosPage() {
         <div className="flex flex-wrap gap-6 items-center">
 
           <div className="flex items-center gap-3">
-            <span className="text-sm text-gray-800 font-medium font-medium">Ordenar Proveedores por:</span>
+            <span className="text-sm text-gray-800 font-medium font-medium">{t('Sort Vendors by:')}</span>
             <select 
               className="bg-white border border-gray-300 text-sm text-gray-900 rounded-lg px-3 py-1.5 outline-none"
               value={vendorSortBy}
               onChange={(e) => setVendorSortBy(e.target.value as any)}
             >
-              <option value="amtOverdue">Mayor Importe Vencido</option>
-              <option value="amtOpen">Mayor Importe Total Abierto</option>
+              <option value="amtOverdue">{t('Highest Overdue Amount')}</option>
+              <option value="amtOpen">{t('Highest Total Open Amount')}</option>
             </select>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-sm text-gray-800 font-medium font-medium">Ordenar Facturas por:</span>
+            <span className="text-sm text-gray-800 font-medium font-medium">{t('Sort Invoices by:')}</span>
             <select 
               className="bg-white border border-gray-300 text-sm text-gray-900 rounded-lg px-3 py-1.5 outline-none"
               value={invoiceSortBy}
               onChange={(e) => setInvoiceSortBy(e.target.value as any)}
             >
-              <option value="daysOverdue">Más días vencidos</option>
-              <option value="amount">Mayor importe</option>
+              <option value="daysOverdue">{t('Most days overdue')}</option>
+              <option value="amount">{t('Highest amount')}</option>
             </select>
           </div>
         </div>
@@ -213,7 +215,7 @@ export default function PagosPage() {
       {/* Payment Method Filters */}
       {availablePaymentMethods.length > 0 && (
         <div className="mb-6 flex flex-wrap gap-4 items-center bg-gray-50 p-4 rounded-xl border border-gray-200 backdrop-blur-sm">
-          <span className="text-sm text-gray-800 font-medium font-medium">Filtrar por Forma de Pago:</span>
+          <span className="text-sm text-gray-800 font-medium font-medium">{t('Filter by Payment Method:')}</span>
           <div className="flex flex-wrap gap-2">
             {availablePaymentMethods.map(pm => (
               <button
@@ -239,7 +241,7 @@ export default function PagosPage() {
                 onClick={() => setSelectedPaymentMethods([])}
                 className="px-2 py-1 text-xs text-gray-700 font-semibold font-bold hover:text-red-300 transition-colors underline decoration-red-400/30 underline-offset-2 ml-2"
               >
-                Limpiar Filtro
+                {t('Clear Filter')}
               </button>
             )}
           </div>
@@ -253,7 +255,7 @@ export default function PagosPage() {
       ) : groupedData.length === 0 ? (
         <div className="text-center py-20 bg-gray-50 rounded-2xl border border-gray-200 backdrop-blur-sm shadow-lg">
           <CheckCircle className="mx-auto text-gray-900 font-bold mb-4" size={48} />
-          <p className="text-xl text-gray-800 font-medium">No hay facturas de proveedor abiertas.</p>
+          <p className="text-xl text-gray-800 font-medium">{t('There are no open vendor invoices.')}</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -275,22 +277,22 @@ export default function PagosPage() {
                         <span className="text-gray-700 font-semibold font-normal mr-2">#{group.vendor.bcId}</span>
                         {group.vendor.name}
                       </h3>
-                      <p className="text-xs text-gray-700 font-semibold">{group.vendor.email || 'Sin email configurado'}</p>
+                      <p className="text-xs text-gray-700 font-semibold">{group.vendor.email || t('No email configured')}</p>
                     </div>
                   </div>
                   
                   <div className="flex flex-wrap gap-6 text-sm flex-1 min-w-[350px]">
                     <div className="flex flex-col">
-                      <span className="text-purple-700 font-bold text-xs">Total a Pagar</span>
-                      <span className={`font-medium ${group.amtOpen > 0 ? 'text-gray-900 font-bold' : group.amtOpen < 0 ? 'text-gray-700 font-semibold font-bold' : 'text-gray-900'}`}>€{group.amtOpen.toLocaleString()}</span>
+                      <span className="text-purple-700 font-bold text-xs">{t('Total to Pay')}</span>
+                      <span className={`font-medium ${group.amtOpen > 0 ? 'text-gray-900 font-bold' : group.amtOpen < 0 ? 'text-gray-700 font-semibold font-bold' : 'text-gray-900'}`}>€{group.amtOpen.toLocaleString(locale)}</span>
                     </div>
                     <div className="flex flex-col">
-                      <span className="text-purple-700 font-bold text-xs">Total Vencido</span>
-                      <span className={`font-medium ${group.amtOverdue > 0 ? 'text-gray-900 font-bold' : group.amtOverdue < 0 ? 'text-gray-700 font-semibold font-bold' : 'text-gray-900'}`}>€{group.amtOverdue.toLocaleString()}</span>
+                      <span className="text-purple-700 font-bold text-xs">{t('Total Overdue')}</span>
+                      <span className={`font-medium ${group.amtOverdue > 0 ? 'text-gray-900 font-bold' : group.amtOverdue < 0 ? 'text-gray-700 font-semibold font-bold' : 'text-gray-900'}`}>€{group.amtOverdue.toLocaleString(locale)}</span>
                     </div>
                     <div className="flex flex-col">
-                      <span className="text-purple-700 font-bold text-xs">Documentos</span>
-                      <span className="font-medium text-gray-900">{group.totalCount} ({group.overdueCount} vencidas)</span>
+                      <span className="text-purple-700 font-bold text-xs">{t('Documents')}</span>
+                      <span className="font-medium text-gray-900">{t('{n} ({overdue} overdue)', { n: group.totalCount, overdue: group.overdueCount })}</span>
                     </div>
                   </div>
                 </div>
@@ -301,20 +303,20 @@ export default function PagosPage() {
                       <table className="w-full text-left text-sm text-gray-800 font-medium">
                         <thead className="text-gray-900 font-bold border-b border-gray-200">
                           <tr>
-                            <th className="pb-2 font-medium">Documento</th>
-                            <th className="pb-2 font-medium">Tipo</th>
-                            <th className="pb-2 font-medium">Forma Pago</th>
-                            <th className="pb-2 font-medium">Moneda</th>
-                            <th className="pb-2 font-medium">Imp. Original</th>
-                            <th className="pb-2 font-medium">Imp. Restante</th>
-                            <th className="pb-2 font-medium">Vencimiento</th>
-                            <th className="pb-2 font-medium">Fecha Pago Prevista</th>
-                            <th className="pb-2 font-medium">Aprobación</th>
-                            <th className="pb-2 font-medium">No Pagar</th>
-                            <th className="pb-2 font-medium">Asignados</th>
-                            <th className="pb-2 font-medium">Han Aprobado</th>
-                            <th className="pb-2 font-medium">Faltan</th>
-                            <th className="pb-2 font-medium">Rechazados</th>
+                            <th className="pb-2 font-medium">{t('Document')}</th>
+                            <th className="pb-2 font-medium">{t('Type')}</th>
+                            <th className="pb-2 font-medium">{t('Payment Method')}</th>
+                            <th className="pb-2 font-medium">{t('Currency')}</th>
+                            <th className="pb-2 font-medium">{t('Orig. Amt.')}</th>
+                            <th className="pb-2 font-medium">{t('Rem. Amt.')}</th>
+                            <th className="pb-2 font-medium">{t('Due Date')}</th>
+                            <th className="pb-2 font-medium">{t('Scheduled Payment Date')}</th>
+                            <th className="pb-2 font-medium">{t('Approval')}</th>
+                            <th className="pb-2 font-medium">{t('Do Not Pay')}</th>
+                            <th className="pb-2 font-medium">{t('Assigned')}</th>
+                            <th className="pb-2 font-medium">{t('Have Approved')}</th>
+                            <th className="pb-2 font-medium">{t('Still pending')}</th>
+                            <th className="pb-2 font-medium">{t('Rejected')}</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
@@ -338,22 +340,22 @@ export default function PagosPage() {
                                 </td>
                                 <td className="py-2 text-gray-700 font-semibold">{inv.paymentMethod || '-'}</td>
                                 <td className="py-2 text-gray-600">{inv.currencyCode || '-'}</td>
-                                <td className="py-2 text-gray-900 font-bold">€{(inv.originalAmount || 0).toLocaleString()}</td>
+                                <td className="py-2 text-gray-900 font-bold">€{(inv.originalAmount || 0).toLocaleString(locale)}</td>
                                 <td className="py-2 font-semibold">
-                                  <span className={inv.amount > 0 ? "text-gray-900 font-bold" : inv.amount < 0 ? "text-gray-700 font-semibold font-bold" : "text-gray-900"}>€{inv.amount.toLocaleString()}</span>
+                                  <span className={inv.amount > 0 ? "text-gray-900 font-bold" : inv.amount < 0 ? "text-gray-700 font-semibold font-bold" : "text-gray-900"}>€{inv.amount.toLocaleString(locale)}</span>
                                 </td>
                                 <td className="py-2 text-gray-700 font-semibold">
                                   <div className="flex items-center gap-2">
-                                    {new Date(inv.dueDate).toLocaleDateString()}
-                                    {inv.isOverdue && <span className="text-[10px] uppercase tracking-wider bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded border border-red-500/30">Vencida</span>}
+                                    {new Date(inv.dueDate).toLocaleDateString(locale)}
+                                    {inv.isOverdue && <span className="text-[10px] uppercase tracking-wider bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded border border-red-500/30">{t('Overdue')}</span>}
                                   </div>
                                 </td>
                                 <td className="py-2 text-gray-700 font-semibold">
-                                  {inv.schedulePaymentDate ? new Date(inv.schedulePaymentDate).toLocaleDateString() : <span className="text-slate-600">-</span>}
+                                  {inv.schedulePaymentDate ? new Date(inv.schedulePaymentDate).toLocaleDateString(locale) : <span className="text-slate-600">-</span>}
                                 </td>
                                 <td className="py-2">
                                   {inv.skipApproval ? (
-                                    <span className="flex items-center gap-1 text-slate-500"><CheckCircle2 size={14}/> Omitida</span>
+                                    <span className="flex items-center gap-1 text-slate-500"><CheckCircle2 size={14}/> {t('Skipped')}</span>
                                   ) : inv.percentagePaymentApproval > 0 ? (
                                     <div className="flex flex-col gap-1 w-24">
                                       <div className="flex justify-between items-center text-xs">
@@ -374,8 +376,8 @@ export default function PagosPage() {
                                   </td>
                                   <td className="py-2 text-xs">
                                     {inv.noPayment ? (
-                                      <span className="flex items-center gap-1 text-gray-700 font-semibold font-bold font-medium cursor-help" title={inv.noPaymentReason || 'Retenido'}>
-                                        <XCircle size={14}/> Sí
+                                      <span className="flex items-center gap-1 text-gray-700 font-semibold font-bold font-medium cursor-help" title={inv.noPaymentReason || t('On hold')}>
+                                        <XCircle size={14}/> {t('Yes')}
                                       </span>
                                     ) : (
                                       <span className="text-slate-500">-</span>

@@ -20,23 +20,23 @@ type Section = typeof SECTIONS[number];
 export async function GET(req: Request, { params }: { params: Promise<{ section: string }> }) {
   const { section } = await params;
   try {
-    if (!SECTIONS.includes(section as Section)) return NextResponse.json({ error: 'Bloque no válido' }, { status: 404 });
+    if (!SECTIONS.includes(section as Section)) return NextResponse.json({ error: 'Invalid section' }, { status: 404 });
     const cookieStore = await cookies();
     const company = cookieStore.get('craze_selected_company')?.value || 'CRAZE';
     const { searchParams } = new URL(req.url);
     const month = searchParams.get('month');
     const force = searchParams.get('force') === '1';
-    if (!isValidMonth(month)) return NextResponse.json({ error: 'Mes no válido' }, { status: 400 });
+    if (!isValidMonth(month)) return NextResponse.json({ error: 'Invalid month' }, { status: 400 });
 
     if (section === 'cashflow') {
-      if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
+      if (company === 'ALL') return NextResponse.json({ error: 'Select a specific company.' }, { status: 400 });
       return NextResponse.json(await cashflowReport(company));
     }
 
     // El BWA es de todo el grupo; el resto, de la empresa seleccionada
     const bcCompany = section === 'bwa' || company === 'ALL' ? 'CRAZE' : company;
     if (company === 'ALL' && section !== 'bwa') {
-      return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
+      return NextResponse.json({ error: 'Select a specific company.' }, { status: 400 });
     }
     const ctx = await getBcContext(bcCompany);
 
@@ -48,7 +48,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ section:
       case 'provisions': return NextResponse.json(await provisionsReport(ctx, company, month, force));
       case 'bwa': return NextResponse.json(await bwaReport(ctx, month, force));
     }
-    return NextResponse.json({ error: 'Bloque no válido' }, { status: 404 });
+    return NextResponse.json({ error: 'Invalid section' }, { status: 404 });
   } catch (error: any) {
     console.error(`Error in reporting ${section}:`, error);
     return NextResponse.json({ error: error.message }, { status: 500 });

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useT } from '@/contexts/LanguageContext';
 
 // Columnas de ancho ajustable (arrastrando el borde derecho de la cabecera). Los anchos se guardan por navegador en
 // localStorage; el texto de la cabecera se parte en varias líneas para caber en su columna.
@@ -21,6 +22,7 @@ export function useColumnWidths(storageKey: string, defaults: Record<string, num
 export function ResizeTh({ id, width, onResize, className = '', title, children }: {
   id: string; width: number; onResize: (id: string, w: number) => void; className?: string; title?: string; children?: React.ReactNode;
 }) {
+  const { t } = useT();
   const start = useRef<{ x: number; w: number } | null>(null);
   const onMouseDown = (e: React.MouseEvent) => {
     e.preventDefault(); e.stopPropagation();
@@ -34,7 +36,7 @@ export function ResizeTh({ id, width, onResize, className = '', title, children 
   return (
     <th className={`relative align-bottom ${className}`} title={title} style={{ width }}>
       <span className="block whitespace-normal break-words leading-tight">{children}</span>
-      <span onMouseDown={onMouseDown} onDoubleClick={e => e.stopPropagation()} title="Arrastra para cambiar el ancho"
+      <span onMouseDown={onMouseDown} onDoubleClick={e => e.stopPropagation()} title={t('Drag to change the width')}
         className="absolute top-0 right-0 h-full w-2 cursor-col-resize hover:bg-[#C8186C]/30 select-none" />
     </th>
   );

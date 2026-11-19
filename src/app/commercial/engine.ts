@@ -142,16 +142,16 @@ export type ParamId = typeof PARAMS[number]['id'];
 export function keyFn(ctx: Ctx, param: ParamId): (r: Rec) => string {
   const desc = (code: string) => `${code} ${ctx.dims.rawDesc[code] || ''}`.trim();
   switch (param) {
-    case 'dimension': return r => ctx.dims.dimensions[ctx.groupBy.get(r.group)?.dim || ''] || '(sin dimensión)';
-    case 'customer': return r => ctx.groupBy.get(r.group)?.desc || r.group || '(sin Customer Group)';
-    case 'kam': return r => ctx.dims.kams[r.kam] || r.kam || '(sin KAM)';
-    case 'sell': return r => r.sell || '(sin país)';
-    case 'bu': return r => r.item.bu || '(sin BU)';
-    case 'line': return r => r.item.line || '(sin línea)';
-    case 'license': return r => r.item.license || '(sin licencia)';
-    case 'royalty': return r => r.item.royalty || '(sin Royalty Code)';
-    case 'raw': return r => (r.item.raw ? desc(r.item.raw) : '(sin Raw Article)');
-    case 'root': return r => (r.item.root ? desc(r.item.root) : '(sin Article To Root)');
+    case 'dimension': return r => ctx.dims.dimensions[ctx.groupBy.get(r.group)?.dim || ''] || '(no dimension)';
+    case 'customer': return r => ctx.groupBy.get(r.group)?.desc || r.group || '(no Customer Group)';
+    case 'kam': return r => ctx.dims.kams[r.kam] || r.kam || '(no KAM)';
+    case 'sell': return r => r.sell || '(no country)';
+    case 'bu': return r => r.item.bu || '(no BU)';
+    case 'line': return r => r.item.line || '(no product line)';
+    case 'license': return r => r.item.license || '(no license)';
+    case 'royalty': return r => r.item.royalty || '(no Royalty Code)';
+    case 'raw': return r => (r.item.raw ? desc(r.item.raw) : '(no Raw Article)');
+    case 'root': return r => (r.item.root ? desc(r.item.root) : '(no Article To Root)');
     case 'article': return r => `${r.item.no} ${r.item.desc}`;
   }
 }

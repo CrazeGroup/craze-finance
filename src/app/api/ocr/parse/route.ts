@@ -13,10 +13,10 @@ export const maxDuration = 60;
 export async function POST(req: Request) {
   try {
     const company = (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
-    if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
+    if (company === 'ALL') return NextResponse.json({ error: 'Select a specific company.' }, { status: 400 });
     const form = await req.formData();
     const file = form.get('file');
-    if (!(file instanceof File)) return NextResponse.json({ error: 'Sube un PDF.' }, { status: 400 });
+    if (!(file instanceof File)) return NextResponse.json({ error: 'Upload a PDF.' }, { status: 400 });
     const ctx = await getBcContext(company);
     const text = form.get('text');
     const result = await processPdf(ctx, file.name, new Uint8Array(await file.arrayBuffer()), String(form.get('vendor') || '') || undefined, typeof text === 'string' ? text : undefined);

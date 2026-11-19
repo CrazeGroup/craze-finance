@@ -14,12 +14,12 @@ async function setVatBus(ctx: BcContext, kind: 'invoice' | 'credit', no: string,
     try {
       const row = (await odataGet(ctx, odataUrl(`${ctx.odataCompanyBase}/${name}`, { $filter: `No eq '${q(no)}'` }))).value?.[0];
       const field = row && Object.keys(row).find(k => /^vat_?bus_?posting_?group$/i.test(k));
-      if (!row || !field) { tried.push(`${name}: ${row ? 'sin el campo VAT Bus. Posting Group' : `no encuentra ${no}`}`); continue; }
+      if (!row || !field) { tried.push(`${name}: ${row ? 'VAT Bus. Posting Group field missing' : `${no} not found`}`); continue; }
       if (row[field] !== group) await bcRequest('PATCH', editUrl(ctx, row['@odata.editLink']), ctx.token, { [field]: group });
       return;
     } catch (e: any) { tried.push(`${name}: ${String(e?.message).substring(0, 160)}`); }
   }
-  throw new Error(`no se ha podido poner VAT Bus. Posting Group ${group} en ${no} (${tried.join(' · ') || 'no hay página de cabecera de venta publicada'})`);
+  throw new Error(`Could not set VAT Bus. Posting Group ${group} on ${no} (${tried.join(' · ') || 'no sales header page published'})`);
 }
 
 // Refacturación por precio: por cada factura de venta registrada, sin registrar nada:
@@ -56,8 +56,8 @@ const HEADER_FIELDS = [
 
 async function invoiceOf(ctx: BcContext, no: string) {
   const [h] = await bcFetchAll(odataUrl(`${ctx.apiBase}/salesInvoices`, { $filter: `number eq '${q(no)}'` }), ctx.token);
-  if (!h) throw new Error(`No existe la factura ${no}`);
-  if (/draft/i.test(s(h.status))) throw new Error(`${no} no está registrada`);
+  if (!h) throw new Error(`Invoice ${no} does not exist`);
+  if (/draft/i.test(s(h.status))) throw new Error(`Invoice ${no} is not posted`);
   return h;
 }
 
@@ -73,12 +73,12 @@ export async function planRebill(ctx: BcContext, company: string, no: string, ma
   // Coste en divisa local → divisa de la factura
   const e = ledger.find((x: any) => n(x.amount));
   const fx = s(h.currencyCode) && e ? n(e.amountLCY) / n(e.amount) : 1;
-  if (s(h.currencyCode) && !e) warnings.push(`Factura en ${h.currencyCode} sin tipo de cambio: el coste se usa tal cual (LCY).`);
+  if (s(h.currencyCode) && !e) warnings.push(`Invoice in ${h.currencyCode} without exchange rate: the cost is used as is (LCY).`);
   const lines: RebillLine[] = v2Lines.sort((a: any, b: any) => n(a.sequence) - n(b.sequence)).map((l: any) => {
     const type = s(l.lineType), qty = n(l.quantity), seq = n(l.sequence);
     const isItem = type === 'Item';
     const unitCost = isItem ? (costBySeq.get(seq) ?? 0) / (fx || 1) : 0;
-    if (isItem && qty && !unitCost) warnings.push(`Línea ${seq} (${s(l.lineObjectNumber)}): sin coste unitario en la factura; se deja su precio.`);
+    if (isItem && qty && !unitCost) warnings.push(`Line ${seq} (${s(l.lineObjectNumber)}): no unit cost on the invoice; its price is kept.`);
     const newPrice = isItem && qty && unitCost ? r5(unitCost * (1 + markup)) : null;
     const oldNet = n(l.netAmount ?? l.amountExcludingTax);
     return {
@@ -107,17 +107,17 @@ export async function planRebill(ctx: BcContext, company: string, no: string, ma
     itemNos.length ? bcFetchAll(odataUrl(`${ctx.apiBase}/items`, { $filter: itemNos.map(x => `number eq '${q(x)}'`).join(' or '), $select: 'number,blocked,taxGroupCode' }), ctx.token) : Promise.resolve([]),
     bcFetchAll(odataUrl(`${ctx.apiBase}/taxGroups`, { $select: 'code' }), ctx.token).catch(() => [] as any[]),
   ]);
-  if (s(cust[0]?.blocked) && !/^\s*$|^_x0020_$/.test(s(cust[0]?.blocked))) blockers.push(`cliente ${h.customerNumber} bloqueado (${cust[0].blocked})`);
+  if (s(cust[0]?.blocked) && !/^\s*$|^_x0020_$/.test(s(cust[0]?.blocked))) blockers.push(`customer ${h.customerNumber} blocked (${cust[0].blocked})`);
   for (const no2 of itemNos) {
     const it = items.find((x: any) => s(x.number) === no2);
-    if (!it) blockers.push(`artículo ${no2} no existe`);
-    else if (it.blocked === true) blockers.push(`artículo ${no2} bloqueado`);
+    if (!it) blockers.push(`item ${no2} does not exist`);
+    else if (it.blocked === true) blockers.push(`item ${no2} blocked`);
   }
   const codes = new Set(taxGroups.map((x: any) => s(x.code)));
   for (const t of new Set(v2Lines.map((l: any) => s(l.taxCode)).filter(Boolean))) {
     if (codes.size && !codes.has(t as string)) {
-      if (!codes.has(FALLBACK_VAT_PROD)) blockers.push(`el grupo de IVA ${t} no existe en BC y tampoco ${FALLBACK_VAT_PROD}`);
-      else warnings.push(`IVA ${t} bloqueado o inexistente: abono y factura nueva con ${FALLBACK_VAT_BUS} / ${FALLBACK_VAT_PROD}.`);
+      if (!codes.has(FALLBACK_VAT_PROD)) blockers.push(`VAT group ${t} does not exist in BC and neither does ${FALLBACK_VAT_PROD}`);
+      else warnings.push(`VAT ${t} blocked or non-existent: credit memo and new invoice with ${FALLBACK_VAT_BUS} / ${FALLBACK_VAT_PROD}.`);
     }
   }
   const vatFallback = warnings.some(w => w.includes(FALLBACK_VAT_PROD));
@@ -140,7 +140,7 @@ async function postPruned(ctx: BcContext, url: string, body: Record<string, unkn
       delete b[f];
     }
   }
-  throw new Error('No se ha podido crear el documento');
+  throw new Error('Could not create the document');
 }
 
 // Copia las líneas de la factura original en un documento nuevo (price: precio nuevo por línea, o el original)
@@ -166,7 +166,7 @@ async function copyLines(ctx: BcContext, srcId: string, base: string, linesEntit
       if (!body.taxCode || !/VAT Prod\. Posting Group/i.test(String(e?.message))) throw e;
       delete body.taxCode;
       await bcRequest('POST', `${base}/${linesEntity}`, ctx.token, body);
-      notes.add(`el grupo de IVA ${s(l.taxCode)} de la factura original ya no existe: las líneas llevan el IVA por defecto del artículo, revísalo`);
+      notes.add(`VAT group ${s(l.taxCode)} of the original invoice no longer exists: the lines carry the item's default VAT, please check`);
     }
   }
 }
@@ -202,7 +202,7 @@ export async function setOriginalDates(ctx: BcContext, no: string, done: { credi
   const fix = async (entity: 'salesCreditMemos' | 'salesInvoices', num: string | undefined, dateField: string) => {
     if (!num) return;
     const [d] = await bcFetchAll(odataUrl(`${ctx.apiBase}/${entity}`, { $filter: `number eq '${q(num)}' and status eq 'Draft'`, $select: `id,postingDate,${dateField}` }), ctx.token);
-    if (!d) { out.push(`${num} no encontrado`); return; }
+    if (!d) { out.push(`Draft ${num} not found`); return; }
     if (s(d.postingDate).substring(0, 10) !== posting || s(d[dateField]).substring(0, 10) !== docDate)
       await bcRequest('PATCH', `${ctx.apiBase}/${entity}(${d.id})`, ctx.token, { [dateField]: docDate, postingDate: posting });
     out.push(`${num} → ${posting}`);
@@ -228,17 +228,17 @@ export async function setApplFrom(ctx: BcContext, no: string, creditMemo?: strin
     const pending = [...uniq];
     for (const r of rows.filter((x: any) => s(x.No) && s(x.Type) === 'Item')) {
       const i = pending.findIndex(e => e.item === s(r.No) && Math.abs(e.qty - n(r.Quantity)) < 1e-6);
-      if (i < 0) { out.push(`${creditMemo} ${r.No}: no encuentro el movimiento de la venta original`); continue; }
+      if (i < 0) { out.push(`${creditMemo} ${r.No}: item entry of the original sale not found`); continue; }
       const e = pending.splice(i, 1)[0];
       if (n(r.Appl_from_Item_Entry) === e.ile) continue;
       try {
         await bcRequest('PATCH', editUrl(ctx, r['@odata.editLink']), ctx.token, { Appl_from_Item_Entry: e.ile });
         out.push(`${creditMemo} ${r.No}: Appl.-from Item Entry ${e.ile}`);
-      } catch (err: any) { out.push(`${creditMemo} ${r.No}: no se ha podido poner Appl.-from Item Entry ${e.ile} (${String(err?.message).replace(/^BC PATCH [^:]*: /, '').substring(0, 160)})`); }
+      } catch (err: any) { out.push(`${creditMemo} ${r.No}: could not set Appl.-from Item Entry ${e.ile} (${String(err?.message).replace(/^BC PATCH [^:]*: /, '').substring(0, 160)})`); }
     }
     return out;
   }
-  return [`${creditMemo}: no hay página de líneas de abono publicada`];
+  return [`${creditMemo}: no credit memo lines page published`];
 }
 
 // Unit Cost (LCY) de cada línea del abono y de la factura nueva = el de la factura original (BC pone el coste actual del
@@ -254,7 +254,7 @@ export async function setOriginalCosts(ctx: BcContext, no: string, done: { credi
     for (const name of services) {
       try { rows = (await odataGet(ctx, odataUrl(`${ctx.odataCompanyBase}/${name}`, { $filter: `Document_No eq '${q(num)}'` }))).value || []; svc = name; break; } catch { /* siguiente */ }
     }
-    if (!rows) { out.push(`${num}: no hay página de líneas publicada`); continue; }
+    if (!rows) { out.push(`${num}: no lines page published`); continue; }
     const pending = [...src];
     for (const r of rows.filter((x: any) => s(x.No) && s(x.Type) === 'Item').sort((a: any, b: any) => n(a.Line_No) - n(b.Line_No))) {
       const i = pending.findIndex((o: any) => s(o.no) === s(r.No) && Math.abs(n(o.quantity) - n(r.Quantity)) < 1e-6);
@@ -265,7 +265,7 @@ export async function setOriginalCosts(ctx: BcContext, no: string, done: { credi
       try {
         await bcRequest('PATCH', editUrl(ctx, r['@odata.editLink']), ctx.token, { Unit_Cost_LCY: cost });
         out.push(`${num} ${r.No}: ${n(r.Unit_Cost_LCY)} → ${cost}`);
-      } catch (e: any) { out.push(`${num} ${r.No}: no se ha podido poner ${cost} (${String(e?.message).replace(/^BC PATCH [^:]*: /, '').substring(0, 160)})`); }
+      } catch (e: any) { out.push(`${num} ${r.No}: could not set ${cost} (${String(e?.message).replace(/^BC PATCH [^:]*: /, '').substring(0, 160)})`); }
     }
     void svc;
   }
@@ -274,7 +274,7 @@ export async function setOriginalCosts(ctx: BcContext, no: string, done: { credi
 
 export async function runRebill(ctx: BcContext, company: string, no: string, markup: number) {
   const plan = await planRebill(ctx, company, no, markup);
-  if (plan.blockers.length) throw new Error(`No se crea nada para ${no}: ${plan.blockers.join(' · ')}`);
+  if (plan.blockers.length) throw new Error(`Nothing is created for ${no}: ${plan.blockers.join(' · ')}`);
   const key = `rebill:${company}:${no}`;
   const done: { creditMemo?: string; invoice?: string } = { ...(plan.done || {}) };
   const warnings = [...plan.warnings];
@@ -284,7 +284,7 @@ export async function runRebill(ctx: BcContext, company: string, no: string, mar
   if (!done.creditMemo) {
     const drafts = () => bcFetchAll(odataUrl(`${ctx.apiBase}/salesCreditMemos`, { $filter: `invoiceNumber eq '${q(no)}' and status eq 'Draft'`, $select: 'id,number' }), ctx.token).catch(() => [] as any[]);
     let cm = (await drafts())[0];
-    if (cm) warnings.push(`Ya había un abono sin registrar para ${no}: ${s(cm.number)} (se revisa).`);
+    if (cm) warnings.push(`There was already an unposted credit memo for ${no}: ${s(cm.number)} (it is reviewed).`);
     else {
       try {
         await bcRequest('POST', `${ctx.apiBase}/salesInvoices(${h.id})/Microsoft.NAV.makeCorrectiveCreditMemo`, ctx.token);
@@ -302,7 +302,7 @@ export async function runRebill(ctx: BcContext, company: string, no: string, mar
           await copyLines(ctx, h.id, base, 'salesCreditMemoLines', l => ({ unitPrice: n(l.unitPrice), discountPercent: n(l.discountPercent) }), plan.vatFallback);
         } catch (err) { await bcRequest('DELETE', base, ctx.token).catch(() => {}); throw err; }
         done.creditMemo = s(head.number);
-        warnings.push(`${no} ya está cerrada en BC: el abono ${done.creditMemo} es una copia sin liquidar contra la factura (aplícalo a mano si hace falta).`);
+        warnings.push(`${no} is already closed in BC: credit memo ${done.creditMemo} is a copy not applied against the invoice (apply it manually if needed).`);
       }
     }
     // Abono corrector (nuevo o el que ya había): IVA NAC / OHNE MWST si hace falta y precios de la factura original
@@ -344,9 +344,9 @@ export async function runRebill(ctx: BcContext, company: string, no: string, mar
     done.invoice = s(inv.number);
     await writeSetting(key, done);
   }
-  try { warnings.push(...(await setApplFrom(ctx, no, done.creditMemo)).filter(x => x.includes('no ')) ); } catch (e: any) { warnings.push(`${no}: no se ha podido enlazar el abono con la venta original (${String(e?.message).substring(0, 160)}).`); }
-  try { warnings.push(...(await setOriginalCosts(ctx, no, done)).filter(x => x.includes('no se ha podido') || x.includes('no hay página'))); } catch (e: any) { warnings.push(`${no}: no se ha podido poner el coste unitario de la factura original (${String(e?.message).substring(0, 160)}).`); }
-  try { await setOriginalDates(ctx, no, done); } catch (e: any) { warnings.push(`${no}: no se ha podido poner la fecha de la factura original (${String(e?.message).substring(0, 160)}).`); }
+  try { warnings.push(...(await setApplFrom(ctx, no, done.creditMemo)).filter(x => x.includes('not found') || x.includes('could not') || x.includes('no credit memo lines page'))); } catch (e: any) { warnings.push(`${no}: could not link the credit memo to the original sale (${String(e?.message).substring(0, 160)}).`); }
+  try { warnings.push(...(await setOriginalCosts(ctx, no, done)).filter(x => x.includes('could not') || x.includes('no lines page'))); } catch (e: any) { warnings.push(`${no}: could not set the unit cost of the original invoice (${String(e?.message).substring(0, 160)}).`); }
+  try { await setOriginalDates(ctx, no, done); } catch (e: any) { warnings.push(`${no}: could not set the date of the original invoice (${String(e?.message).substring(0, 160)}).`); }
   warnings.push(...[...notes].map(x => `${no}: ${x}.`));
   notes.clear();
   return { ...plan, done, warnings };

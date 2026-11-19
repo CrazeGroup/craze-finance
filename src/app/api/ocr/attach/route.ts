@@ -10,11 +10,11 @@ export const maxDuration = 60;
 export async function POST(req: Request) {
   try {
     const company = (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
-    if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
+    if (company === 'ALL') return NextResponse.json({ error: 'Select a specific company.' }, { status: 400 });
     const form = await req.formData();
     const id = String(form.get('id') || '');
     const file = form.get('file');
-    if (!/^[0-9a-f-]{36}$/i.test(id) || !(file instanceof File)) return NextResponse.json({ error: 'Faltan la factura o el fichero.' }, { status: 400 });
+    if (!/^[0-9a-f-]{36}$/i.test(id) || !(file instanceof File)) return NextResponse.json({ error: 'The invoice or the file is missing.' }, { status: 400 });
     const ctx = await getBcContext(company);
     await attachFile(ctx, id, { name: file.name, data: new Uint8Array(await file.arrayBuffer()) });
     return NextResponse.json({ ok: true });

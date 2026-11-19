@@ -2,38 +2,41 @@
 
 import { useState, useEffect } from 'react';
 import { User, Shield, Trash2, Plus, Edit2, Save, X } from 'lucide-react';
+import { useT } from '@/contexts/LanguageContext';
 
+// Etiquetas en inglés: se traducen al mostrarlas
 const MODULES = [
-  { id: 'admin', label: 'Administrador (acceso a todo)' },
-  { id: 'dashboard', label: 'Dashboard Principal' },
-  { id: 'riesgos', label: 'Riesgos' },
-  { id: 'recobros', label: 'Recobros' },
-  { id: 'movimientos', label: 'Mov. Abiertos' },
-  { id: 'pagos', label: 'Pagos a Prov.' },
+  { id: 'admin', label: 'Administrator (full access)' },
+  { id: 'dashboard', label: 'Main Dashboard' },
+  { id: 'riesgos', label: 'Risks' },
+  { id: 'recobros', label: 'Collections' },
+  { id: 'movimientos', label: 'Open Entries' },
+  { id: 'pagos', label: 'Payments to Vendors' },
   { id: 'cashflow', label: 'Cashflow' },
-  { id: 'banco', label: 'BANCO (extracto → General Journal)' },
-  { id: 'cierre', label: 'Tracking Cierre Mensual' },
-  { id: 'auditoria', label: 'Auditoría (Registro de Actividad)' },
-  { id: 'inventario', label: 'Inventario (Cierre)' },
+  { id: 'banco', label: 'BANK (statement → General Journal)' },
+  { id: 'cierre', label: 'Month-End Close Tracking' },
+  { id: 'auditoria', label: 'Audit Log (Activity Log)' },
+  { id: 'inventario', label: 'Inventory (Closing)' },
   { id: 'reporting', label: 'Reporting' },
   { id: 'controlling', label: 'Controlling' },
   { id: 'royalties', label: 'Royalties' },
   { id: 'commercial', label: 'Commercial Analysis' },
-  { id: 'amazon', label: 'Amazon (margen por cliente)' },
+  { id: 'amazon', label: 'Amazon (margin per customer)' },
   { id: 'logistic_cost', label: 'Logistic Cost (CRAZE GmbH)' },
   { id: 'customer_margin', label: 'Customer Margin (CRAZE GmbH)' },
   { id: 'intercompany', label: 'Intercompany' },
   { id: 'payment_proposal', label: 'Payment Proposal' },
-  { id: 'notas_compra', label: 'Notas de compra' },
-  { id: 'aduanas', label: 'Aduanas' },
+  { id: 'notas_compra', label: 'Purchase Notes' },
+  { id: 'aduanas', label: 'Customs' },
   { id: 'ocr', label: 'OCR' },
-  { id: 'dforce', label: 'D-FORCE/MF: D-FORCE y MAILFINISH (Craze Entertainment)' },
+  { id: 'dforce', label: 'D-FORCE/MF: D-FORCE and MAILFINISH (Craze Entertainment)' },
   { id: 'magazine_profitability', label: 'Magazine Profitability (Craze Entertainment)' },
-  { id: 'seguros', label: 'Seguros' },
-  { id: 'configuracion', label: 'Configuración y Usuarios' },
+  { id: 'seguros', label: 'Insurance' },
+  { id: 'configuracion', label: 'Settings and Users' },
 ];
 
 export default function UsersPage() {
+  const { t, tx, locale } = useT();
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
@@ -99,7 +102,7 @@ export default function UsersPage() {
   };
 
   const handleSave = async () => {
-    if (!formData.username) return alert('El usuario es obligatorio');
+    if (!formData.username) return alert(t('The username is required'));
 
     try {
       const url = editingUserId ? `/api/users/${editingUserId}` : '/api/users';
@@ -127,16 +130,16 @@ export default function UsersPage() {
         fetchUsers();
       } else {
         const errorData = await res.json();
-        alert(errorData.error || 'Error al guardar el usuario');
+        alert(errorData.error ? tx(errorData.error) : t('Error saving the user'));
       }
     } catch (e) {
-      alert('Error de conexión');
+      alert(t('Connection error'));
     }
   };
 
   const handleDelete = async (id: number) => {
-    if (id === 1) return alert('No se puede eliminar al administrador principal');
-    if (!confirm('¿Estás seguro de eliminar este usuario?')) return;
+    if (id === 1) return alert(t('The main administrator cannot be deleted'));
+    if (!confirm(t('Are you sure you want to delete this user?'))) return;
 
     try {
       const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
@@ -144,10 +147,10 @@ export default function UsersPage() {
         fetchUsers();
       } else {
         const errorData = await res.json();
-        alert(errorData.error || 'Error al eliminar');
+        alert(errorData.error ? tx(errorData.error) : t('Error deleting'));
       }
     } catch (e) {
-      alert('Error de conexión');
+      alert(t('Connection error'));
     }
   };
 
@@ -157,15 +160,15 @@ export default function UsersPage() {
         <div>
           <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <User className="text-black" /> 
-            Gestión de Usuarios
+            {t('User Management')}
           </h2>
-          <p className="text-gray-500 mt-1">Crea usuarios y asigna permisos de acceso a los módulos</p>
+          <p className="text-gray-500 mt-1">{t('Create users and assign access permissions to the modules')}</p>
         </div>
         <button 
           onClick={() => handleOpenModal()}
           className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-gray-900 rounded-lg shadow-lg font-medium transition-colors"
         >
-          <Plus size={16} /> Añadir Usuario
+          <Plus size={16} /> {t('Add User')}
         </button>
       </div>
 
@@ -173,10 +176,10 @@ export default function UsersPage() {
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="border-b border-gray-200 text-sm font-medium text-gray-500 bg-gray-50">
-              <th className="p-4">Usuario</th>
-              <th className="p-4">Permisos</th>
-              <th className="p-4">Fecha Creación</th>
-              <th className="p-4 text-center">Acciones</th>
+              <th className="p-4">{t('Username')}</th>
+              <th className="p-4">{t('Permissions')}</th>
+              <th className="p-4">{t('Creation Date')}</th>
+              <th className="p-4 text-center">{t('Actions')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
@@ -197,13 +200,13 @@ export default function UsersPage() {
                   <td className="p-4 text-gray-900 font-medium flex items-center gap-2">
                     {user.id === 1 && <span title="Super Admin"><Shield size={14} className="text-orange-400" /></span>}
                     {user.username}
-                    {!user.hasPassword && <span className="px-2 py-0.5 text-xs font-normal rounded bg-sky-100 text-sky-700 border border-sky-200" title="Sin contraseña: entra con Microsoft">Microsoft</span>}
+                    {!user.hasPassword && <span className="px-2 py-0.5 text-xs font-normal rounded bg-sky-100 text-sky-700 border border-sky-200" title={t('No password: signs in with Microsoft')}>Microsoft</span>}
                   </td>
                   <td className="p-4">
                     <div className="flex flex-wrap gap-1">
                       {perms.includes('configuracion') || perms.includes('admin') ? (
                         <span className="px-2 py-0.5 text-xs rounded bg-orange-500/20 text-orange-400 border border-orange-500/30">
-                          Acceso Total
+                          {t('Full Access')}
                         </span>
                       ) : (
                         perms.map((p: string) => (
@@ -212,18 +215,18 @@ export default function UsersPage() {
                           </span>
                         ))
                       )}
-                      {perms.length === 0 && <span className="text-slate-500 text-xs italic">Ninguno</span>}
+                      {perms.length === 0 && <span className="text-slate-500 text-xs italic">{t('None')}</span>}
                     </div>
                   </td>
                   <td className="p-4 text-gray-500 text-sm">
-                    {new Date(user.createdAt).toLocaleDateString()}
+                    {new Date(user.createdAt).toLocaleDateString(locale)}
                   </td>
                   <td className="p-4">
                     <div className="flex justify-center gap-2">
                       <button 
                         onClick={() => handleOpenModal(user)}
                         className="p-1.5 text-black hover:bg-blue-400/20 rounded-md transition-colors"
-                        title="Editar"
+                        title={t('Edit')}
                       >
                         <Edit2 size={16} />
                       </button>
@@ -231,7 +234,7 @@ export default function UsersPage() {
                         onClick={() => handleDelete(user.id)}
                         disabled={user.id === 1}
                         className="p-1.5 text-gray-500 font-bold hover:bg-red-400/20 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                        title={user.id === 1 ? "Admin protegido" : "Eliminar"}
+                        title={user.id === 1 ? t('Protected admin') : t('Delete')}
                       >
                         <Trash2 size={16} />
                       </button>
@@ -250,7 +253,7 @@ export default function UsersPage() {
             <div className="flex justify-between items-center p-6 border-b border-gray-200 bg-gray-50">
               <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
                 {editingUserId ? <Edit2 className="text-black" /> : <Plus className="text-black" />}
-                {editingUserId ? 'Editar Usuario' : 'Nuevo Usuario'}
+                {editingUserId ? t('Edit User') : t('New User')}
               </h3>
               <button onClick={() => setIsModalOpen(false)} className="text-gray-500 hover:text-gray-900 transition-colors">
                 <X size={20} />
@@ -259,7 +262,7 @@ export default function UsersPage() {
             
             <div className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">Usuario <span className="text-slate-500 text-xs font-normal">(correo de Microsoft para entrar con Microsoft)</span></label>
+                <label className="block text-sm font-medium text-gray-600 mb-1">{t('Username')} <span className="text-slate-500 text-xs font-normal">{t('(Microsoft e-mail to sign in with Microsoft)')}</span></label>
                 <input 
                   type="text" 
                   value={formData.username}
@@ -270,7 +273,7 @@ export default function UsersPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-600 mb-1">
-                  Contraseña <span className="text-slate-500 text-xs font-normal">{editingUserId ? '(Dejar en blanco para no cambiar)' : '(Opcional: sin contraseña solo entra con Microsoft)'}</span>
+                  {t('Password')} <span className="text-slate-500 text-xs font-normal">{editingUserId ? t('(Leave blank to keep it unchanged)') : t('(Optional: without a password the user can only sign in with Microsoft)')}</span>
                 </label>
                 <input 
                   type="password" 
@@ -286,13 +289,13 @@ export default function UsersPage() {
                       checked={formData.ssoOnly}
                       onChange={e => setFormData({...formData, ssoOnly: e.target.checked, password: ''})}
                     />
-                    Quitar la contraseña (solo entrar con Microsoft)
+                    {t('Remove the password (sign in with Microsoft only)')}
                   </label>
                 )}
               </div>
 
               <div className="pt-2">
-                <label className="block text-sm font-medium text-gray-600 mb-2">Permisos (Módulos Accesibles)</label>
+                <label className="block text-sm font-medium text-gray-600 mb-2">{t('Permissions (Accessible Modules)')}</label>
                 <div className="bg-black/20 rounded-xl border border-gray-100 p-4 space-y-3 max-h-48 overflow-y-auto">
                   {MODULES.map(mod => (
                     <label key={mod.id} className="flex items-center gap-3 cursor-pointer group">
@@ -307,7 +310,7 @@ export default function UsersPage() {
                           {formData.permissions.includes(mod.id) && <Shield size={12} className="text-gray-900" />}
                         </div>
                       </div>
-                      <span className="text-sm text-gray-600 group-hover:text-gray-900 transition-colors">{mod.label}</span>
+                      <span className="text-sm text-gray-600 group-hover:text-gray-900 transition-colors">{t(mod.label)}</span>
                     </label>
                   ))}
                 </div>
@@ -318,14 +321,14 @@ export default function UsersPage() {
                   onClick={() => setIsModalOpen(false)}
                   className="px-4 py-2 rounded-lg font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-50 transition-colors"
                 >
-                  Cancelar
+                  {t('Cancel')}
                 </button>
                 <button 
                   onClick={handleSave}
                   className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-gray-900 rounded-lg font-medium shadow-lg transition-colors"
                 >
                   <Save size={16} />
-                  {editingUserId ? 'Actualizar' : 'Crear Usuario'}
+                  {editingUserId ? t('Update') : t('Create User')}
                 </button>
               </div>
             </div>

@@ -12,10 +12,10 @@ export async function POST(req: Request) {
     const lines = (Array.isArray(b.lines) ? b.lines : [])
       .map((l: any) => ({ key: String(l.key || ''), doc: String(l.doc || ''), description: String(l.description || '') }))
       .filter((l: any) => /^(sales|purch)\w+\|.+\|\d+$/.test(l.key));
-    if (!lines.length) return NextResponse.json({ error: 'Falta la línea' }, { status: 400 });
+    if (!lines.length) return NextResponse.json({ error: 'The line is missing' }, { status: 400 });
     const session: any = await getSession();
     const excluded = await setExcluded(lines, !!b.excluded, session?.username || '');
-    await logAction(b.excluded ? 'Magazine Profitability: línea excluida del margen' : 'Magazine Profitability: línea incluida de nuevo en el margen',
+    await logAction(b.excluded ? 'Magazine Profitability: line excluded from the margin' : 'Magazine Profitability: line included in the margin again',
       lines.map((l: any) => `${l.doc} ${l.description}`).join('; ').substring(0, 900), 'Craze Entertainment');
     return NextResponse.json({ ok: true, excluded });
   } catch (error: any) {

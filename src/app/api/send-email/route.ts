@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     const invoicePdfs = attachInvoices ? await salesDocumentPdfs(invoiceIds.map(Number)) : { files: [], missing: [] as string[] };
 
     if (!invoiceIds || !Array.isArray(invoiceIds) || invoiceIds.length === 0 || !to || !subject || !message || !customerId || !pdfBase64) {
-      return NextResponse.json({ error: 'Faltan campos requeridos' }, { status: 400 });
+      return NextResponse.json({ error: 'Required fields are missing' }, { status: 400 });
     }
 
     // Get PDF buffer from base64 string
@@ -61,7 +61,7 @@ export async function POST(request: Request) {
         ],
       });
     } catch (e: any) {
-      throw new Error(`No se pudo enviar desde ${SHARED_MAILBOX}: ${e.message}`);
+      throw new Error(`Could not send from ${SHARED_MAILBOX}: ${e.message}`);
     }
     // Save to database for all selected invoices
     for (const invoiceId of invoiceIds) {
@@ -83,8 +83,8 @@ export async function POST(request: Request) {
       // Quién envió (usuario de la sesión), aunque todos los correos salgan desde la misma cuenta
       const docs = await prisma.invoice.findMany({ where: { id: { in: invoiceIds.map(Number) } }, select: { bcId: true } });
       await logAction(
-        level ? `Recordatorio ${level} a cliente` : 'Correo a cliente (Recordatorio)',
-        `Cliente: ${customer.name} | Desde ${fromUsed} a ${to}${cc ? ` (CC ${cc})` : ''} | ${docs.map(d => d.bcId).join(', ')}${insurance ? ' · aviso aseguradora' : ''}${invoicePdfs.files.length ? ` · ${invoicePdfs.files.length} PDF de factura` : ''}`,
+        level ? `Customer reminder no. ${level}` : 'E-mail to customer (reminder)',
+        `Customer: ${customer.name} | From ${fromUsed} to ${to}${cc ? ` (CC ${cc})` : ''} | ${docs.map(d => d.bcId).join(', ')}${insurance ? ' · credit insurer warning' : ''}${invoicePdfs.files.length ? ` · invoice PDFs: ${invoicePdfs.files.length}` : ''}`,
         customer.companyId,
       );
     }

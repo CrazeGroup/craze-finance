@@ -12,7 +12,7 @@ const q = (s: string) => s.replace(/'/g, "''");
 
 async function ctxFor() {
   const company = (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
-  if (company === 'ALL') throw new Error('Selecciona una empresa concreta.');
+  if (company === 'ALL') throw new Error('Select a specific company.');
   return getBcContext(company);
 }
 
@@ -35,7 +35,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const { template = 'ITEM', batch = 'DEFAULT', lines: input } = await req.json();
-    if (!Array.isArray(input) || !input.length) return NextResponse.json({ error: 'Sin líneas.' }, { status: 400 });
+    if (!Array.isArray(input) || !input.length) return NextResponse.json({ error: 'No lines.' }, { status: 400 });
     const ctx = await ctxFor();
     const existing = await lines(ctx, template, batch);
     let lineNo = existing.reduce((m: number, l: any) => Math.max(m, Number(l.Line_No) || 0), 0);

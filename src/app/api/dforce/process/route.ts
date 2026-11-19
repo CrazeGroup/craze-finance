@@ -15,10 +15,10 @@ export async function POST(req: Request) {
     const pdfFile = form.get('pdf');
     const excelFile = form.get('excel');
     if (!(pdfFile instanceof File) || !(excelFile instanceof File)) {
-      return NextResponse.json({ error: 'Sube el PDF y el Excel de D-FORCE.' }, { status: 400 });
+      return NextResponse.json({ error: 'Upload the D-FORCE PDF and Excel file.' }, { status: 400 });
     }
     const pdf = await parsePdf(new Uint8Array(await pdfFile.arrayBuffer()));
-    if (!pdf.lines.length) return NextResponse.json({ error: 'No se han encontrado líneas de venta en el PDF (anexos LI, LA, LDI, LDA, RI, RA).' }, { status: 422 });
+    if (!pdf.lines.length) return NextResponse.json({ error: 'No sales lines were found in the PDF (appendices LI, LA, LDI, LDA, RI, RA).' }, { status: 422 });
     const excel = parseExcel(await excelFile.arrayBuffer());
     const docs = buildDocuments(pdf, excel);
 
@@ -36,14 +36,14 @@ export async function POST(req: Request) {
         if (it) { l.description = it.displayName || ''; l.unitCost = typeof it.unitCost === 'number' ? it.unitCost : null; }
       }
       const missing = items.filter(n => !byNo.has(n));
-      if (missing.length) docs.warnings.push(`Artículos que no existen en BC (créalos antes de importar): ${missing.join(', ')}.`);
+      if (missing.length) docs.warnings.push(`Items that do not exist in BC (create them before importing): ${missing.join(', ')}.`);
     } catch (e: any) {
       console.error('D-FORCE items:', e);
       const reason = String(e.message || e).split('\n').map((x: string) => x.trim()).filter(Boolean).pop();
-      docs.warnings.push(`No se han podido leer los artículos de BC (descripción y coste unitario quedan vacíos; BC los rellena al importar): ${reason}`);
+      docs.warnings.push(`Could not read the items from BC (description and unit cost stay empty; BC fills them in on import): ${reason}`);
     }
 
-    await logAction('D-FORCE: Gutschrift procesada', `${docs.creditNo} · ${pdfFile.name} + ${excelFile.name}`, DFORCE_COMPANY);
+    await logAction('D-FORCE: Gutschrift processed', `${docs.creditNo} · ${pdfFile.name} + ${excelFile.name}`, DFORCE_COMPANY);
     return NextResponse.json({ ...docs, customerNo: CUSTOMER_NO, vendorNo: VENDOR_NO, location: LOCATION, files: { pdf: pdfFile.name, excel: excelFile.name } });
   } catch (error: any) {
     console.error('Error in D-FORCE:', error);

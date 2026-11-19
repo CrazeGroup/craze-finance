@@ -129,12 +129,12 @@ export async function matchVendors(ctx: BcContext, text: string, ids: string[], 
     const reasons: string[] = [];
     // Identificadores ya asociados a este proveedor al crear facturas desde el OCR
     const learnt = ids.filter(id => hints[id] === v.number);
-    if (learnt.length) { score += 5; reasons.push(`reconocido por ${learnt.map(i => i.split(':')[1]).join(', ')} (facturas anteriores)`); }
+    if (learnt.length) { score += 5; reasons.push(`recognised by ${learnt.map(i => i.split(':')[1]).join(', ')} (previous invoices)`); }
     if (v.vat.length >= 8 && ids.includes(`vat:${v.vat}`)) { score += 4; reasons.push(`VAT ${v.vat}`); }
     const doms = [v.email.split('@')[1], v.website.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0]]
       .filter(Boolean).map(d => d!.toLowerCase().split('.').slice(-2).join('.'));
     const dom = doms.find(d => !GENERIC_DOMAINS.test(d) && ids.includes(`dom:${d}`));
-    if (dom) { score += 3; reasons.push(`dominio ${dom}`); }
+    if (dom) { score += 3; reasons.push(`domain ${dom}`); }
     const nw = nameWords(v.name);
     const hit = nw.filter(w => words.has(w));
     if (hit.length && hit.some(w => w.length >= 4)) {
@@ -142,16 +142,16 @@ export async function matchVendors(ctx: BcContext, text: string, ids: string[], 
       score += 3 * hit.length / nw.length + 0.5 * (hit.length - 1);
       const full = norm(v.name.replace(/\([^)]*\)/g, ' ')).replace(/[^a-z0-9]+/g, ' ').trim();
       if (full.split(' ').length > 1 && flat.includes(full)) score += 1;
-      reasons.push(`nombre (${hit.length}/${nw.length} palabras)`);
+      reasons.push(`name (${hit.length}/${nw.length} words)`);
     }
     if (score < 1) continue;
     // Craze como proveedor (intercompañía) solo si lo identifican VAT/IBAN/dominio: el PDF siempre lleva nuestro nombre
     if (/^craze/i.test(v.name) && !learnt.length && !dom && !reasons.some(r => r.startsWith('VAT'))) continue;
     const cur = vendorCurrency(v) || lcy;
     if (currency) {
-      if (cur === currency) { score += 0.5; } else { score -= 1; reasons.push(`divisa ${cur} ≠ ${currency} del PDF`); }
+      if (cur === currency) { score += 0.5; } else { score -= 1; reasons.push(`currency ${cur} ≠ PDF currency ${currency}`); }
     }
-    if (v.blocked) { score -= 2; reasons.push('bloqueado'); }
+    if (v.blocked) { score -= 2; reasons.push('blocked'); }
     score += Math.min(0.6, Math.log10(1 + v.invoices) / 4);
     out.push({ number: v.number, name: v.name, currency: cur, score: Math.round(score * 100) / 100, reasons, invoices: v.invoices });
   }
@@ -169,7 +169,7 @@ export async function learnVendor(company: string, ids: string[], vendor: string
 
 export async function vendorByNumber(ctx: BcContext, number: string): Promise<VendorCandidate | null> {
   const v = (await vendorIndex(ctx)).vendors.find(x => x.number.toLowerCase() === number.trim().toLowerCase());
-  return v ? { number: v.number, name: v.name, currency: vendorCurrency(v) || companyCurrency(ctx.companyName), score: 0, reasons: ['elegido a mano'], invoices: v.invoices } : null;
+  return v ? { number: v.number, name: v.name, currency: vendorCurrency(v) || companyCurrency(ctx.companyName), score: 0, reasons: ['chosen manually'], invoices: v.invoices } : null;
 }
 
 // Búsqueda por nº o nombre para elegir el proveedor a mano
@@ -525,7 +525,7 @@ export function propose(text: string, history: HistoryInvoice[], examples: Examp
   const postingDate = (model.postingDate !== model.invoiceDate && dateAt(model.postingDate)) || invoiceDate;
 
   const { net, vat, total, taxable, free } = totals(t, model);
-  if (net == null) warnings.push('No se han encontrado los totales en el PDF: escribe los importes.');
+  if (net == null) warnings.push('No totals found in the PDF: enter the amounts.');
   // Líneas del modelo: la base con IVA se reparte entre sus líneas con IVA y la parte exenta entre las exentas, en la
   // misma proporción que en el modelo; si el modelo no las distingue, el neto entre todas
   const lines = model.lines.map(l => ({ ...l }));
@@ -547,10 +547,10 @@ export function propose(text: string, history: HistoryInvoice[], examples: Examp
     if (withVat.length && noVat.length && taxable != null && free != null) {
       share(withVat, taxable);
       share(noVat, free);
-      if (free === 0) warnings.push('El PDF no tiene parte exenta y el modelo sí: revisa la línea sin IVA.');
+      if (free === 0) warnings.push('The PDF has no VAT-exempt part but the model does: check the line without VAT.');
     } else {
       share(idx, net);
-      if (free && !noVat.length && vat) warnings.push(`El PDF tiene una parte sin IVA (${free}) que el modelo no tiene: revisa las líneas.`);
+      if (free && !noVat.length && vat) warnings.push(`The PDF has a part without VAT (${free}) that the model does not have: check the lines.`);
     }
   }
 
@@ -576,15 +576,15 @@ export function propose(text: string, history: HistoryInvoice[], examples: Examp
   const fix = (v: string) => { if (!oldText) return v; const r = adapt(v, oldText, t); refsOk &&= r.ok; return r.value; };
   for (const l of lines) { l.description = fix(l.description); l.description2 = fix(l.description2); }
   const postingDescription = /^(Invoice|Rechnung|Factura|Facture|Credit Memo|Gutschrift)\s+\S+$/i.test(model.postingDescription) ? '' : fix(model.postingDescription);
-  if (!refsOk) warnings.push('Alguna referencia de Description 2 / Posting Description no está en el PDF: revísalas.');
-  if (!oldText && model.lines.some(l => /\d{3,}/.test(l.description2)) ) warnings.push('La factura modelo no tiene PDF adjunto: revisa las referencias de Description 2 / Posting Description.');
+  if (!refsOk) warnings.push('Some Description 2 / Posting Description references are not in the PDF: check them.');
+  if (!oldText && model.lines.some(l => /\d{3,}/.test(l.description2)) ) warnings.push('The model invoice has no PDF attached: check the Description 2 / Posting Description references.');
 
   const creditNote = /\b(credit note|gutschrift|nota de cr[eé]dito|avoir|abono)\b/i.test(t.slice(0, 1500)) && !/\b(invoice|rechnung|factura|facture)\b/i.test(t.slice(0, 300));
   return {
     documentType: creditNote ? 'credit_note' : 'invoice',
     invoiceNo: invoiceNo || generic.invoiceNo || (invoiceDate ? numberFromDate(model, invoiceDate) : ''), invoiceDate, postingDate, dueDate, postingDescription,
     currency: model.currency, net, vat, total, lines, itemFromPdf,
-    comment: `Modelo: factura ${model.number} (${model.postingDate})${best && oldText ? `, la más parecida al PDF (${Math.round(best.s * 100)} %)` : ', la más reciente'}.${warnings.length ? ' ' + warnings.join(' ') : ''}`,
+    comment: [`Model: invoice ${model.number} (${model.postingDate})${best && oldText ? `, the closest to the PDF (${Math.round(best.s * 100)} %)` : ', the most recent'}.`, ...warnings].join(' · '),
   };
 }
 
@@ -672,14 +672,14 @@ function amazonRules(s: OcrSuggestion, text: string, vendorName: string, warning
     s.documentType = 'invoice';
     s.lines = [{ lineType: 'Item', ...AMZ_RETURN, description2: '', quantity: 1, unitCost: ret.total }];
     s.net = ret.total; s.vat = 0; s.total = ret.total;
-    s.comment = s.comment.replace(/\s*No se han encontrado los totales en el PDF: escribe los importes\./, '');
-    s.comment += ` Amazon: devolución de distribuidor${ret.rma ? ` (RMA ${ret.rma})` : ''} → AA-00132 por el total, como CRZ-PI26-06221.`;
+    s.comment = s.comment.replace(/ · No totals found in the PDF: enter the amounts\./, '');
+    s.comment += ` · Amazon: distributor return${ret.rma ? ` (RMA ${ret.rma})` : ''} → AA-00132 for the total, like CRZ-PI26-06221.`;
     return true;
   }
   const items = s.lines.filter(l => l.lineType !== 'Comment');
   if (items.length === 1 && /rebate|flexible/i.test(text) && items[0].number !== AMZ_FLEXIBLE.number) {
     Object.assign(items[0], { lineType: 'Item', ...AMZ_FLEXIBLE });
-    s.comment += ' Amazon: el PDF habla de Rebate/Flexible → AA-00069.';
+    s.comment += ' · Amazon: the PDF mentions Rebate/Flexible → AA-00069.';
   }
   if (items.some(l => l.number === 'AA-00015')) {
     for (const l of items) if (l.number === 'AA-00015') l.taxCode = '19% SERVICES';
@@ -706,19 +706,19 @@ async function amazonSiblings(ctx: BcContext, exclude: string) {
 export async function processPdf(ctx: BcContext, file: string, data: Uint8Array, vendorNo?: string, ocrText?: string): Promise<OcrResult> {
   const warnings: string[] = [];
   let text = '';
-  try { text = await pdfText(data); } catch (e: any) { warnings.push(`No se ha podido leer el texto del PDF (${e.message}).`); }
+  try { text = await pdfText(data); } catch (e: any) { warnings.push(`Could not read the text of the PDF (${e.message}).`); }
   const scanned = text.replace(/\s/g, '').length < 40;
   const ocr = scanned && !!ocrText && ocrText.replace(/\s/g, '').length >= 20;
-  if (ocr) { text = ocrText!.replace(/[ \t]+/g, ' ').trim(); warnings.push('PDF sin texto: leído de la imagen con OCR (Tesseract). Revisa fecha, nº de factura e importes.'); }
-  else if (scanned) { text = ''; warnings.push(ocrText == null ? 'PDF escaneado (sin texto): no se puede leer. Elige el proveedor y escribe los datos a mano.' : 'PDF escaneado: el OCR (Tesseract) no ha sacado texto legible. Elige el proveedor y escribe los datos a mano.'); }
+  if (ocr) { text = ocrText!.replace(/[ \t]+/g, ' ').trim(); warnings.push('PDF without text: read from the image with OCR (Tesseract). Check the date, invoice no. and amounts.'); }
+  else if (scanned) { text = ''; warnings.push(ocrText == null ? 'Scanned PDF (no text): it cannot be read. Choose the vendor and enter the data manually.' : 'Scanned PDF: OCR (Tesseract) did not extract readable text. Choose the vendor and enter the data manually.'); }
   const ids = identifiers(text);
   const currency = detectCurrency(text);
   const candidates = text ? await matchVendors(ctx, text, ids, currency) : [];
   const vendor = vendorNo ? await vendorByNumber(ctx, vendorNo) : candidates[0] || null;
-  if (vendorNo && !vendor) warnings.push(`El proveedor ${vendorNo} no existe en ${ctx.companyName}.`);
-  if (!vendor && text) warnings.push('No se ha reconocido el proveedor: elígelo a mano.');
+  if (vendorNo && !vendor) warnings.push(`Vendor ${vendorNo} does not exist in ${ctx.companyName}.`);
+  if (!vendor && text) warnings.push('The vendor was not recognised: choose it manually.');
   else if (vendor && !vendorNo && candidates[1] && candidates[1].score >= candidates[0].score - 0.5) {
-    warnings.push(`Proveedor dudoso: ${candidates[1].number} ${candidates[1].name} también encaja. Revísalo.`);
+    warnings.push(`Uncertain vendor: ${candidates[1].number} ${candidates[1].name} also fits. Check it.`);
   }
 
   let { history, examples } = vendor ? await vendorHistory(ctx, vendor.number) : { history: [] as HistoryInvoice[], examples: [] as { number: string; text: string }[] };
@@ -733,9 +733,9 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
       history = [...history, ...h.history]; examples = [...examples, ...h.examples]; borrowed.push(`${sib.number} ${sib.name}`);
       if (borrowed.length >= 2) break;
     }
-    if (borrowed.length) warnings.push(`${vendor.number} no tiene facturas registradas: propuesta con las de ${borrowed.join(' y ')}, que son iguales. Revisa artículo e IVA.`);
+    if (borrowed.length) warnings.push(`${vendor.number} has no posted invoices: proposal based on those of ${borrowed.join(' and ')}, which are identical. Check item and VAT.`);
   }
-  if (vendor && !history.length) warnings.push('Este proveedor no tiene facturas registradas: completa artículo/cuenta y grupo de IVA a mano.');
+  if (vendor && !history.length) warnings.push('This vendor has no posted invoices: fill in item/account and VAT group manually.');
 
   // Proveedor con facturas en varias divisas (Uber: AED, CHF, EUR): la del PDF
   const known = !!currency && history.some(h => h.currency === currency);
@@ -753,7 +753,7 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
       line.description = item.displayName || line.description;
     } else {
       suggestion = propose(text, history, examples, { ...opts, noAgreements: true });
-      if (suggestion) suggestion.comment += ` El PDF trae ${pdfItem.number} donde las facturas de acuerdo traen su artículo (${pdfItem.model}) y no es un artículo de BC: si es un acuerdo nuevo, crea el artículo ${pdfItem.number}.`;
+      if (suggestion) suggestion.comment += ` · The PDF shows ${pdfItem.number} where the agreement invoices show their item (${pdfItem.model}), and it is not a BC item: if it is a new agreement, create item ${pdfItem.number}.`;
     }
   }
   const amazonReturnDoc = !!suggestion && !!vendor && amazonRules(suggestion, text, vendor.name, warnings);
@@ -762,17 +762,17 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
   const rates = vendor ? await vatRates(ctx, vendor.number, suggestion?.vatBusPostingGroup).catch(() => ({} as Record<string, number>)) : {};
   // (devolución de Amazon: el importe es el total, sin IVA)
   if (suggestion && text && !amazonReturnDoc) applyVatRates(suggestion, text, rates);
-  if (suggestion?.documentType === 'credit_note') warnings.push('Parece un abono (credit note): aquí solo se crean facturas; regístralo como Credit Memo en BC.');
+  if (suggestion?.documentType === 'credit_note') warnings.push('This looks like a credit note: only invoices are created here, post it as a Credit Memo in BC.');
   // La divisa del PDF manda aunque el proveedor no tenga facturas en ella (Uber en Macao: MOP; el modelo puede estar en
   // CHF); la local va vacía al crearla. Se avisa si no existe en BC
   if (suggestion && currency && suggestion.currency !== currency) {
     const lcy = companyCurrency(ctx.companyName);
     const found = currency === lcy ? null : await bcGet(ctx, odataUrl(`${ctx.apiBase}/currencies`, { $filter: `code eq '${q(currency)}'`, $select: 'code' })).catch(() => null);
     const exists = currency === lcy || !!found?.value?.length;
-    warnings.push(`Divisa ${currency} (la del PDF): no hay facturas anteriores de este proveedor en ${currency} (el modelo está en ${suggestion.currency || lcy}).${exists ? '' : ` ${currency} no existe en BC: créala en Currencies o cambia la divisa.`}`);
+    warnings.push(`Currency ${currency} (from the PDF): this vendor has no previous invoices in ${currency} (the model is in ${suggestion.currency || lcy}).${exists ? '' : ` ${currency} does not exist in BC: create it in Currencies or change the currency.`}`);
     suggestion.currency = currency;
   } else if (vendor && currency && currency !== vendor.currency && !known) {
-    warnings.push(`La factura está en ${currency} y el proveedor ${vendor.number} en ${vendor.currency}: ¿es otro proveedor (p. ej. la ficha en ${currency})?`);
+    warnings.push(`The invoice is in ${currency} and vendor ${vendor.number} in ${vendor.currency}: is it another vendor (e.g. the card in ${currency})?`);
   }
   const existing = vendor && suggestion?.invoiceNo ? await existingFor(ctx, vendor.number, suggestion.invoiceNo) : [];
   return { file, scanned, ocr, currency, ids, vatRates: rates, candidates, vendor, history, suggestion, existing, warnings };
@@ -827,14 +827,14 @@ export async function createOcrInvoice(ctx: BcContext, input: OcrCreateInput, pd
     try {
       await bcRequest('PATCH', `${ctx.odataCompanyBase}/purchaseDocuments(${id})`, ctx.token, { postingDescription: input.postingDescription.trim().substring(0, 100) });
     } catch (e: any) {
-      warnings.push(`No se ha podido poner la Posting Description (${String(e.message).substring(0, 160)}); escríbela en BC.`);
+      warnings.push(`Could not set the Posting Description (${String(e.message).substring(0, 160)}), enter it in BC.`);
     }
   }
   if (pdf) {
     try {
       await attachFile(ctx, id, pdf);
     } catch (e: any) {
-      warnings.push(`No se ha podido adjuntar el PDF (${String(e.message).substring(0, 160)}); adjúntalo en BC.`);
+      warnings.push(`Could not attach the PDF (${String(e.message).substring(0, 160)}), attach it in BC.`);
     }
   }
   const after = await bcRequest('GET', headUrl, ctx.token).catch(() => null);

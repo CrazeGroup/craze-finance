@@ -96,9 +96,9 @@ export async function parseCustomsPdf(file: string, data: Uint8Array): Promise<C
   const round = (v: number) => Math.round(v * 100) / 100;
   const zoll = round(zollDuties.reduce((s, d) => s + d.amount, 0));
   const eust = round(eustDuties.reduce((s, d) => s + d.amount, 0));
-  if (!duties.length) warnings.push('No se ha encontrado la tabla de Abgaben (importes de Zoll y EUSt).');
-  if (total != null && Math.abs(total - zoll - eust) > 0.01) warnings.push(`Zoll + EUSt (${zoll + eust}) no cuadra con la Gesamtabgabensumme (${total}).`);
-  if (zollDuties.length > 1) warnings.push(`Varios conceptos van a la factura de Zoll: ${zollDuties.map(d => d.type).join(', ')}.`);
+  if (!duties.length) warnings.push('The Abgaben table (Zoll and EUSt amounts) was not found.');
+  if (total != null && Math.abs(total - zoll - eust) > 0.01) warnings.push(`Zoll + EUSt (${zoll + eust}) does not match the Gesamtabgabensumme (${total}).`);
+  if (zollDuties.length > 1) warnings.push(`Several duty types go to the Zoll invoice: ${zollDuties.map(d => d.type).join(', ')}.`);
 
   // Pedido (Unterlagen N380) y transporte: contenedor(es) o, en aéreo, el AWB (N740/N741). Solo están en la parte "Beleg".
   const unterlagen = between(t, 'Unterlagen** Bereich Art Nummer Datum', /Beendigung SumA|Dieses Dokument/);
@@ -112,9 +112,9 @@ export async function parseCustomsPdf(file: string, data: Uint8Array): Promise<C
   const mfContainer = t.match(/Interne Ref\.\s*\*?[^|]{0,60}?\b([A-Z]{4}\d{7})\b/)?.[1];
   if (mfContainer && !containers.includes(mfContainer)) containers.push(mfContainer);
   const transport = containers.length ? containers : Array.from(new Set([...docs.filter(d => d.type === 'N740' || d.type === 'N741').map(d => d.no), ...(awb ? [awb] : [])]));
-  if (!orders.length) warnings.push('El PDF no trae el pedido (Unterlagen N380): escribe la descripción a mano.');
-  if (!transport.length) warnings.push('El PDF no trae contenedor ni AWB: complétalo en la descripción.');
-  if (!atc) warnings.push('No se ha encontrado el nº AT/C.');
+  if (!orders.length) warnings.push('The PDF does not include the order (Unterlagen N380): enter the description manually.');
+  if (!transport.length) warnings.push('The PDF includes no container or AWB: add it to the description.');
+  if (!atc) warnings.push('The AT/C no. was not found.');
 
   // Sin parte "Beleg" (algunos PDF solo traen el Bescheid): las posiciones del Bescheid, sin descripción ni Artikel Nr.
   const fromBeleg = parsePositions(t);
@@ -145,9 +145,9 @@ export async function parseCustomsPdf(file: string, data: Uint8Array): Promise<C
   }
   const dhl = /DHL Hub Leipzig|DHL Express/i.test(t);
   const nizza = t.match(/Registrierkz\. für NIZZA: (AT\/C\/\S+)/)?.[1] || '';
-  if (!positions.length) warnings.push(dhl ? 'Despacho DHL Express: el PDF no trae los códigos arancelarios de las posiciones.' : 'No se han encontrado las posiciones (Warennummer) en el PDF.');
-  else if (positions.some(p => p.final === false)) warnings.push(`Posiciones no definitivas (Nicht abschließend festgesetzt): ${positions.filter(p => p.final === false).map(p => p.pos).join(', ')}.`);
-  else if (!fromBeleg.length && !fromDhl.length && !fromMf.length) warnings.push('El PDF no trae la parte "Beleg": posiciones leídas del Bescheid (código, Zollwert y % de Zoll; sin descripción ni Artikel Nr.).');
+  if (!positions.length) warnings.push(dhl ? 'DHL Express clearance: the PDF does not include the tariff codes of the positions.' : 'The positions (Warennummer) were not found in the PDF.');
+  else if (positions.some(p => p.final === false)) warnings.push(`Provisional positions (Nicht abschließend festgesetzt): ${positions.filter(p => p.final === false).map(p => p.pos).join(', ')}.`);
+  else if (!fromBeleg.length && !fromDhl.length && !fromMf.length) warnings.push('The PDF does not include the "Beleg" part: positions read from the Bescheid (code, Zollwert and Zoll %, without description or Artikel Nr.).');
 
   const description = [orders.join(', '), transport.join(', ')].filter(Boolean).join(' / ');
   return {
@@ -332,13 +332,13 @@ export async function createInvoices(ctx: BcContext, input: CreateInput, cfg: Cu
         try {
           await attachFile(ctx, id, pdf);
         } catch (e: any) {
-          warnings.push(`${no}: no se ha podido adjuntar el PDF (${String(e.message).substring(0, 160)}); adjúntalo en BC.`);
+          warnings.push(`${no}: could not attach the PDF (${String(e.message).substring(0, 160)}), attach it in BC.`);
         }
       }
       try {
         await bc('PATCH', `${ctx.odataCompanyBase}/purchaseDocuments(${id})`, ctx.token, { postingDescription: description });
       } catch (e: any) {
-        warnings.push(`${no}: no se ha podido poner la Posting Description (${String(e.message).substring(0, 160)}); escríbela en BC.`);
+        warnings.push(`${no}: could not set the Posting Description (${String(e.message).substring(0, 160)}), enter it in BC.`);
       }
     }
   } catch (e: any) {
@@ -397,14 +397,14 @@ export function tariffStatus(hasCard: boolean, bcTariff: string, tariff: string,
   const [main, fig] = bcTariff.split('/');
   const st = matchCode(main, tariff);
   if (!fig || !st) return { status: st || 'distinto' };
-  if (!figure) return { status: 'distinto', note: 'En BC lleva figuras (dos códigos), pero aduanas no ha declarado la posición "Figuren zu Position" para ellas' };
+  if (!figure) return { status: 'distinto', note: 'In BC it has figures (two codes), but customs has not declared the "Figuren zu Position" position for them' };
   const fs = matchCode(fig, figure);
-  if (!fs) return { status: 'distinto', note: `Figuras declaradas con ${figure}; en BC ${fig}` };
+  if (!fs) return { status: 'distinto', note: `Figures declared with ${figure}, in BC ${fig}` };
   return { status: st === 'ok' && fs === 'ok' ? 'ok' : 'ok8' };
 }
 // Display (FSDU) con su contenido en el BOM: aduanas declara los artículos de dentro y el display solo como packaging al
 // 0 %, así que su Tariff No. (genérico) no coincide. Con la posición al 0 % se da por bueno
-export const DISPLAY_PACKAGING = 'Display (FSDU): aduanas declara su contenido (BOM) por separado; la diferencia es por el packaging, declarado al 0 %';
+export const DISPLAY_PACKAGING = 'Display (FSDU): customs declares its contents (BOM) separately, the difference is due to the packaging, declared at 0 %';
 export function acceptDisplay(st: { status: TariffItem['status']; note?: string }, display: boolean, dutyRate: number | null | undefined) {
   return display && st.status === 'distinto' && dutyRate === 0 ? { status: 'ok' as const, accepted: DISPLAY_PACKAGING } : st;
 }
@@ -461,9 +461,9 @@ export async function checkTariffs(ctx: BcContext, orders: string[], positions: 
     ...open.map((r: any) => ({ no: r.no, vendorInvoiceNo: r.vendorInvoiceNo, vendor: r.buyFromVendorName, posted: false, paymentMethod: r.paymentMethodCode || '' })),
   ].filter(i => keys.has(orderKey(i.vendorInvoiceNo)));
   if (invoices.some(i => i.paymentMethod === 'CHINA TRF')) invoices = invoices.filter(i => i.paymentMethod === 'CHINA TRF');
-  if (!orders.length) warnings.push('El PDF no trae el pedido (N380): solo se comparan los artículos con "Artikel Nr.".');
-  else if (!invoices.length) warnings.push(`No se ha encontrado en BC la factura de China ${orders.join(', ')}: solo se comparan los artículos con "Artikel Nr.".`);
-  else if (invoices.length > keys.size) warnings.push(`Hay varias facturas con el mismo nº (${invoices.map(i => `${i.no} ${i.vendorInvoiceNo}`).join(', ')}): sus cantidades se suman.`);
+  if (!orders.length) warnings.push('The PDF does not include the order (N380): only the items with "Artikel Nr." are compared.');
+  else if (!invoices.length) warnings.push(`China invoice ${orders.join(', ')} not found in BC: only the items with "Artikel Nr." are compared.`);
+  else if (invoices.length > keys.size) warnings.push(`There are several invoices with the same no. (${invoices.map(i => `${i.no} ${i.vendorInvoiceNo}`).join(', ')}): their quantities are added up.`);
 
   // Líneas de artículo de esas facturas
   const lines = (await Promise.all(invoices.map(inv => bcFetchAll(odataUrl(inv.posted ? `${ctx.customApiBase}/purchInvLines` : `${ctx.customApiBase}/purchaseLines`, {
@@ -531,7 +531,7 @@ export async function checkTariffs(ctx: BcContext, orders: string[], positions: 
     };
     const best = list.map(pos => ({ pos, r: rank(pos) })).sort((a, b) => b.r[0] - a.r[0] || b.r[1] - a.r[1] || b.r[2] - a.r[2])[0].pos;
     assigned.set(no, { pos: best, via: 'artikel' });
-    warnings.push(`El artículo ${no} aparece en el Artikel Nr. de las posiciones ${list.join(' y ')} del PDF: se compara con la posición ${best}. Revisa la declaración con el agente de aduanas.`);
+    warnings.push(`Item ${no} appears in the Artikel Nr. of positions ${list.join(' and ')} of the PDF: it is compared with position ${best}. Check the declaration with the customs agent.`);
   }
   for (const c of candidates.values()) {
     if (assigned.has(c.no) || !positions.length) continue;

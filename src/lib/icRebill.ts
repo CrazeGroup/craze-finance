@@ -30,7 +30,7 @@ export type IcPlan = {
 
 async function gmbhDoc(gm: BcContext, kind: 'cm' | 'inv', no: string) {
   const [h] = await bcFetchAll(odataUrl(`${gm.apiBase}/${kind === 'cm' ? 'salesCreditMemos' : 'salesInvoices'}`, { $filter: `number eq '${q(no)}'` }), gm.token);
-  if (!h) throw new Error(`No existe ${no} en CRAZE GmbH`);
+  if (!h) throw new Error(`${no} does not exist in CRAZE GmbH`);
   const lines = await bcFetchAll(odataUrl(`${gm.customApiBase}/${kind === 'cm' ? 'salesCrMemoLines' : 'salesInvoiceLines'}`, { $filter: `documentNo eq '${q(no)}'` }), gm.token);
   return {
     postingDate: s(h.postingDate).substring(0, 10), documentDate: s(kind === 'cm' ? h.creditMemoDate : h.invoiceDate).substring(0, 10),
@@ -41,17 +41,17 @@ async function gmbhDoc(gm: BcContext, kind: 'cm' | 'inv', no: string) {
 export async function planIc(ce: BcContext, gm: BcContext, input: IcInput): Promise<IcPlan> {
   const issues: string[] = [];
   const [pi] = await bcFetchAll(odataUrl(`${ce.apiBase}/purchaseInvoices`, { $filter: `number eq '${q(input.purchaseInvoice)}'` }), ce.token);
-  if (!pi) throw new Error(`No existe ${input.purchaseInvoice} en CRAZE Entertainment`);
+  if (!pi) throw new Error(`${input.purchaseInvoice} does not exist in CRAZE Entertainment`);
   const tpl = (await bcFetchAll(odataUrl(`${ce.customApiBase}/purchInvLines`, { $filter: `documentNo eq '${q(input.purchaseInvoice)}'` }), ce.token))
     .filter((l: any) => s(l.type) === 'Item').sort((a: any, b: any) => n(a.lineNo) - n(b.lineNo));
-  for (const t of tpl) if (!s(t.jobNo) || !s(t.jobTaskNo)) issues.push(`${input.purchaseInvoice} ${s(t.no)}: sin Project No. o Project Task No.`);
+  for (const t of tpl) if (!s(t.jobNo) || !s(t.jobTaskNo)) issues.push(`${input.purchaseInvoice} ${s(t.no)}: no Project No. or Project Task No.`);
   const [cm, inv] = await Promise.all([gmbhDoc(gm, 'cm', input.gmbhCreditMemo), gmbhDoc(gm, 'inv', input.gmbhInvoice)]);
   // copyTpl: el abono copia el importe de la línea de la factura de compra que anula (si se subió mal, se anula tal cual
   // y la factura nueva deja el importe bueno); la factura nueva, el de GmbH
   const build = (lines: any[], doc: string, copyTpl = false): PlanLine[] => lines.map(l => {
     const foil = isFoilbag(l);
     const t = tpl.find((x: any) => (foil ? s(x.no) === FOILBAG_ITEM : s(x.no) === s(l.no)));
-    if (!t) issues.push(`${doc} ${s(l.no)}: no hay línea equivalente en ${input.purchaseInvoice}`);
+    if (!t) issues.push(`${doc} ${s(l.no)}: no equivalent line in ${input.purchaseInvoice}`);
     const useTpl = copyTpl && t;
     const amount = useTpl ? n(t.amount) : n(l.amount);
     return {
@@ -147,9 +147,9 @@ export async function repairIc(input: IcInput) {
   const out: Record<string, unknown> = { plan };
   for (const [kind, entity, linesEntity] of [['creditMemo', 'purchaseCreditMemos', 'purchaseCreditMemoLines'], ['invoice', 'purchaseInvoices', 'purchaseInvoiceLines']] as const) {
     const d = plan[kind];
-    if (!d.existing) { out[kind] = { error: 'no existe' }; continue; }
+    if (!d.existing) { out[kind] = { error: 'does not exist' }; continue; }
     const [h] = await bcFetchAll(odataUrl(`${ce.apiBase}/${entity}`, { $filter: `number eq '${q(d.existing)}'`, $select: 'id,status' }), ce.token);
-    if (!h || s(h.status) !== 'Draft') { out[kind] = { no: d.existing, error: 'no está en borrador' }; continue; }
+    if (!h || s(h.status) !== 'Draft') { out[kind] = { no: d.existing, error: 'is not a draft' }; continue; }
     // Proyecto y tarea del plan en las líneas (si alguna no los tiene así) y después, otra vez, los costes
     if (kind === 'invoice' && input.invoiceProject) {
       const cur = (await bcFetchAll(`${ce.apiBase}/${entity}(${h.id})/${linesEntity}`, ce.token)).filter((l: any) => s(l.lineType) === 'Item');
@@ -169,7 +169,7 @@ export async function runIc(input: IcInput, dryRun: boolean) {
   const [ce, gm] = await Promise.all([getBcContext('Craze Entertainment'), getBcContext('CRAZE')]);
   const plan = await planIc(ce, gm, input);
   if (dryRun) return { plan };
-  if (plan.issues.length) throw new Error(`No se crea nada para ${input.purchaseInvoice}: ${plan.issues.join(' · ')}`);
+  if (plan.issues.length) throw new Error(`Nothing is created for ${input.purchaseInvoice}: ${plan.issues.join(' · ')}`);
   const [pi] = await bcFetchAll(odataUrl(`${ce.apiBase}/purchaseInvoices`, { $filter: `number eq '${q(input.purchaseInvoice)}'`, $select: 'id' }), ce.token);
   const out: { creditMemo?: any; invoice?: any } = {};
   out.creditMemo = plan.creditMemo.existing ? { no: plan.creditMemo.existing, existing: true } : await createDoc(ce, 'cm', plan, pi.id);
@@ -181,16 +181,16 @@ export async function runIc(input: IcInput, dryRun: boolean) {
 export async function attachGmbhPdf(gmbhInvoice: string) {
   const [ce, gm] = await Promise.all([getBcContext('Craze Entertainment'), getBcContext('CRAZE')]);
   const [si] = await bcFetchAll(odataUrl(`${gm.apiBase}/salesInvoices`, { $filter: `number eq '${q(gmbhInvoice)}'`, $select: 'id,number' }), gm.token);
-  if (!si) throw new Error(`No existe ${gmbhInvoice} en CRAZE GmbH`);
+  if (!si) throw new Error(`${gmbhInvoice} does not exist in CRAZE GmbH`);
   const [pi] = await bcFetchAll(odataUrl(`${ce.apiBase}/purchaseInvoices`, { $filter: `vendorInvoiceNumber eq '${q(gmbhInvoice)}'`, $select: 'id,number,status' }), ce.token);
-  if (!pi) throw new Error(`No hay factura de compra con Vendor Invoice No. ${gmbhInvoice} en CRAZE Entertainment`);
+  if (!pi) throw new Error(`No purchase invoice with Vendor Invoice No. ${gmbhInvoice} in CRAZE Entertainment`);
   const name = `${gmbhInvoice}.pdf`;
   const existing = await bcFetchAll(odataUrl(`${ce.apiBase}/documentAttachments`, { $filter: `parentId eq ${pi.id}`, $select: 'fileName' }), ce.token);
   if (existing.some((a: any) => s(a.fileName) === name)) return { purchaseInvoice: s(pi.number), file: name, existing: true };
   const res = await fetch(`${gm.apiBase}/salesInvoices(${si.id})/pdfDocument/pdfDocumentContent`, { headers: { Authorization: `Bearer ${gm.token}` } });
-  if (!res.ok) throw new Error(`BC no ha generado el PDF de ${gmbhInvoice}: HTTP ${res.status} ${(await res.text()).substring(0, 200)}`);
+  if (!res.ok) throw new Error(`BC did not generate the PDF of ${gmbhInvoice}: HTTP ${res.status} ${(await res.text()).substring(0, 200)}`);
   const data = new Uint8Array(await res.arrayBuffer());
-  if (data.length < 500 || String.fromCharCode(...data.slice(0, 4)) !== '%PDF') throw new Error(`El PDF de ${gmbhInvoice} no es válido (${data.length} bytes)`);
+  if (data.length < 500 || String.fromCharCode(...data.slice(0, 4)) !== '%PDF') throw new Error(`The PDF of ${gmbhInvoice} is not valid (${data.length} bytes)`);
   await attachFile(ce, pi.id, { name, data }, 'Purchase Invoice');
   return { purchaseInvoice: s(pi.number), file: name, bytes: data.length };
 }

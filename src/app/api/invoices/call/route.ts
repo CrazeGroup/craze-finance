@@ -8,7 +8,7 @@ export async function PATCH(request: Request) {
   try {
     const { invoiceIds, called } = await request.json();
     if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
-      return NextResponse.json({ error: 'Faltan las facturas' }, { status: 400 });
+      return NextResponse.json({ error: 'The invoices are missing' }, { status: 400 });
     }
     const ids = invoiceIds.map(Number).filter(n => Number.isInteger(n));
     const invoices = await prisma.invoice.findMany({ where: { id: { in: ids } }, select: { id: true, bcId: true } });
@@ -18,7 +18,7 @@ export async function PATCH(request: Request) {
       data: called ? { lastCallDate: new Date(), callCount: { increment: 1 } } : { lastCallDate: null, callCount: 0 },
     });
 
-    await logAction(called ? 'Cliente llamado (reclamación de cobro)' : 'Quitada la marca de llamado', invoices.map(i => i.bcId).join(', '));
+    await logAction(called ? 'Customer called (payment chase)' : 'Called mark removed', invoices.map(i => i.bcId).join(', '));
     const updated = await prisma.invoice.findMany({ where: { id: { in: ids } }, select: { id: true, lastCallDate: true, callCount: true } });
     return NextResponse.json({ success: true, count: invoices.length, invoices: updated });
   } catch (error: any) {

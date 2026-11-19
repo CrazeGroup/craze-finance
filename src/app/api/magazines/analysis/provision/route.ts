@@ -12,16 +12,16 @@ export async function POST(req: Request) {
   try {
     const b = await req.json();
     const change: any = {};
-    if ('defaultPct' in b) { if (!pctOk(b.defaultPct)) return NextResponse.json({ error: '% no válido' }, { status: 400 }); change.defaultPct = b.defaultPct; }
+    if ('defaultPct' in b) { if (!pctOk(b.defaultPct)) return NextResponse.json({ error: 'Invalid %' }, { status: 400 }); change.defaultPct = b.defaultPct; }
     if (b.item) {
-      if (!/^0599\d_\d{4}$/.test(String(b.item))) return NextResponse.json({ error: 'Revista no válida' }, { status: 400 });
+      if (!/^0599\d_\d{4}$/.test(String(b.item))) return NextResponse.json({ error: 'Invalid magazine' }, { status: 400 });
       change.item = String(b.item);
-      if ('pct' in b) { if (!pctOk(b.pct)) return NextResponse.json({ error: '% no válido' }, { status: 400 }); change.pct = b.pct; }
+      if ('pct' in b) { if (!pctOk(b.pct)) return NextResponse.json({ error: 'Invalid %' }, { status: 400 }); change.pct = b.pct; }
       if ('closed' in b) change.closed = !!b.closed;
     }
     const session: any = await getSession();
     const provisions = await setProvision(change, session?.username || '');
-    await logAction('Magazine Profitability: provisión de devoluciones', JSON.stringify(b).substring(0, 900), 'Craze Entertainment');
+    await logAction('Magazine Profitability: returns provision', JSON.stringify(b).substring(0, 900), 'Craze Entertainment');
     return NextResponse.json({ provisions });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

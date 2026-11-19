@@ -8,6 +8,7 @@ import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
 import CompanySelect, { useReportCompany } from './CompanySelect';
 import { fetchPurchaseItems } from './purchaseData';
 import DocPdfLink from '@/components/DocPdfLink';
+import { useT } from '@/contexts/LanguageContext';
 
 // Controlling · Compras por proveedor: los mismos datos que Compras por artículo (facturas y abonos de compra
 // registrados, /api/controlling/purchase-items) vistos al revés: proveedor → artículo → facturas, para validar que cada
@@ -28,12 +29,11 @@ type Data = { items: SrcItem[]; cancelledPairs?: number; warnings: string[] };
 type VItem = { company?: string; itemNo: string; description: string; genProdPostingGroup: string; net: number; quantity: number; docs: Doc[]; current: string; currentCr: string };
 type Vendor = Omit<SrcVendor, 'docs' | 'net' | 'quantity' | 'invoices' | 'creditMemos'> & { net: number; quantity: number; docs: number; items: VItem[] };
 
-const MONTHS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 const GROUPINGS = [
-  { id: 'none', label: 'Sin agrupar' },
-  { id: 'month', label: 'Mes' },
-  { id: 'account', label: 'Cuenta G/L registrada' },
-  { id: 'kind', label: 'Factura / abono' },
+  { id: 'none', label: 'No grouping' },
+  { id: 'month', label: 'Month' },
+  { id: 'account', label: 'Posted G/L account' },
+  { id: 'kind', label: 'Invoice / credit memo' },
 ] as const;
 type Grouping = typeof GROUPINGS[number]['id'];
 const iso = (d: Date) => d.toISOString().substring(0, 10);
@@ -42,7 +42,9 @@ const th = 'py-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-gr
 const td = 'py-1.5 px-2 whitespace-nowrap';
 
 export default function PurchaseVendorsView({ fmt, company: globalCompany }: { fmt: Fmt; company: string }) {
+  const { t, tx } = useT();
   const [company, setCompany] = useReportCompany(globalCompany);
+  const kindLabel = (k: Doc['kind']) => (k === 'Abono' ? t('Credit memo') : t('Invoice'));
   const { num, date } = fmt;
   const [from, setFrom] = useState(() => `${new Date().getFullYear()}-01-01`);
   const [to, setTo] = useState(() => iso(new Date()));
@@ -92,21 +94,23 @@ export default function PurchaseVendorsView({ fmt, company: globalCompany }: { f
   const exportExcel = () => {
     const rows = filtered.flatMap(v => v.items.flatMap(i => i.docs.map(doc => ({
       'Vendor No.': v.vendorNo, 'Vendor Name': v.name, 'Customer Group Code': v.customerGroupCode || '', 'Customer Group': v.customerGroupName || '', 'Country/Region Code': v.country, 'Item No.': i.itemNo, 'Item Description': i.description,
-      'Gen. Prod. Posting Group': i.genProdPostingGroup, 'Tipo': doc.kind, 'Document No.': doc.documentNo, 'Document Date': doc.documentDate,
+      'Gen. Prod. Posting Group': i.genProdPostingGroup, [t('Type')]: kindLabel(doc.kind), 'Document No.': doc.documentNo, 'Document Date': doc.documentDate,
       'Posting Date': doc.postingDate, 'Vendor Invoice No.': doc.vendorDocNo, 'Quantity': doc.quantity, 'Direct Unit Cost Excl. VAT': doc.directUnitCost,
-      'Importe': doc.amount, 'Currency Code': doc.currency, 'Cuenta G/L registrada': doc.glAccounts.map(a => a.no).join(', '),
+      [t('Amount')]: doc.amount, 'Currency Code': doc.currency, [t('Posted G/L account')]: doc.glAccounts.map(a => a.no).join(', '),
     }))));
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Compras por proveedor');
-    XLSX.writeFile(wb, `Compras_por_proveedor_${company}_${from}_${to}.xlsx`.replace(/\s+/g, '_'));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), t('Purchases by vendor'));
+    XLSX.writeFile(wb, `${t('Purchases by vendor')}_${company}_${from}_${to}.xlsx`.replace(/\s+/g, '_'));
   };
 
   const money = (v: number, cur = '') => `${num(v, 2)}${cur ? ` ${cur}` : ''}`;
   const toggle = (k: string) => setOpen(o => ({ ...o, [k]: !o[k] }));
   const groupKey = (doc: Doc) => grouping === 'month' ? doc.postingDate.substring(0, 7)
-    : grouping === 'account' ? (doc.glAccounts.map(a => `${a.no} ${a.name}`).join(', ') || 'sin movimiento')
+    : grouping === 'account' ? (doc.glAccounts.map(a => `${a.no} ${a.name}`).join(', ') || 'no entry')
     : grouping === 'kind' ? doc.kind : '';
-  const groupLabel = (k: string) => (grouping === 'month' ? `${MONTHS[Number(k.substring(5, 7)) - 1]} ${k.substring(0, 4)}` : k);
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+  const groupLabel = (k: string) => (grouping === 'month' ? `${cap(fmt.monthOnly(k))} ${k.substring(0, 4)}`
+    : grouping === 'kind' ? kindLabel(k as Doc['kind']) : k === 'no entry' ? t(k) : k);
 
   const DocRows = ({ docs, current, currentCr, docCompany }: { docs: Doc[]; current: string; currentCr: string; docCompany?: string }) => (
     <>
@@ -114,7 +118,7 @@ export default function PurchaseVendorsView({ fmt, company: globalCompany }: { f
         const cur = doc.kind === 'Abono' ? currentCr : current;
         return (
           <tr key={`${doc.documentNo}|${doc.lineNo}`} className="border-t border-gray-100">
-            <td className={`${td} ${doc.kind === 'Abono' ? 'text-[#C0392B]' : ''}`}>{doc.kind}</td>
+            <td className={`${td} ${doc.kind === 'Abono' ? 'text-[#C0392B]' : ''}`}>{kindLabel(doc.kind)}</td>
             <td className={`${td} font-mono`}>{doc.documentNo}<DocPdfLink company={docCompany || company} documentNo={doc.documentNo} kind={doc.kind === 'Abono' ? 'purchCrMemo' : 'purchInv'} /></td>
             <td className={`${td} font-mono`}>{date(doc.postingDate)}</td>
             <td className={td}>{doc.vendorDocNo || '–'}</td>
@@ -124,7 +128,7 @@ export default function PurchaseVendorsView({ fmt, company: globalCompany }: { f
             <td className="py-1.5 px-2 font-mono text-[11px]">
               {doc.glAccounts.length ? doc.glAccounts.map(a => (
                 <span key={a.no} title={`${a.name} · ${num(a.amount, 2)} EUR`} className={`block ${cur && a.no !== cur ? 'text-[#C8186C] font-semibold' : ''}`}>{a.no} {a.name}</span>
-              )) : <span className="text-gray-400">sin movimiento</span>}
+              )) : <span className="text-gray-400">{t('no entry')}</span>}
             </td>
           </tr>
         );
@@ -135,8 +139,8 @@ export default function PurchaseVendorsView({ fmt, company: globalCompany }: { f
   const DocTable = ({ item, k }: { item: VItem; k: string }) => {
     const head = (
       <tr className="text-left">
-        <th className={th}>Tipo</th><th className={th}>Document No.</th><th className={th}>Posting Date</th><th className={th}>Vendor Invoice No.</th>
-        <th className={`${th} text-right`}>Cantidad</th><th className={`${th} text-right`}>Coste unit.</th><th className={`${th} text-right`}>Importe</th><th className={th}>Cuenta G/L registrada</th>
+        <th className={th}>{t('Type')}</th><th className={th}>Document No.</th><th className={th}>Posting Date</th><th className={th}>Vendor Invoice No.</th>
+        <th className={`${th} text-right`}>{t('Quantity')}</th><th className={`${th} text-right`}>{t('Unit cost')}</th><th className={`${th} text-right`}>{t('Amount')}</th><th className={th}>{t('Posted G/L account')}</th>
       </tr>
     );
     if (grouping === 'none') {
@@ -153,7 +157,7 @@ export default function PurchaseVendorsView({ fmt, company: globalCompany }: { f
               <button onClick={() => toggle(gk)} className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm bg-gray-50 hover:bg-gray-100">
                 {open[gk] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                 <span className="text-gray-800">{groupLabel(g)}</span>
-                <span className="ml-auto text-xs text-gray-500">{new Set(docs.map(d => d.documentNo)).size} doc. · {num(docs.reduce((s, d) => s + d.quantity, 0))} uds.</span>
+                <span className="ml-auto text-xs text-gray-500">{t('{n} doc. · {q} units', { n: new Set(docs.map(d => d.documentNo)).size, q: num(docs.reduce((s, d) => s + d.quantity, 0)) })}</span>
                 <span className="w-36 text-right font-semibold font-mono">{money(docs.reduce((s, d) => s + d.amount, 0))}</span>
               </button>
               {open[gk] && <table className="w-full text-[12px]"><thead>{head}</thead><tbody><DocRows docs={docs} current={item.current} currentCr={item.currentCr} docCompany={item.company} /></tbody></table>}
@@ -166,10 +170,10 @@ export default function PurchaseVendorsView({ fmt, company: globalCompany }: { f
 
   const d = state.data;
   return (
-    <Section title="Compras por proveedor" source="Facturas y abonos de compra registrados (como Compras por artículo) · proveedor → artículo → facturas">
+    <Section title={t('Purchases by vendor')} source={t('Posted purchase invoices and credit memos (as in Purchases by item) · vendor → item → invoices')}>
       <div className="flex flex-wrap items-end gap-4">
         <CompanySelect value={company} onChange={setCompany} />
-        {([['Desde', from, setFrom], ['Hasta', to, setTo]] as const).map(([label, value, set]) => (
+        {([[t('From'), from, setFrom], [t('Until'), to, setTo]] as const).map(([label, value, set]) => (
           <label key={label} className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
             {label}
             <input type="date" value={value} onChange={e => { set(e.target.value); setShown(PAGE); }}
@@ -177,48 +181,48 @@ export default function PurchaseVendorsView({ fmt, company: globalCompany }: { f
           </label>
         ))}
         <label className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 flex-1 min-w-[220px]">
-          Buscar
+          {t('Search')}
           <span className="mt-1 flex items-center gap-2 border border-gray-300 rounded-lg px-3 py-1.5 bg-white">
             <Search size={14} className="text-gray-400" />
-            <input value={search} onChange={e => { setSearch(e.target.value); setShown(PAGE); }} placeholder="Proveedor o artículo"
+            <input value={search} onChange={e => { setSearch(e.target.value); setShown(PAGE); }} placeholder={t('Vendor or item')}
               className="w-full text-sm text-gray-900 outline-none normal-case tracking-normal font-normal" />
           </span>
         </label>
         <label className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
-          Agrupar facturas por
+          {t('Group invoices by')}
           <select value={grouping} onChange={e => setGrouping(e.target.value as Grouping)}
             className="block mt-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-900 bg-white normal-case tracking-normal">
-            {GROUPINGS.map(g => <option key={g.id} value={g.id}>{g.label}</option>)}
+            {GROUPINGS.map(g => <option key={g.id} value={g.id}>{t(g.label)}</option>)}
           </select>
         </label>
         <button onClick={exportExcel} disabled={state.loading || !filtered.length}
           className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
-          <FileDown size={16} /> Exportar Excel
+          <FileDown size={16} /> {t('Export Excel')}
         </button>
-        <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={state.loading} title="Volver a leer de BC"
+        <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={state.loading} title={t('Reload from BC')}
           className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">
           <RefreshCw size={16} className={state.loading ? 'animate-spin' : ''} />
         </button>
       </div>
 
-      {from > to ? <ErrorBox message="La fecha Desde es posterior a Hasta." />
-        : state.error ? <ErrorBox message={state.error} />
-        : state.loading || !d ? <Loading text="Leyendo facturas y abonos de compra de Business Central…" />
+      {from > to ? <ErrorBox message={t('The From date is after the To date.')} />
+        : state.error ? <ErrorBox message={tx(state.error)} />
+        : state.loading || !d ? <Loading text={t('Reading purchase invoices and credit memos from Business Central…')} />
         : (
           <>
-            {d.warnings.map(w => <p key={w} className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{w}</p>)}
+            {d.warnings.map(w => <p key={w} className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{tx(w)}</p>)}
             <Grid cols={3}>
-              <Kpi label="Proveedores" value={num(vendors.length)} sub={`${num(vendors.reduce((s, v) => s + v.items.length, 0))} pares proveedor/artículo`} />
-              <Kpi label="Proveedores con más de un artículo" value={num(vendors.filter(v => v.items.length > 1).length)} sub="Para revisar si todos los artículos son los esperados" />
-              <Kpi highlight tone="main" label="Neto (divisa del documento)" value={num(vendors.reduce((s, v) => s + v.net, 0))} sub={d.cancelledPairs ? `${num(d.cancelledPairs)} facturas anuladas por su abono no se muestran` : 'Suma de importes sin IVA'} />
+              <Kpi label={t('Vendors')} value={num(vendors.length)} sub={t('{n} vendor/item pairs', { n: num(vendors.reduce((s, v) => s + v.items.length, 0)) })} />
+              <Kpi label={t('Vendors with more than one item')} value={num(vendors.filter(v => v.items.length > 1).length)} sub={t('To check whether all items are the expected ones')} />
+              <Kpi highlight tone="main" label={t('Net (document currency)')} value={num(vendors.reduce((s, v) => s + v.net, 0))} sub={d.cancelledPairs ? t('{n} invoices cancelled by their credit memo are not shown', { n: num(d.cancelledPairs) }) : t('Sum of amounts excl. VAT')} />
             </Grid>
             <div className="rpt-card bg-white rounded-xl border border-gray-200 table-scroll">
               <table className="w-full text-[13px]">
                 <thead>
                   <tr className="border-b border-gray-200 text-left">
                     <th className={th} /><th className={th}>Vendor No.</th><th className={th}>Vendor Name</th><th className={th}>Customer Group</th><th className={th}>Country</th>
-                    <th className={th}>Gen. Bus. Posting Group</th><th className={th}>Cuenta actual (fact. / abono)</th>
-                    <th className={`${th} text-right`}>Artículos</th><th className={`${th} text-right`}>Documentos</th><th className={`${th} text-right`}>Neto</th>
+                    <th className={th}>Gen. Bus. Posting Group</th><th className={th}>{t('Current account (inv. / cr. memo)')}</th>
+                    <th className={`${th} text-right`}>{t('Items')}</th><th className={`${th} text-right`}>{t('Documents')}</th><th className={`${th} text-right`}>{t('Net')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -243,8 +247,8 @@ export default function PurchaseVendorsView({ fmt, company: globalCompany }: { f
                             <table className="w-full text-[12px] bg-white rounded-lg border border-gray-200">
                               <thead>
                                 <tr className="border-b border-gray-200 text-left">
-                                  <th className={th} /><th className={th}>Item No.</th><th className={th}>Descripción</th><th className={th}>Gen. Prod. Posting Group</th>
-                                  <th className={`${th} text-right`}>Documentos</th><th className={`${th} text-right`}>Cantidad</th><th className={`${th} text-right`}>Neto</th>
+                                  <th className={th} /><th className={th}>Item No.</th><th className={th}>{t('Description')}</th><th className={th}>Gen. Prod. Posting Group</th>
+                                  <th className={`${th} text-right`}>{t('Documents')}</th><th className={`${th} text-right`}>{t('Quantity')}</th><th className={`${th} text-right`}>{t('Net')}</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -274,14 +278,14 @@ export default function PurchaseVendorsView({ fmt, company: globalCompany }: { f
                   ))}
                 </tbody>
               </table>
-              {!filtered.length && <p className="text-sm text-gray-500 p-4">Sin documentos en el periodo.</p>}
+              {!filtered.length && <p className="text-sm text-gray-500 p-4">{t('No documents in the period.')}</p>}
             </div>
             {filtered.length > shown && (
               <button onClick={() => setShown(s => s + PAGE)} className="text-sm font-semibold text-gray-700 hover:text-gray-900 underline">
-                Mostrar más ({num(filtered.length - shown)} proveedores más)
+                {t('Show more ({n} more vendors)', { n: num(filtered.length - shown) })}
               </button>
             )}
-            <p className="text-xs text-gray-500">Mismos documentos que Compras por artículo (artículos que no son de inventario; pares artículo/proveedor que se anulan del todo no salen). La cuenta G/L en color es distinta de la que daría hoy la configuración contable.</p>
+            <p className="text-xs text-gray-500">{t('Same documents as Purchases by item (non-inventory items; item/vendor pairs that cancel out completely are not shown). The highlighted G/L account differs from the one the current posting setup would give today.')}</p>
           </>
         )}
     </Section>

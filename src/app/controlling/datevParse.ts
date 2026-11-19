@@ -12,7 +12,7 @@ export async function parseDatev(file: File): Promise<DatevFile> {
   const wb = XLSX.read(await file.arrayBuffer());
   const rows: any[][] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
   const h = rows.findIndex(r => r.some(c => /^konto$/i.test(String(c).trim())));
-  if (h < 0) throw new Error('No es una Jahresübersicht de DATEV: no se encuentra la columna "Konto".');
+  if (h < 0) throw new Error('This is not a DATEV Jahresübersicht: the "Konto" column is missing.');
   const header = rows[h].map(c => String(c).trim().toLowerCase());
   // Columnas de mes (en orden) y año
   const monthCols: { col: number; m: number; y: number }[] = [];
@@ -20,7 +20,7 @@ export async function parseDatev(file: File): Promise<DatevFile> {
     const mm = c.match(/^([a-zäö]{3})\/(\d{4})$/);
     if (mm && MONTHS.includes(mm[1])) monthCols.push({ col, m: MONTHS.indexOf(mm[1]), y: Number(mm[2]) });
   });
-  if (!monthCols.length) throw new Error('No se encuentran columnas de mes (Jan/2025, Feb/2025…).');
+  if (!monthCols.length) throw new Error('No month columns found (Jan/2025, Feb/2025…).');
   const year = monthCols[0].y;
   const months = Math.max(...monthCols.map(c => c.m)) + 1;
   const konto = header.findIndex(c => c === 'konto');
@@ -38,6 +38,6 @@ export async function parseDatev(file: File): Promise<DatevFile> {
     for (const mc of monthCols) values[mc.m] = Number(r[mc.col]) || 0;
     accounts.push({ account: acc, name: String(r[nameCol] || '').trim(), section, values });
   }
-  if (!accounts.length) throw new Error('El Excel no tiene filas de cuenta (nº de 6 cifras).');
+  if (!accounts.length) throw new Error('The Excel file has no account rows (6-digit numbers).');
   return { name: file.name, year, months, accounts, sections };
 }

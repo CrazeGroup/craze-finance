@@ -16,21 +16,21 @@ const isDate = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d);
 export async function POST(req: Request) {
   try {
     const companyId = (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
-    if (companyId === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
+    if (companyId === 'ALL') return NextResponse.json({ error: 'Select a specific company.' }, { status: 400 });
     const body = await req.json() as { journalCode: string; bankNo: string; movements: SendMovement[] };
-    if (!body.journalCode || !body.bankNo) return NextResponse.json({ error: 'Elige la cuenta de banco y el lote.' }, { status: 400 });
-    if (!Array.isArray(body.movements) || !body.movements.length) return NextResponse.json({ error: 'No hay movimientos que enviar.' }, { status: 400 });
+    if (!body.journalCode || !body.bankNo) return NextResponse.json({ error: 'Choose the bank account and the batch.' }, { status: 400 });
+    if (!Array.isArray(body.movements) || !body.movements.length) return NextResponse.json({ error: 'There are no transactions to send.' }, { status: 400 });
     for (const m of body.movements) {
-      if (!isDate(m.date || '')) return NextResponse.json({ error: 'Hay un movimiento sin fecha.' }, { status: 400 });
-      if (!m.lines?.length) return NextResponse.json({ error: `El movimiento del ${m.date} no tiene líneas.` }, { status: 400 });
+      if (!isDate(m.date || '')) return NextResponse.json({ error: 'A transaction has no date.' }, { status: 400 });
+      if (!m.lines?.length) return NextResponse.json({ error: `The transaction of ${m.date} has no lines.` }, { status: 400 });
       const bad = m.lines.find(l => !TYPES.includes(l.accountType) || !String(l.accountNo || '').trim() || !Number.isFinite(l.amount) || !l.amount);
-      if (bad) return NextResponse.json({ error: `Falta la cuenta o el importe en una línea del ${m.date} (${bad.description || 'sin descripción'}).` }, { status: 400 });
+      if (bad) return NextResponse.json({ error: `A line of ${m.date} is missing the account or the amount (${bad.description || 'no description'}).` }, { status: 400 });
     }
 
     const ctx = await getBcContext(companyId);
     const journal = await journalByCode(ctx, body.journalCode);
     const result = await sendToBatch(ctx, journal, body.bankNo, body.movements);
-    await logAction('BANCO: líneas enviadas al General Journal', `${journal.code} · banco ${body.bankNo} · ${body.movements.length} movimientos · ${result.lines} líneas`, companyId);
+    await logAction('BANCO: lines sent to the General Journal', `${journal.code} · bank ${body.bankNo} · transactions: ${body.movements.length} · lines: ${result.lines}`, companyId);
     return NextResponse.json(result);
   } catch (error: any) {
     console.error('BANCO envío:', error);

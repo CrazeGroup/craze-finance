@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, FileDown, X } from 'luci
 import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
 import DocPdfLink from '@/components/DocPdfLink';
+import { useT } from '@/contexts/LanguageContext';
 
 // Desglose de una cuenta del BWA (Power BI): tipo de movimiento (compras / ventas / asientos) → agrupación elegida
 // (mes, proveedor o cliente, origen) → documentos → movimientos contables y líneas del documento (artículo).
@@ -21,18 +22,17 @@ type Doc = {
 type Category = 'purchase' | 'sales' | 'journal';
 
 const CATEGORIES: { id: Category; label: string }[] = [
-  { id: 'purchase', label: 'Facturas y abonos de compra' },
-  { id: 'sales', label: 'Facturas y abonos de venta' },
-  { id: 'journal', label: 'Asientos y otros movimientos' },
+  { id: 'purchase', label: 'Purchase invoices and credit memos' },
+  { id: 'sales', label: 'Sales invoices and credit memos' },
+  { id: 'journal', label: 'Journal entries and other entries' },
 ];
 const GROUPINGS = [
-  { id: 'month', label: 'Mes' },
-  { id: 'partner', label: 'Proveedor / cliente' },
-  { id: 'source', label: 'Origen (Source Code)' },
-  { id: 'none', label: 'Sin agrupar' },
+  { id: 'month', label: 'Month' },
+  { id: 'partner', label: 'Vendor / customer' },
+  { id: 'source', label: 'Source (Source Code)' },
+  { id: 'none', label: 'No grouping' },
 ] as const;
 type Grouping = typeof GROUPINGS[number]['id'];
-const MONTHS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
 const isDocType = (t: string) => /^(Invoice|Credit Memo)$/i.test(t);
 function categoryOf(e: Entry): Category {
@@ -51,7 +51,9 @@ const td = 'py-1.5 px-2 whitespace-nowrap';
 export type DrillSpec = { account: string; accountName: string; scope: string; from: string; to: string; label: string };
 
 export default function BwaAccountDrill({ fmt, spec, onClose }: { fmt: Fmt; spec: DrillSpec; onClose: () => void }) {
+  const { t, tx } = useT();
   const { num, date } = fmt;
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
   const [state, setState] = useState<{ entries: Entry[]; warnings: string[]; cancelled?: number; loading: boolean; error: string | null }>({ entries: [], warnings: [], loading: true, error: null });
   const [grouping, setGrouping] = useState<Grouping>('month');
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -95,9 +97,9 @@ export default function BwaAccountDrill({ fmt, spec, onClose }: { fmt: Fmt; spec
   const multiCompany = new Set(docs.map(d => d.company)).size > 1;
   const total = docs.reduce((s, d) => s + d.amount, 0);
   const groupKey = (d: Doc) => grouping === 'month' ? d.date.substring(0, 7)
-    : grouping === 'partner' ? (d.partner ? `${d.partnerNo}|${d.partner}` : '|(sin proveedor/cliente)')
-    : grouping === 'source' ? (d.sourceCode || '(sin origen)') : 'all';
-  const groupLabel = (k: string) => grouping === 'month' ? `${MONTHS[Number(k.substring(5, 7)) - 1]} ${k.substring(0, 4)}`
+    : grouping === 'partner' ? (d.partner ? `${d.partnerNo}|${d.partner}` : `|${t('(no vendor/customer)')}`)
+    : grouping === 'source' ? (d.sourceCode || t('(no source)')) : 'all';
+  const groupLabel = (k: string) => grouping === 'month' ? `${cap(fmt.monthOnly(k))} ${k.substring(0, 4)}`
     : grouping === 'partner' ? k.split('|').slice(1).join('|') + (k.split('|')[0] ? ` · ${k.split('|')[0]}` : '') : k;
 
   const toggle = (k: string) => setOpen(o => ({ ...o, [k]: !o[k] }));
@@ -115,13 +117,13 @@ export default function BwaAccountDrill({ fmt, spec, onClose }: { fmt: Fmt; spec
 
   const exportExcel = () => {
     const rows = state.entries.map(e => ({
-      Sociedad: e.company, Fecha: e.date, Tipo: CATEGORIES.find(c => c.id === categoryOf(e))!.label, 'Document Type': e.documentType,
-      'Document No.': e.documentNo, 'Cuenta': e.account, 'Cuenta BWA': spec.account, Origen: e.sourceCode, 'Source No.': e.sourceNo,
-      'Proveedor / cliente': e.sourceName, 'Nº doc. externo': e.externalDocNo, Descripción: e.description, Contrapartida: e.balAccount,
-      'Importe (EUR, signo BWA)': e.amount, Eliminación: e.elimination ? 'Sí' : 'No', 'Entry No.': e.entryNo,
+      [t('Entity')]: e.company, [t('Date')]: e.date, [t('Type')]: t(CATEGORIES.find(c => c.id === categoryOf(e))!.label), 'Document Type': e.documentType,
+      'Document No.': e.documentNo, [t('Account')]: e.account, [t('BWA account')]: spec.account, [t('Source')]: e.sourceCode, 'Source No.': e.sourceNo,
+      [t('Vendor / customer')]: e.sourceName, [t('External doc. no.')]: e.externalDocNo, [t('Description')]: e.description, [t('Bal. account')]: e.balAccount,
+      [t('Amount (EUR, BWA sign)')]: e.amount, [t('Elimination')]: e.elimination ? t('Yes') : t('No'), 'Entry No.': e.entryNo,
     }));
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Movimientos');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), t('Entries'));
     XLSX.writeFile(wb, `BWA_${spec.account}_${spec.scope}_${spec.from}_${spec.to}.xlsx`.replace(/\s+/g, '_'));
   };
 
@@ -132,7 +134,7 @@ export default function BwaAccountDrill({ fmt, spec, onClose }: { fmt: Fmt; spec
   };
   const clickSort = (key: SortKey) => setSort(cur => (cur?.key === key ? { key, dir: cur.dir === 1 ? -1 : 1 } : { key, dir: key === 'amount' || key === 'date' ? -1 : 1 }));
   const Th = ({ k, label, right }: { k: SortKey; label: string; right?: boolean }) => (
-    <th className={`${th} ${right ? 'text-right' : ''} cursor-pointer select-none hover:text-gray-900`} onClick={() => clickSort(k)} title="Ordenar">
+    <th className={`${th} ${right ? 'text-right' : ''} cursor-pointer select-none hover:text-gray-900`} onClick={() => clickSort(k)} title={t('Sort')}>
       <span className={`inline-flex items-center gap-0.5 ${right ? 'justify-end' : ''}`}>
         {label}{sort?.key === k && (sort.dir === 1 ? <ArrowUp size={11} /> : <ArrowDown size={11} />)}
       </span>
@@ -145,9 +147,9 @@ export default function BwaAccountDrill({ fmt, spec, onClose }: { fmt: Fmt; spec
     <table className="w-full text-[12px] bg-white border border-gray-200 rounded-lg">
       <thead><tr className="border-b border-gray-200">
         <th className={th} />
-        {multiCompany && <Th k="company" label="Sociedad" />}
-        <Th k="documentNo" label="Document No." /><Th k="documentType" label="Tipo" /><Th k="date" label="Fecha" /><Th k="partner" label="Proveedor / cliente" />
-        <Th k="externalDocNo" label="Nº doc. externo" /><Th k="description" label="Descripción" /><Th k="sourceCode" label="Origen" /><Th k="amount" label="Importe" right />
+        {multiCompany && <Th k="company" label={t('Entity')} />}
+        <Th k="documentNo" label="Document No." /><Th k="documentType" label={t('Type')} /><Th k="date" label={t('Date')} /><Th k="partner" label={t('Vendor / customer')} />
+        <Th k="externalDocNo" label={t('External doc. no.')} /><Th k="description" label={t('Description')} /><Th k="sourceCode" label={t('Source')} /><Th k="amount" label={t('Amount')} right />
       </tr></thead>
       <tbody>
         {list.map(d => (
@@ -168,15 +170,15 @@ export default function BwaAccountDrill({ fmt, spec, onClose }: { fmt: Fmt; spec
               <tr><td colSpan={multiCompany ? 10 : 9} className="bg-gray-50 px-6 py-3 space-y-3">
                 {lineKind(d) && (
                   <div>
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">Líneas del documento</p>
-                    {lines[d.key]?.loading ? <p className="text-xs text-gray-500">Leyendo líneas de BC…</p>
-                      : lines[d.key]?.error ? <p className="text-xs text-red-700">{lines[d.key]?.error}</p>
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">{t('Document lines')}</p>
+                    {lines[d.key]?.loading ? <p className="text-xs text-gray-500">{t('Reading lines from BC…')}</p>
+                      : lines[d.key]?.error ? <p className="text-xs text-red-700">{tx(lines[d.key]?.error || '')}</p>
                       : (
                         <table className="w-full text-[12px]">
                           <thead><tr className="border-b border-gray-200">
-                            <th className={th}>Tipo</th><th className={th}>Nº (artículo / cuenta)</th><th className={th}>Descripción</th>
+                            <th className={th}>{t('Type')}</th><th className={th}>{t('No. (item / account)')}</th><th className={th}>{t('Description')}</th>
                             <th className={th}>Gen. Prod. Posting Group</th><th className={th}>Deferral</th>
-                            <th className={`${th} text-right`}>Cantidad</th><th className={`${th} text-right`}>Coste / precio unit.</th><th className={`${th} text-right`}>Importe sin IVA</th>
+                            <th className={`${th} text-right`}>{t('Quantity')}</th><th className={`${th} text-right`}>{t('Unit cost / price')}</th><th className={`${th} text-right`}>{t('Amount excl. VAT')}</th>
                           </tr></thead>
                           <tbody>
                             {(lines[d.key]?.lines || []).map(l => (
@@ -194,22 +196,22 @@ export default function BwaAccountDrill({ fmt, spec, onClose }: { fmt: Fmt; spec
                           </tbody>
                         </table>
                       )}
-                    <p className="text-[11px] text-gray-400 mt-1">Importes de las líneas en la divisa del documento y con su signo; el importe del BWA está en EUR con el signo invertido.</p>
+                    <p className="text-[11px] text-gray-400 mt-1">{t('Line amounts in the document currency and with their sign; the BWA amount is in EUR with the sign inverted.')}</p>
                   </div>
                 )}
                 <div>
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">Movimientos en la cuenta</p>
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">{t('Entries on the account')}</p>
                   <table className="w-full text-[12px]">
                     <thead><tr className="border-b border-gray-200">
-                      <th className={th}>Fecha</th><th className={th}>Cuenta</th><th className={th}>Origen</th><th className={th}>Descripción</th>
-                      <th className={th}>Contrapartida</th><th className={th}>Entry No.</th><th className={`${th} text-right`}>Importe</th>
+                      <th className={th}>{t('Date')}</th><th className={th}>{t('Account')}</th><th className={th}>{t('Source')}</th><th className={th}>{t('Description')}</th>
+                      <th className={th}>{t('Bal. account')}</th><th className={th}>Entry No.</th><th className={`${th} text-right`}>{t('Amount')}</th>
                     </tr></thead>
                     <tbody>
                       {d.entries.map(e => (
                         <tr key={`${e.company}-${e.entryNo}`} className="border-b border-gray-100">
                           <td className={td}>{date(e.date)}</td><td className={td}>{e.account}</td><td className={td}>{e.sourceCode}</td>
                           <td className={td}>{e.description}</td><td className={td}>{e.balAccount || '–'}</td>
-                          <td className={`${td} text-gray-400`}>{e.entryNo}{e.elimination ? ' · eliminación' : ''}</td>
+                          <td className={`${td} text-gray-400`}>{e.entryNo}{e.elimination ? ` · ${t('elimination')}` : ''}</td>
                           <td className={`${td} text-right tabular-nums`}>{num(e.amount, 2)}</td>
                         </tr>
                       ))}
@@ -232,20 +234,20 @@ export default function BwaAccountDrill({ fmt, spec, onClose }: { fmt: Fmt; spec
         <p className="text-xs text-gray-500">{spec.scope} · {spec.label} ({date(spec.from)} – {date(spec.to)})</p>
         {!state.loading && !state.error && <p className="text-sm font-bold tabular-nums">{num(total, 2)} €</p>}
         <div className="ml-auto flex items-center gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Agrupar por</span>
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">{t('Group by')}</span>
           <select value={grouping} onChange={e => setGrouping(e.target.value as Grouping)} className="border border-gray-300 rounded-lg px-2 py-1 text-sm font-semibold bg-white">
-            {GROUPINGS.map(g => <option key={g.id} value={g.id}>{g.label}</option>)}
+            {GROUPINGS.map(g => <option key={g.id} value={g.id}>{t(g.label)}</option>)}
           </select>
-          <button onClick={exportExcel} disabled={state.loading || !state.entries.length} title="Exportar movimientos a Excel"
+          <button onClick={exportExcel} disabled={state.loading || !state.entries.length} title={t('Export entries to Excel')}
             className="p-1.5 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40"><FileDown size={15} /></button>
-          <button onClick={onClose} title="Cerrar desglose" className="p-1.5 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900"><X size={15} /></button>
+          <button onClick={onClose} title={t('Close breakdown')} className="p-1.5 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900"><X size={15} /></button>
         </div>
       </div>
-      {!!state.cancelled && <p className="text-xs text-gray-500">{state.cancelled} {state.cancelled === 1 ? 'factura anulada por su abono no se muestra' : 'facturas anuladas por su abono no se muestran'} (cada pareja suma 0; el total no cambia).</p>}
-      {state.warnings.map(w => <p key={w} className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">{w}</p>)}
-      {state.error ? <p className="text-sm text-red-700">{state.error}</p>
-        : state.loading ? <p className="text-sm text-gray-500">Leyendo los movimientos de {spec.account} en Business Central…</p>
-        : !docs.length ? <p className="text-sm text-gray-500">Sin movimientos en este periodo.</p>
+      {!!state.cancelled && <p className="text-xs text-gray-500">{state.cancelled === 1 ? t('1 invoice cancelled by its credit memo is not shown (each pair adds up to 0; the total does not change).') : t('{n} invoices cancelled by their credit memo are not shown (each pair adds up to 0; the total does not change).', { n: state.cancelled })}</p>}
+      {state.warnings.map(w => <p key={w} className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">{tx(w)}</p>)}
+      {state.error ? <p className="text-sm text-red-700">{tx(state.error)}</p>
+        : state.loading ? <p className="text-sm text-gray-500">{t('Reading the entries of {account} from Business Central…', { account: spec.account })}</p>
+        : !docs.length ? <p className="text-sm text-gray-500">{t('No entries in this period.')}</p>
         : CATEGORIES.map(cat => {
           const list = docs.filter(d => d.category === cat.id);
           if (!list.length) return null;
@@ -258,8 +260,8 @@ export default function BwaAccountDrill({ fmt, spec, onClose }: { fmt: Fmt; spec
             <div key={cat.id} className="bg-white border border-gray-200 rounded-lg">
               <button onClick={() => toggle(catKey)} className="w-full flex items-center gap-2 px-3 py-2 text-left">
                 {open[catKey] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                <span className="font-semibold text-gray-900">{cat.label}</span>
-                <span className="ml-auto text-xs text-gray-500">{list.length} documentos</span>
+                <span className="font-semibold text-gray-900">{t(cat.label)}</span>
+                <span className="ml-auto text-xs text-gray-500">{t('{n} documents', { n: list.length })}</span>
                 <span className="w-36 text-right font-bold tabular-nums">{num(list.reduce((s, d) => s + d.amount, 0), 2)}</span>
               </button>
               {open[catKey] && (
@@ -271,7 +273,7 @@ export default function BwaAccountDrill({ fmt, spec, onClose }: { fmt: Fmt; spec
                         <button onClick={() => toggle(gKey)} className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm">
                           {open[gKey] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                           <span className="text-gray-800">{groupLabel(k)}</span>
-                          <span className="ml-auto text-xs text-gray-500">{g.length} doc.</span>
+                          <span className="ml-auto text-xs text-gray-500">{t('{n} doc.', { n: g.length })}</span>
                           <span className="w-36 text-right font-semibold tabular-nums">{num(g.reduce((s, d) => s + d.amount, 0), 2)}</span>
                         </button>
                         {open[gKey] && <div className="px-2 pb-2"><DocTable list={g} /></div>}

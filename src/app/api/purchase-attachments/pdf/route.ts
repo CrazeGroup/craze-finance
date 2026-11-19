@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getBcContext, odataUrl } from '@/lib/bcClient';
+import { serverLang, serverT } from '@/lib/i18nServer';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -9,15 +10,15 @@ export const maxDuration = 60;
 // los desgloses de Controlling. ?no=<Document No.>&type=purchInv|purchCrMemo|salesInv|salesCrMemo[&company=][&id=<adjunto>]
 // Con un solo adjunto lo devuelve directamente (el navegador muestra el PDF); con varios, una lista para elegir.
 const TYPES: Record<string, { entity: string; parentType: string; label: string }> = {
-  purchInv: { entity: 'purchaseInvoices', parentType: 'Purchase Invoice', label: 'factura de compra' },
-  purchCrMemo: { entity: 'purchaseCreditMemos', parentType: 'Purchase Credit Memo', label: 'abono de compra' },
-  salesInv: { entity: 'salesInvoices', parentType: 'Sales Invoice', label: 'factura de venta' },
-  salesCrMemo: { entity: 'salesCreditMemos', parentType: 'Sales Credit Memo', label: 'abono de venta' },
+  purchInv: { entity: 'purchaseInvoices', parentType: 'Purchase Invoice', label: 'purchase invoice' },
+  purchCrMemo: { entity: 'purchaseCreditMemos', parentType: 'Purchase Credit Memo', label: 'purchase credit memo' },
+  salesInv: { entity: 'salesInvoices', parentType: 'Sales Invoice', label: 'sales invoice' },
+  salesCrMemo: { entity: 'salesCreditMemos', parentType: 'Sales Credit Memo', label: 'sales credit memo' },
 };
 const q = (s: string) => s.replace(/'/g, "''");
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
-const page = (title: string, body: string, status = 200) => new NextResponse(
-  `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(title)}</title></head>` +
+const page = (title: string, body: string, status = 200, lang = 'en') => new NextResponse(
+  `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><title>${esc(title)}</title></head>` +
   `<body style="font-family:system-ui,sans-serif;padding:32px;color:#111"><h2 style="font-size:18px">${esc(title)}</h2>${body}</body></html>`,
   { status, headers: { 'Content-Type': 'text/html; charset=utf-8' } },
 );
@@ -26,7 +27,8 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const no = (searchParams.get('no') || '').trim();
   const type = TYPES[searchParams.get('type') || 'purchInv'];
-  if (!no || !type) return page('Falta el nº de documento o el tipo', '', 400);
+  const t = await serverT(), lang = await serverLang();
+  if (!no || !type) return page(t('The document no. or the type is missing'), '', 400, lang);
   try {
     const company = searchParams.get('company') || (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
     const ctx = await getBcContext(company === 'ALL' ? 'CRAZE' : company);
@@ -37,11 +39,11 @@ export async function GET(req: Request) {
     };
 
     const docs = (await get(odataUrl(`${ctx.apiBase}/${type.entity}`, { $filter: `number eq '${q(no)}'`, $select: 'id,number' }))).value || [];
-    if (!docs.length) return page(`No se encuentra la ${type.label} ${no} en ${ctx.companyName}`, '', 404);
+    if (!docs.length) return page(t('Cannot find the {doc} {no} in {company}', { doc: t(type.label), no, company: ctx.companyName }), '', 404, lang);
     const atts: any[] = (await get(odataUrl(`${ctx.apiBase}/documentAttachments`, {
       $filter: `parentType eq '${type.parentType}' and parentId eq ${docs[0].id}`, $select: 'id,fileName,lastModifiedDateTime',
     }))).value || [];
-    if (!atts.length) return page(`La ${type.label} ${no} no tiene documentos adjuntos en BC`, `<p>${esc(ctx.companyName)}</p>`, 404);
+    if (!atts.length) return page(t('The {doc} {no} has no attachments in BC', { doc: t(type.label), no }), `<p>${esc(ctx.companyName)}</p>`, 404, lang);
 
     const id = searchParams.get('id');
     const att = id ? atts.find(a => a.id === id) : atts.length === 1 ? atts[0] : null;
@@ -66,6 +68,6 @@ export async function GET(req: Request) {
       },
     });
   } catch (error: any) {
-    return page('No se ha podido leer el adjunto de BC', `<pre style="white-space:pre-wrap">${esc(error.message)}</pre>`, 500);
+    return page(t('Could not read the attachment from BC'), `<pre style="white-space:pre-wrap">${esc(error.message)}</pre>`, 500, lang);
   }
 }

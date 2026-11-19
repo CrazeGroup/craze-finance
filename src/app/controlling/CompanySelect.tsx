@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { COMPANIES, companyLabel } from '@/contexts/CompanyContext';
+import { useT } from '@/contexts/LanguageContext';
 
 // Selector de empresa de cada informe de Controlling (como el de BWA (Power BI)). "CRAZE Consolidated" suma todas las
 // empresas (en EUR cuando el informe lo convierte); arranca con la empresa del menú.
@@ -16,9 +17,10 @@ export function useReportCompany(globalCompany: string, allowConsolidated = true
 }
 
 export default function CompanySelect({ value, onChange, allowConsolidated = true }: { value: string; onChange: (v: string) => void; allowConsolidated?: boolean }) {
+  const { t } = useT();
   return (
     <label className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
-      CRAZE Company
+      {t('CRAZE Company')}
       <select value={value} onChange={e => onChange(e.target.value)}
         className="block mt-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-900 bg-white normal-case tracking-normal">
         {allowConsolidated && <option value={CONSOLIDATED}>{CONSOLIDATED}</option>}

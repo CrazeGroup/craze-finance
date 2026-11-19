@@ -27,7 +27,7 @@ const VIEW_BRIEF: Record<SummaryView, string> = {
 export async function generateSummary(view: SummaryView, lang: SummaryLang, month: string, company: string, data: unknown, force = false) {
   const useOpenRouter = !!process.env.OPENROUTER_API_KEY;
   const useClaude = !useOpenRouter && !!process.env.ANTHROPIC_API_KEY;
-  if (!useOpenRouter && !useClaude && !process.env.GEMINI_API_KEY) throw new Error('No hay ninguna IA configurada: añade OPENROUTER_API_KEY (o ANTHROPIC_API_KEY / GEMINI_API_KEY) en las variables de entorno de Vercel.');
+  if (!useOpenRouter && !useClaude && !process.env.GEMINI_API_KEY) throw new Error('No AI is configured: add OPENROUTER_API_KEY (or ANTHROPIC_API_KEY / GEMINI_API_KEY) to the Vercel environment variables.');
   const payload = JSON.stringify(data);
   const hash = createHash('sha1').update(`${view}|${lang}|${company}|${month}|${payload}`).digest('hex').substring(0, 16);
 
@@ -51,7 +51,7 @@ ${payload}`;
     const json = text.match(/\{[\s\S]*\}/)?.[0] ?? text;
     const parsed = JSON.parse(json.replace(/^```json\s*|\s*```$/g, ''));
     const points: string[] = Array.isArray(parsed) ? parsed : parsed.points;
-    if (!Array.isArray(points) || points.length === 0) throw new Error('La IA no devolvió puntos clave');
+    if (!Array.isArray(points) || points.length === 0) throw new Error('The AI returned no key points');
     return { points: points.map(String), generatedAt: new Date().toISOString() };
   }, force);
 }
@@ -69,14 +69,14 @@ async function generateWithClaude(prompt: string): Promise<string> {
       output_config: { effort: 'medium' },
       messages: [{ role: 'user', content: prompt }],
     });
-    if (response.stop_reason === 'refusal') throw new Error('La IA ha rechazado generar los puntos clave.');
+    if (response.stop_reason === 'refusal') throw new Error('The AI refused to generate the key points.');
     const text = response.content.map(b => (b.type === 'text' ? b.text : '')).join('').trim();
-    if (!text) throw new Error('La IA no devolvió texto');
+    if (!text) throw new Error('The AI returned no text');
     return text;
   } catch (error) {
-    if (error instanceof Anthropic.AuthenticationError) throw new Error('La clave ANTHROPIC_API_KEY no es válida.');
-    if (error instanceof Anthropic.RateLimitError) throw new Error('La IA (Claude) está saturada. Pulsa Regenerar en unos minutos.');
-    if (error instanceof Anthropic.APIError) throw new Error(`Error de la IA (Claude ${error.status}): ${String(error.message).substring(0, 160)}`);
+    if (error instanceof Anthropic.AuthenticationError) throw new Error('The ANTHROPIC_API_KEY is not valid.');
+    if (error instanceof Anthropic.RateLimitError) throw new Error('The AI (Claude) is overloaded. Click Regenerate in a few minutes.');
+    if (error instanceof Anthropic.APIError) throw new Error(`AI error (Claude ${error.status}): ${String(error.message).substring(0, 160)}`);
     throw error;
   }
 }
@@ -107,5 +107,5 @@ async function generateWithRetry(genAI: GoogleGenerativeAI, prompt: string): Pro
       }
     }
   }
-  throw new Error(`La IA no está disponible ahora mismo (${String((lastError as any)?.message || lastError).substring(0, 120)}). Pulsa Regenerar en unos minutos.`);
+  throw new Error(`The AI is not available right now (${String((lastError as any)?.message || lastError).substring(0, 120)}). Click Regenerate in a few minutes.`);
 }

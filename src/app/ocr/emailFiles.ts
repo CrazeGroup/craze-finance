@@ -27,7 +27,7 @@ async function fromEml(f: File): Promise<{ subject: string; pdfs: File[] }> {
   return { subject: email.subject || f.name, pdfs };
 }
 
-// PDFs de una lista de ficheros (los de los correos, en su orden) y avisos para la página
+// PDFs de una lista de ficheros (los de los correos, en su orden) y avisos para la página (en inglés; la página los traduce con tx)
 export async function expandFiles(list: File[]): Promise<{ pdfs: File[]; notes: string[] }> {
   const pdfs: File[] = [];
   const notes: string[] = [];
@@ -37,12 +37,12 @@ export async function expandFiles(list: File[]): Promise<{ pdfs: File[]; notes: 
       else if (isMsg(f) || isEml(f)) {
         const mail = isMsg(f) ? await fromMsg(f) : await fromEml(f);
         notes.push(mail.pdfs.length
-          ? `Correo «${mail.subject}»: ${mail.pdfs.length} PDF (${mail.pdfs.map(p => p.name).join(', ')})`
-          : `Correo «${mail.subject}»: no tiene PDFs adjuntos`);
+          ? `Email «${mail.subject}»: ${mail.pdfs.length} PDF (${mail.pdfs.map(p => p.name).join(', ')})`
+          : `Email «${mail.subject}»: no PDF attachments`);
         pdfs.push(...mail.pdfs);
-      } else notes.push(`${f.name}: no es un PDF ni un correo, no se usa`);
+      } else notes.push(`${f.name}: not a PDF or an email, skipped`);
     } catch (e: any) {
-      notes.push(`${f.name}: no se ha podido leer (${e.message})`);
+      notes.push(`${f.name}: could not be read (${e.message})`);
     }
   }
   return { pdfs, notes };

@@ -11,14 +11,14 @@ export async function POST(req: Request) {
   try {
     const b = await req.json();
     const key = String(b.key || '');
-    if (!key) return NextResponse.json({ error: 'Falta la línea' }, { status: 400 });
+    if (!key) return NextResponse.json({ error: 'The line is missing' }, { status: 400 });
     const remove = !!b.remove;
     if (!remove && (!/^0599\d_\d{4}$/.test(String(b.magazine || '')) || !/^\d{3}\.\d{3}$/.test(String(b.task || '')))) {
-      return NextResponse.json({ error: 'Elige la revista y la tarea' }, { status: 400 });
+      return NextResponse.json({ error: 'Choose the magazine and the task' }, { status: 400 });
     }
     const session: any = await getSession();
     await setManual(key, remove ? null : { magazine: String(b.magazine), task: String(b.task) }, session?.username || '');
-    await logAction(remove ? 'Magazine Profitability: asignación a mano quitada' : 'Magazine Profitability: línea asignada a mano',
+    await logAction(remove ? 'Magazine Profitability: manual assignment removed' : 'Magazine Profitability: line assigned manually',
       `${b.doc || key} ${b.description || ''}${remove ? '' : ` → ${b.magazine} / ${b.task}`}`.substring(0, 900), 'Craze Entertainment');
     return NextResponse.json({ ok: true });
   } catch (error: any) {

@@ -13,11 +13,11 @@ export async function GET(req: Request) {
   try {
     const cookieStore = await cookies();
     const company = cookieStore.get('craze_selected_company')?.value || 'CRAZE';
-    if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
+    if (company === 'ALL') return NextResponse.json({ error: 'Select a specific company.' }, { status: 400 });
     const { searchParams } = new URL(req.url);
     const from = searchParams.get('from');
     const to = searchParams.get('to');
-    if (!isDate(from) || !isDate(to) || from > to) return NextResponse.json({ error: 'Rango de fechas no válido' }, { status: 400 });
+    if (!isDate(from) || !isDate(to) || from > to) return NextResponse.json({ error: 'Invalid date range' }, { status: 400 });
     const ctx = await getBcContext(company);
     return NextResponse.json(await paymentProposal(ctx, company, from, to));
   } catch (error: any) {

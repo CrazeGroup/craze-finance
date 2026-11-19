@@ -57,7 +57,7 @@ export async function POST(req: Request) {
       }
     });
 
-    await logAction('Crear Cashflow Manual', `Importe: ${amount}, Desc: ${description}`, companyId);
+    await logAction('Create manual cashflow entry', `Amount: ${amount}, Desc: ${description}`, companyId);
     return NextResponse.json(entry);
   } catch (error) {
     return NextResponse.json({ error: 'Failed to create manual entry' }, { status: 500 });
@@ -129,7 +129,7 @@ export async function PUT(req: Request) {
         where: { id: { in: invoiceIds } },
         data: { cashflowDate: new Date(date) }
       });
-      await logAction('Mover Fechas Cashflow', `Se movieron ${invoiceIds.length} facturas a ${date}`, companyId);
+      await logAction('Move cashflow dates', `Moved ${invoiceIds.length} invoices to ${date}`, companyId);
       return NextResponse.json({ success: true });
     }
     
@@ -145,7 +145,7 @@ export async function PUT(req: Request) {
       }
     });
 
-    await logAction('Editar Cashflow Manual', `ID: ${id}, Nuevo Importe: ${amount}`, companyId);
+    await logAction('Edit manual cashflow entry', `ID: ${id}, New amount: ${amount}`, companyId);
     return NextResponse.json(entry);
   } catch (error) {
     return NextResponse.json({ error: 'Failed to update' }, { status: 500 });
@@ -165,7 +165,7 @@ export async function DELETE(req: Request) {
       await prisma.cashflowManualEntry.deleteMany({
         where: { companyId }
       });
-      await logAction('Eliminar Todo Cashflow Manual', `Se eliminaron todos los registros manuales`, companyId);
+      await logAction('Delete all manual cashflow entries', 'All manual entries were deleted', companyId);
       return NextResponse.json({ success: true, message: 'All manual entries deleted' });
     }
 

@@ -11,7 +11,7 @@ export async function POST(req: Request) {
   try {
     const company = (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
     const body = await req.json();
-    if (!body?.atc) return NextResponse.json({ error: 'Falta el AT/C.' }, { status: 400 });
+    if (!body?.atc) return NextResponse.json({ error: 'The AT/C is missing.' }, { status: 400 });
     const list = (v: unknown) => (Array.isArray(v) ? v : String(v || '').split(/[,;\n]/)).map(String);
     const session: any = await getSession().catch(() => null);
     const manual = await setHistoryManual(company, String(body.atc), { orders: list(body.orders), transport: list(body.transport), by: session?.username });

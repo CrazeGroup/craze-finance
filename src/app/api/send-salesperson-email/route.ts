@@ -7,7 +7,7 @@ export async function POST(request: Request) {
     const { customerId, invoiceIds, to, subject, message, pdfBase64 } = await request.json();
 
     if (!customerId || !invoiceIds || !Array.isArray(invoiceIds) || invoiceIds.length === 0 || !to || !subject || !message || !pdfBase64) {
-      return NextResponse.json({ error: 'Faltan campos requeridos' }, { status: 400 });
+      return NextResponse.json({ error: 'Required fields are missing' }, { status: 400 });
     }
 
     // Check if we have DB config, else use ethereal
@@ -102,8 +102,8 @@ export async function POST(request: Request) {
       await prisma.actionLog.create({
         data: {
           user: 'Sistema',
-          action: 'Correo a comercial',
-          details: `Cliente: ${customer.name} | Comercial: ${to} | ${invoiceIds.length} factura(s)`,
+          action: 'E-mail to salesperson',
+          details: `Customer: ${customer.name} | Salesperson: ${to} | Invoices: ${invoiceIds.length}`,
           companyId: customer.companyId
         }
       });

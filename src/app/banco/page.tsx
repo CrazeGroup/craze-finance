@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, ChevronDown, FileText, Loader2, Plus, Send, Trash2, Upload } from 'lucide-react';
 import { companyLabel, useCompany } from '@/contexts/CompanyContext';
+import { useT } from '@/contexts/LanguageContext';
 import FeedbackButton, { sendFeedback } from '@/components/FeedbackButton';
 import type { AccountType, MovementResult, SuggestedLine } from '@/lib/banco';
 
@@ -14,19 +15,19 @@ type Row = MovementResult & { selected: boolean; documentNo: string; lines: Sugg
 type Filter = 'new' | 'batch' | 'posted' | 'all';
 
 const TYPES: { value: AccountType; label: string }[] = [
-  { value: 'G/L Account', label: 'Cuenta' }, { value: 'Customer', label: 'Cliente' },
-  { value: 'Vendor', label: 'Proveedor' }, { value: 'Bank Account', label: 'Banco' },
+  { value: 'G/L Account', label: 'Account' }, { value: 'Customer', label: 'Customer' },
+  { value: 'Vendor', label: 'Vendor' }, { value: 'Bank Account', label: 'Bank' },
 ];
-const fmt = (v: number) => v.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtNum = (v: number, locale = 'es-ES') => v.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fdate = (d: string) => d.split('-').reverse().join('.');
 const cents = (v: number) => Math.round(v * 100);
 // Feedback: la línea propuesta y la enviada, para ver qué se ha corregido
-const lineText = (l: SuggestedLine) => `${l.accountType || '—'} ${l.accountNo || '—'}${l.appliesToDocNo ? ` liq. ${l.appliesToDocNo}` : ''} ${fmt(l.amount)}`;
+const lineText = (l: SuggestedLine) => `${l.accountType || '—'} ${l.accountNo || '—'}${l.appliesToDocNo ? ` appl. ${l.appliesToDocNo}` : ''} ${fmtNum(l.amount)}`;
 const rowChange = (r: Row) => {
   const proposed = (r.suggestion?.lines || []).filter(l => l.accountNo);
   if (!proposed.length) return null;
   const a = proposed.map(lineText).join(' + '), b = r.lines.map(lineText).join(' + ');
-  return a === b ? null : `${fdate(r.date)} · ${(r.name || r.purpose).slice(0, 60)} · ${fmt(r.amount)}: propuesto ${a} (${r.suggestion?.source || 'sin origen'}) → enviado ${b}`;
+  return a === b ? null : `${fdate(r.date)} · ${(r.name || r.purpose).slice(0, 60)} · ${fmtNum(r.amount)}: proposed ${a} (${r.suggestion?.source || 'no source'}) → sent ${b}`;
 };
 const movementContext = (r: Row) => ({
   date: r.date, name: r.name, purpose: r.purpose, text: r.text, iban: r.iban, amount: r.amount, suggestion: r.suggestion, doubtful: r.doubtful, sent: r.lines, documentNo: r.documentNo,
@@ -36,13 +37,15 @@ const linesOk = (r: Row) => r.lines.length > 0 && r.lines.every(l => l.accountTy
 
 export default function BancoPage() {
   const { selectedCompany } = useCompany();
+  const { t, tx, locale } = useT();
+  const fmt = (v: number) => fmtNum(v, locale);
   const [banks, setBanks] = useState<Bank[]>([]);
   const [journals, setJournals] = useState<Journal[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
   // Cuentas por tipo, para los desplegables: [nº, nombre]
   const accountLists = useMemo(() => {
     const out: Record<string, [string, string][]> = {};
-    for (const [k, name] of Object.entries(names)) { const [t, no] = k.split('|'); (out[t] ||= []).push([no, name]); }
+    for (const [k, name] of Object.entries(names)) { const [type, no] = k.split('|'); (out[type] ||= []).push([no, name]); }
     for (const l of Object.values(out)) l.sort((a, b) => a[0].localeCompare(b[0]));
     return out;
   }, [names]);
@@ -64,7 +67,7 @@ export default function BancoPage() {
 
   useEffect(() => {
     if (selectedCompany === 'ALL') return;
-    setLoading('Cargando cuentas de banco…');
+    setLoading(t('Loading bank accounts…'));
     fetch('/api/banco').then(r => r.json()).then(d => {
       if (d.error) throw new Error(d.error);
       setBanks(d.banks);
@@ -105,7 +108,7 @@ export default function BancoPage() {
 
   const analyze = async () => {
     if ((!amazon && !file) || !bankNo) return;
-    setLoading(amazon ? 'Leyendo los pagos de Amazon y cuadrándolos con AMAVEN (Amazon deja leer un pago cada 2 s)…' : 'Cuadrando el extracto con BC…');
+    setLoading(amazon ? t('Reading the Amazon payments and matching them with AMAVEN (Amazon allows reading one payment every 2 s)…') : t('Matching the statement with BC…'));
     setError('');
     setSent(null);
     try {
@@ -123,7 +126,7 @@ export default function BancoPage() {
         res = await fetch('/api/banco', { method: 'POST', body: form });
       }
       const d = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-      if (!res.ok) throw new Error(d.error || 'Error al analizar el extracto');
+      if (!res.ok) throw new Error(d.error || t('Error analysing the statement'));
       setInfo({ warning: d.warning, entries: d.entries, from: d.from, cutoff: d.cutoff || null, held: d.held || [] });
       setAmazonInfo(d.amazon || null);
       setRows(d.movements.map((m: MovementResult) => {
@@ -153,8 +156,8 @@ export default function BancoPage() {
 
   const send = async () => {
     if (!toSend.length || invalid.length) return;
-    if (!confirm(`¿Enviar ${toSend.length} movimientos (${toSend.reduce((t, r) => t + r.lines.length, 0)} líneas) al lote ${journalCode}?`)) return;
-    setLoading(`Enviando al lote ${journalCode}…`);
+    if (!confirm(t('Send {n} movements ({lines} lines) to batch {code}?', { n: toSend.length, lines: toSend.reduce((s, r) => s + r.lines.length, 0), code: journalCode }))) return;
+    setLoading(t('Sending to batch {code}…', { code: journalCode }));
     setError('');
     try {
       const res = await fetch('/api/banco/send', {
@@ -162,12 +165,12 @@ export default function BancoPage() {
         body: JSON.stringify({ journalCode, bankNo, movements: toSend.map(r => ({ date: r.date, documentNo: r.documentNo, lines: r.lines })) }),
       });
       const d = await res.json();
-      if (!res.ok) throw new Error(d.error || 'Error al enviar a BC');
+      if (!res.ok) throw new Error(d.error || t('Error sending to BC'));
       setSent(d);
       // Feedback automático: los movimientos en los que se cambió la cuenta o el reparto propuestos
       const changed = toSend.filter(r => rowChange(r));
       if (changed.length) sendFeedback({
-        area: 'banco', kind: 'auto', title: `${bankNo} → lote ${journalCode}: ${changed.length} de ${toSend.length} movimientos corregidos`,
+        area: 'banco', kind: 'auto', title: `${bankNo} → batch ${journalCode}: ${changed.length} of ${toSend.length} movements corrected`,
         changes: changed.map(r => rowChange(r)!), context: { bankNo, journalCode, movements: changed.map(movementContext) },
       }).catch(() => { /* el feedback no impide el envío */ });
       const done = new Set(toSend.map(r => r.idx));
@@ -180,7 +183,7 @@ export default function BancoPage() {
   };
 
   if (selectedCompany === 'ALL') {
-    return <div className="min-h-screen bg-[#F3F4F7] p-8"><p className="text-sm text-gray-600">Selecciona una empresa concreta en el menú lateral.</p></div>;
+    return <div className="min-h-screen bg-[#F3F4F7] p-8"><p className="text-sm text-gray-600">{t('Select a specific company in the side menu.')}</p></div>;
   }
 
   const input = 'border border-gray-200 rounded-md px-2 py-1 text-sm focus:ring-2 focus:ring-black outline-none';
@@ -191,7 +194,7 @@ export default function BancoPage() {
         <div className="w-full px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="mr-auto">
             <p className="font-bold text-gray-900 leading-tight text-lg">BANCO</p>
-            <p className="text-xs text-gray-500">{companyLabel(selectedCompany)} · {amazon ? 'desglose de los pagos de Amazon Vendor (API) → AMAVEN; el cobro se sube con el extracto de SPARKASSE' : 'extracto del banco → General Journal'}</p>
+            <p className="text-xs text-gray-500">{companyLabel(selectedCompany)} · {amazon ? t('breakdown of the Amazon Vendor payments (API) → AMAVEN; the receipt is uploaded with the SPARKASSE statement') : t('bank statement → General Journal')}</p>
           </div>
           {loading && <span className="flex items-center gap-2 text-sm text-gray-500"><Loader2 size={16} className="animate-spin" /> {loading}</span>}
         </div>
@@ -206,57 +209,57 @@ export default function BancoPage() {
             </select>
           </label>
           <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-            Lote del General Journal
+            {t('General Journal batch')}
             <select value={journalCode} onChange={e => setJournalCode(e.target.value)} className={`${input} block mt-1 normal-case tracking-normal font-normal min-w-56`}>
-              <option value="">(ninguno)</option>
+              <option value="">{t('(none)')}</option>
               {journals.map(j => <option key={j.code} value={j.code}>{j.code}{j.name && j.name !== j.code ? ` · ${j.name}` : ''}{j.bankNo ? ` → ${j.bankNo}` : ''}</option>)}
             </select>
           </label>
           {amazon ? (
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider" title="Vacío: desde la última revisión (una semana antes). Pon una fecha para volver a leer de Amazon los pagos desde ese día.">
-              Releer Amazon desde (opcional)
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider" title={t('Empty: since the last check (one week before). Enter a date to read the Amazon payments again from that day.')}>
+              {t('Re-read Amazon from (optional)')}
               <input type="date" value={amazonFrom} onChange={e => setAmazonFrom(e.target.value)} className={`${input} block mt-1 normal-case tracking-normal font-normal`} />
             </label>
           ) : (
           <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-            Extracto (CSV o Excel)
+            {t('Statement (CSV or Excel)')}
             {/* El input de fichero, oculto: el botón es la etiqueta */}
             <label className={`mt-1 flex items-center gap-2 cursor-pointer border rounded-lg px-3 py-2 text-sm font-semibold normal-case tracking-normal max-w-xs ${file ? 'border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100' : 'border-dashed border-indigo-400 bg-white text-indigo-700 hover:bg-indigo-50'}`}>
               <FileText size={16} className="shrink-0" />
-              <span className="truncate">{file ? file.name : 'Seleccionar extracto…'}</span>
+              <span className="truncate">{file ? file.name : t('Select statement…')}</span>
               <input type="file" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={e => chooseFile(e.target.files?.[0] || null)} className="hidden" />
             </label>
           </div>
           )}
           <button onClick={analyze} disabled={(!amazon && !file) || !bankNo || !!loading}
             className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
-            <Upload size={16} /> {amazon ? 'Leer pagos de Amazon' : 'Analizar'}
+            <Upload size={16} /> {amazon ? t('Read Amazon payments') : t('Analyse')}
           </button>
         </section>
 
-        {error && <p className="bg-white border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-center gap-2"><AlertCircle size={16} /> {error}</p>}
+        {error && <p className="bg-white border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-center gap-2"><AlertCircle size={16} /> {tx(error)}</p>}
         {amazon && amazonInfo && (
           <p className="text-xs text-gray-500 px-1">
-            Pagos de Amazon leídos desde {fdate(amazonInfo.readFrom)} y guardados; {amazonInfo.oldDone} pagos anteriores ya tienen su desglose en AMAVEN y no se vuelven a comprobar.
+            {t('Amazon payments read since {date} and saved; {n} earlier payments already have their breakdown in AMAVEN and are not checked again.', { date: fdate(amazonInfo.readFrom), n: amazonInfo.oldDone })}
           </p>
         )}
-        {info?.warning && <p className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900 flex items-center gap-2"><AlertCircle size={16} /> {info.warning}</p>}
+        {info?.warning && <p className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900 flex items-center gap-2"><AlertCircle size={16} /> {tx(info.warning)}</p>}
         {!!info?.held.length && (
           <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700">
             <p className="font-semibold flex items-center gap-2"><AlertCircle size={16} className="text-gray-500" />
               {amazon
-                ? `${info.held.length} ${info.held.length === 1 ? 'pago de Amazon en curso' : 'pagos de Amazon en curso'} (IN_PROGRESS, aún no enviados): no se sugieren ·`
-                : `${info.held.length} ${info.held.length === 1 ? 'movimiento vorgemerkt' : 'movimientos vorgemerkt'} (retenidos, aún no cargados en la cuenta): no se sugieren ·`} {info.held.reduce((t, m) => t + m.amount, 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                ? (info.held.length === 1 ? t('{n} Amazon payment in progress (IN_PROGRESS, not sent yet): not suggested ·', { n: 1 }) : t('{n} Amazon payments in progress (IN_PROGRESS, not sent yet): not suggested ·', { n: info.held.length }))
+                : (info.held.length === 1 ? t('{n} vorgemerkt movement (held, not yet charged to the account): not suggested ·', { n: 1 }) : t('{n} vorgemerkt movements (held, not yet charged to the account): not suggested ·', { n: info.held.length }))} {fmt(info.held.reduce((s, m) => s + m.amount, 0))}
             </p>
             <ul className="mt-1 ml-6 text-xs text-gray-500 space-y-0.5">
-              {info.held.map((m, i) => <li key={i}>{m.valueDate || m.date} · {m.name || '—'} · {m.purpose.slice(0, 90)} · <span className="font-mono">{m.amount.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></li>)}
+              {info.held.map((m, i) => <li key={i}>{m.valueDate || m.date} · {m.name || '—'} · {m.purpose.slice(0, 90)} · <span className="font-mono">{fmt(m.amount)}</span></li>)}
             </ul>
           </div>
         )}
         {sent && (
           <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-sm text-green-900 space-y-1">
-            <p className="flex items-center gap-2 font-semibold"><CheckCircle2 size={16} /> {sent.lines} líneas creadas en el lote {journalCode} (sin registrar){sent.documentNumbers.length ? `: ${sent.documentNumbers[0]}${sent.documentNumbers.length > 1 ? ` … ${sent.documentNumbers[sent.documentNumbers.length - 1]}` : ''}` : ''}</p>
-            {sent.warnings.map((w, i) => <p key={i} className="text-amber-800">{w}</p>)}
+            <p className="flex items-center gap-2 font-semibold"><CheckCircle2 size={16} /> {t('{n} lines created in batch {code} (not posted)', { n: sent.lines, code: journalCode })}{sent.documentNumbers.length ? `: ${sent.documentNumbers[0]}${sent.documentNumbers.length > 1 ? ` … ${sent.documentNumbers[sent.documentNumbers.length - 1]}` : ''}` : ''}</p>
+            {sent.warnings.map((w, i) => <p key={i} className="text-amber-800">{tx(w)}</p>)}
           </div>
         )}
 
@@ -264,24 +267,24 @@ export default function BancoPage() {
           <section className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap items-center gap-3">
               <div className="flex bg-gray-100 rounded-lg p-1">
-                {([['new', 'Por registrar'], ['batch', 'En el lote'], ['posted', 'Ya en BC'], ['all', 'Todos']] as [Filter, string][]).map(([id, label]) => (
+                {([['new', 'To post'], ['batch', 'In the batch'], ['posted', 'Already in BC'], ['all', 'All']] as [Filter, string][]).map(([id, label]) => (
                   <button key={id} onClick={() => setFilter(id)}
                     className={`px-3 py-1 rounded-md text-sm font-semibold ${filter === id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
-                    {label} <span className="text-gray-400 font-normal">{counts[id]}</span>
+                    {t(label)} <span className="text-gray-400 font-normal">{counts[id]}</span>
                   </button>
                 ))}
               </div>
               <p className="text-xs text-gray-500">
-                Cuadrado con {info?.entries} Bank Ledger Entries de {bankNo} desde el {info && fdate(info.from)}
-                {journalCode ? ` y con las líneas pendientes del lote ${journalCode}` : ''}.
-                {info?.cutoff?.until && <> Saldo de BC = extracto hasta el <b>{fdate(info.cutoff.until)}</b> ({fmt(info.cutoff.balance)}): lo anterior se da por registrado.</>}
+                {t('Matched with {n} Bank Ledger Entries of {bank} since {date}', { n: info?.entries, bank: bankNo, date: info ? fdate(info.from) : '' })}
+                {journalCode ? ` ${t('and with the pending lines of batch {code}', { code: journalCode })}` : ''}.
+                {info?.cutoff?.until && <> {t('BC balance = statement up to')} <b>{fdate(info.cutoff.until)}</b> ({fmt(info.cutoff.balance)}): {t('everything before is taken as posted.')}</>}
                 {info?.cutoff && info.cutoff.last.date !== info.cutoff.until && (
-                  <span className="text-amber-700"> Al {fdate(info.cutoff.last.date)}: extracto {fmt(info.cutoff.last.bank)}, BC {fmt(info.cutoff.last.bc)} (dif. {fmt(info.cutoff.last.bank - info.cutoff.last.bc)}).</span>
+                  <span className="text-amber-700"> {t('On {date}: statement {bank}, BC {bc} (diff. {diff}).', { date: fdate(info.cutoff.last.date), bank: fmt(info.cutoff.last.bank), bc: fmt(info.cutoff.last.bc), diff: fmt(info.cutoff.last.bank - info.cutoff.last.bc) })}</span>
                 )}
               </p>
               {filter === 'new' && counts.new > 0 && (
                 <button onClick={() => setRows(rs => { const all = rs.filter(r => r.status === 'new').every(r => r.selected); return rs.map(r => (r.status === 'new' ? { ...r, selected: !all } : r)); })}
-                  className="ml-auto text-xs font-semibold text-gray-600 hover:text-gray-900">Marcar / desmarcar todos</button>
+                  className="ml-auto text-xs font-semibold text-gray-600 hover:text-gray-900">{t('Select / deselect all')}</button>
               )}
             </div>
             <div className="overflow-x-auto">
@@ -289,10 +292,10 @@ export default function BancoPage() {
                 <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-500">
                   <tr>
                     <th className={`${th} w-8`} />
-                    <th className={`${th} text-left`}>Fecha</th>
-                    <th className={`${th} text-left`}>Contrapartida / concepto</th>
-                    <th className={`${th} text-right`}>Importe</th>
-                    <th className={`${th} text-left`}>{filter === 'posted' || filter === 'batch' ? 'En BC' : 'Líneas del diario'}</th>
+                    <th className={`${th} text-left`}>{t('Date')}</th>
+                    <th className={`${th} text-left`}>{t('Counterparty / purpose')}</th>
+                    <th className={`${th} text-right`}>{t('Amount')}</th>
+                    <th className={`${th} text-left`}>{filter === 'posted' || filter === 'batch' ? t('In BC') : t('Journal lines')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -314,8 +317,8 @@ export default function BancoPage() {
                       <td className="px-3 py-2">
                         {r.status !== 'new' ? (
                           <div className="space-y-0.5 text-xs text-gray-600">
-                            {r.status === 'batch' && <p className="font-semibold text-sky-700">En el lote {journalCode}, sin registrar</p>}
-                            {r.byBalance && <p className="text-emerald-700">Cuadrado por saldo: BC tiene el mismo saldo que el banco el {info?.cutoff && fdate(info.cutoff.until)} (registrado con otra fecha, importe o agrupado)</p>}
+                            {r.status === 'batch' && <p className="font-semibold text-sky-700">{t('In batch {code}, not posted', { code: journalCode })}</p>}
+                            {r.byBalance && <p className="text-emerald-700">{t('Matched by balance: BC has the same balance as the bank on {date} (posted with another date, amount or grouped)', { date: info?.cutoff ? fdate(info.cutoff.until) : '' })}</p>}
                             {r.matched.map((e, i) => (
                               <p key={i}>{e.docNo} · {fdate(e.date)} · {e.balType ? `${e.balType} ${e.balNo} · ` : ''}{e.description}{r.matched.length > 1 ? ` · ${fmt(e.amount)}` : ''}</p>
                             ))}
@@ -329,7 +332,7 @@ export default function BancoPage() {
                       </td>
                     </tr>
                   ))}
-                  {!shown.length && <tr><td colSpan={5} className="px-3 py-8 text-center text-gray-500">Nada en esta vista.</td></tr>}
+                  {!shown.length && <tr><td colSpan={5} className="px-3 py-8 text-center text-gray-500">{t('Nothing in this view.')}</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -340,12 +343,12 @@ export default function BancoPage() {
       {counts.new > 0 && (
         <div className="fixed bottom-0 left-64 right-0 z-20 bg-white border-t border-gray-200 px-4 md:px-8 py-3 flex flex-wrap items-center gap-4">
           <p className="text-sm text-gray-600 mr-auto">
-            {toSend.length} movimientos marcados · {fmt(toSend.reduce((t, r) => t + r.amount, 0))}
-            {invalid.length > 0 && <span className="text-red-700"> · {invalid.length} sin cuenta o con líneas que no suman el importe</span>}
+            {t('{n} movements selected', { n: toSend.length })} · {fmt(toSend.reduce((s, r) => s + r.amount, 0))}
+            {invalid.length > 0 && <span className="text-red-700"> · {t('{n} without an account or with lines that do not add up to the amount', { n: invalid.length })}</span>}
           </p>
           <button onClick={send} disabled={!journalCode || !toSend.length || invalid.length > 0 || !!loading}
             className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-black disabled:opacity-40">
-            <Send size={16} /> Enviar al lote {journalCode || '…'}
+            <Send size={16} /> {t('Send to batch {code}', { code: journalCode || '…' })}
           </button>
         </div>
       )}
@@ -357,6 +360,8 @@ function LinesEditor({ row, bankNo, input, names, lists, setLine, setDoc, addLin
   row: Row; bankNo: string; input: string; names: Record<string, string>; lists: Record<string, [string, string][]>; setLine: (i: number, patch: Partial<SuggestedLine>) => void; setDoc: (v: string) => void;
   addLine: () => void; removeLine: (i: number) => void;
 }) {
+  const { t, tx, locale } = useT();
+  const fmt = (v: number) => fmtNum(v, locale);
   const s = row.suggestion;
   const diff = row.amount - row.lines.reduce((t, l) => t + l.amount, 0);
   return (
@@ -365,32 +370,32 @@ function LinesEditor({ row, bankNo, input, names, lists, setLine, setDoc, addLin
         <div key={i} className="flex items-center gap-1.5">
           <select value={l.accountType} onChange={e => setLine(i, { accountType: e.target.value as AccountType })} className={`${input} w-28 ${!l.accountType ? 'border-red-300' : ''}`}>
             <option value="">—</option>
-            {TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+            {TYPES.map(o => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
           </select>
           <AccountPicker value={l.accountNo} options={lists[l.accountType] || []} onChange={no => setLine(i, { accountNo: no, accountName: '' })}
             className={`${input} w-32 ${!l.accountNo.trim() ? 'border-red-300' : ''}`} />
           {(() => {
             const name = names[`${l.accountType}|${l.accountNo.trim()}`] || l.accountName;
             const unknown = !name && (l.accountType === 'G/L Account' || l.accountType === 'Bank Account') && !!l.accountNo.trim() && Object.keys(names).length > 0;
-            return <span title={name} className={`w-44 truncate text-xs ${unknown ? 'text-red-600 font-semibold' : 'text-gray-600'}`}>{name || (unknown ? 'No existe en BC' : '')}</span>;
+            return <span title={name} className={`w-44 truncate text-xs ${unknown ? 'text-red-600 font-semibold' : 'text-gray-600'}`}>{name || (unknown ? t('Does not exist in BC') : '')}</span>;
           })()}
           <input value={l.description} onChange={e => setLine(i, { description: e.target.value })} maxLength={100} className={`${input} flex-1 min-w-0`} />
           {row.lines.length > 1 ? (
             <input type="number" step="0.01" value={l.amount} onChange={e => setLine(i, { amount: parseFloat(e.target.value) || 0 })} className={`${input} w-28 text-right`} />
           ) : <span className="w-28 text-right text-gray-500">{fmt(l.amount)}</span>}
           {l.appliesToDocNo && (
-            <button onClick={() => setLine(i, { appliesToDocNo: undefined, appliesToDocType: undefined })} title="Quitar la liquidación"
-              className="text-[11px] bg-sky-50 text-sky-700 border border-sky-200 rounded px-1.5 py-0.5 whitespace-nowrap hover:line-through">liq. {l.appliesToDocNo}</button>
+            <button onClick={() => setLine(i, { appliesToDocNo: undefined, appliesToDocType: undefined })} title={t('Remove the application')}
+              className="text-[11px] bg-sky-50 text-sky-700 border border-sky-200 rounded px-1.5 py-0.5 whitespace-nowrap hover:line-through">{t('appl. {doc}', { doc: l.appliesToDocNo })}</button>
           )}
           {row.lines.length > 1 && <button onClick={() => removeLine(i)} className="text-gray-400 hover:text-red-600"><Trash2 size={14} /></button>}
         </div>
       ))}
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <input value={row.documentNo} onChange={e => setDoc(e.target.value)} placeholder="Nº documento (auto)" className={`${input} w-40 text-xs`} />
-        <button onClick={addLine} className="flex items-center gap-1 font-semibold text-gray-600 hover:text-gray-900"><Plus size={12} /> Línea</button>
-        {s?.source && <span className="bg-gray-100 text-gray-600 rounded px-1.5 py-0.5 font-semibold">{s.source}</span>}
-        {s?.note && <span className={row.doubtful ? 'text-amber-700 font-semibold' : 'text-gray-500'}>{s.note}</span>}
-        {cents(diff) !== 0 && <span className="text-red-700 font-semibold">Faltan {fmt(diff)}</span>}
+        <input value={row.documentNo} onChange={e => setDoc(e.target.value)} placeholder={t('Document no. (auto)')} className={`${input} w-40 text-xs`} />
+        <button onClick={addLine} className="flex items-center gap-1 font-semibold text-gray-600 hover:text-gray-900"><Plus size={12} /> {t('Line')}</button>
+        {s?.source && <span className="bg-gray-100 text-gray-600 rounded px-1.5 py-0.5 font-semibold">{tx(s.source)}</span>}
+        {s?.note && <span className={row.doubtful ? 'text-amber-700 font-semibold' : 'text-gray-500'}>{tx(s.note)}</span>}
+        {cents(diff) !== 0 && <span className="text-red-700 font-semibold">{t('{amount} missing', { amount: fmt(diff) })}</span>}
         <FeedbackButton className="ml-auto" build={() => ({
           area: 'banco', title: `${bankNo} · ${fdate(row.date)} · ${(row.name || row.purpose).slice(0, 60)} · ${fmt(row.amount)}`,
           changes: [rowChange(row)].filter((c): c is string => !!c), context: { bankNo, movement: movementContext(row) },
@@ -406,6 +411,7 @@ const plain = (v: string) => v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').
 function AccountPicker({ value, options, onChange, className }: {
   value: string; options: [string, string][]; onChange: (no: string) => void; className: string;
 }) {
+  const { t } = useT();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [hi, setHi] = useState(0);
@@ -414,7 +420,7 @@ function AccountPicker({ value, options, onChange, className }: {
   const pop = useRef<HTMLDivElement>(null);
   const hits = useMemo(() => {
     const words = plain(q).split(/\s+/).filter(Boolean);
-    const all = words.length ? options.filter(([no, name]) => { const t = plain(`${no} ${name}`); return words.every(w => t.includes(w)); }) : options;
+    const all = words.length ? options.filter(([no, name]) => { const txt = plain(`${no} ${name}`); return words.every(w => txt.includes(w)); }) : options;
     return all.slice(0, 200);
   }, [q, options]);
   useEffect(() => {
@@ -436,13 +442,13 @@ function AccountPicker({ value, options, onChange, className }: {
   return (
     <>
       <button ref={btn} type="button" onClick={() => (open ? setOpen(false) : show())} className={`${className} flex items-center justify-between gap-1 text-left`}>
-        <span className="truncate">{value || <span className="text-gray-400">Elegir…</span>}</span>
+        <span className="truncate">{value || <span className="text-gray-400">{t('Choose…')}</span>}</span>
         <ChevronDown size={14} className="text-gray-400 flex-shrink-0" />
       </button>
       {open && (
         <div ref={pop} style={{ left: pos.left, top: pos.top, transform: pos.up ? 'translateY(-100%)' : undefined }}
           className="fixed z-50 w-[420px] bg-white border border-gray-200 rounded-lg shadow-xl p-2">
-          <input autoFocus value={q} placeholder={options.length ? `Buscar entre ${options.length} por nº o nombre…` : 'Elige antes el tipo de cuenta'}
+          <input autoFocus value={q} placeholder={options.length ? t('Search {n} by no. or name…', { n: options.length }) : t('Choose the account type first')}
             onChange={e => { setQ(e.target.value); setHi(0); }}
             onKeyDown={e => {
               if (e.key === 'ArrowDown') { e.preventDefault(); setHi(h => Math.min(h + 1, hits.length - 1)); }
@@ -459,8 +465,8 @@ function AccountPicker({ value, options, onChange, className }: {
                 <span className="truncate text-gray-600">{name}</span>
               </button>
             ))}
-            {!hits.length && <p className="px-2 py-2 text-xs text-gray-500">{q.trim() ? `Sin resultados. Enter para usar "${q.trim()}".` : 'Sin cuentas.'}</p>}
-            {hits.length === 200 && <p className="px-2 py-1 text-[11px] text-gray-400">Primeros 200: escribe para afinar.</p>}
+            {!hits.length && <p className="px-2 py-2 text-xs text-gray-500">{q.trim() ? t('No results. Enter to use "{q}".', { q: q.trim() }) : t('No accounts.')}</p>}
+            {hits.length === 200 && <p className="px-2 py-1 text-[11px] text-gray-400">{t('First 200: type to narrow down.')}</p>}
           </div>
         </div>
       )}

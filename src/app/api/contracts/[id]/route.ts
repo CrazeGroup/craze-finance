@@ -34,7 +34,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       where: { id: parseInt(id) }
     });
 
-    await logAction('Eliminar Contrato', `Contrato eliminado: ${policy.description}`, companyId);
+    await logAction('Contract deleted', `Contract deleted: ${policy.description}`, companyId);
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json({ error: 'Failed to delete policy' }, { status: 500 });
@@ -82,7 +82,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       data: updateData
     });
 
-    await logAction('Actualizar Contrato', `Contrato actualizado/renovado: ${policy.description}`, companyId);
+    await logAction('Contract updated', `Contract updated/renewed: ${policy.description}`, companyId);
 
     return NextResponse.json({
       id: policy.id,

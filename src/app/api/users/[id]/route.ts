@@ -26,7 +26,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       }
     });
 
-    await logAction('Editar Usuario', `Usuario: ${user.username}`);
+    await logAction('Edit user', `User: ${user.username}`);
     return NextResponse.json(user);
   } catch (error) {
     console.error('Error updating user:', error);
@@ -49,7 +49,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       where: { id: userId },
     });
 
-    await logAction('Eliminar Usuario', `Usuario eliminado con ID: ${userId} (${user.username})`);
+    await logAction('Delete user', `User deleted with ID: ${userId} (${user.username})`);
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Error deleting user:', error);

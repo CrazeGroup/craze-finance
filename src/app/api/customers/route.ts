@@ -41,7 +41,7 @@ export async function GET() {
       } else {
         if (finalBalance > c.riskLimit) {
           calcRisk = 'Alto Riesgo';
-          sugAction = 'Solicitar más riesgo o avanzar pago de facturas de la cartera';
+          sugAction = 'Request a higher credit limit or ask for early payment of open invoices';
         } else {
           calcRisk = 'Riesgo Controlado';
           sugAction = 'Normal';
@@ -56,7 +56,7 @@ export async function GET() {
         
         if (!hasRecentInvoice) {
           calcRisk = 'Riesgo No Utilizado';
-          sugAction = 'Revisar límite de riesgo (sin facturación en los últimos 8 meses)';
+          sugAction = 'Review the credit limit (no invoicing in the last 8 months)';
         }
       }
       
@@ -86,7 +86,7 @@ export async function POST(request: Request) {
 
     const processedData = data.map((customer: any) => {
       let calculatedRisk = 'Desconocido';
-      let suggestedAction = 'Ninguna';
+      let suggestedAction = 'None';
 
       const riskLimit = parseFloat(customer.riskLimit || 0);
       const balance = parseFloat(customer.balance || 0);
@@ -97,7 +97,7 @@ export async function POST(request: Request) {
       } else {
         if (balance > riskLimit) {
           calculatedRisk = 'Alto Riesgo';
-          suggestedAction = 'Solicitar más riesgo o avanzar pago de facturas de la cartera';
+          suggestedAction = 'Request a higher credit limit or ask for early payment of open invoices';
         } else {
           calculatedRisk = 'Riesgo Controlado';
           suggestedAction = 'Normal';

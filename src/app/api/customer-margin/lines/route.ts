@@ -15,7 +15,7 @@ export async function GET(req: Request) {
   try {
     const company = (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
     const doc = new URL(req.url).searchParams.get('doc') || '';
-    if (!doc) return NextResponse.json({ error: 'Falta el documento' }, { status: 400 });
+    if (!doc) return NextResponse.json({ error: 'Document missing' }, { status: 400 });
     const lines = await cached(`customerMargin:lines:${company}:${doc}`, 24 * HOUR, async () => {
       const ctx = await getBcContext(company);
       const rows = await bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Documents_LM_Components_Excel`, {

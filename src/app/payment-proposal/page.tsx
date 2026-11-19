@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import { ChevronDown, ChevronRight, Download, RefreshCw } from 'lucide-react';
 import DocPdfLink, { purchasePdfKind } from '@/components/DocPdfLink';
 import { useCompany } from '@/contexts/CompanyContext';
+import { useT } from '@/contexts/LanguageContext';
 
 type Entry = {
   entryNo: number; vendorNo: string; vendorName: string; docType: string; docNo: string; extDocNo: string;
@@ -22,8 +23,7 @@ const APPROVED_PCT = 100;
 const RANGE_KEY = 'craze_payment_proposal_range';
 const iso = (d: Date) => d.toISOString().substring(0, 10);
 const dateEs = (d: string) => (d ? d.split('-').reverse().join('/') : '');
-const nf = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const money = (v: number | null | undefined) => (v == null ? '—' : nf.format(v));
+const money = (v: number | null | undefined, locale: string) => (v == null ? '—' : v.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const sum = (list: Entry[], f: (e: Entry) => number | null) => list.reduce((s, e) => s + (f(e) || 0), 0);
 
 // Proveedor → movimientos, ordenado por nombre
@@ -35,6 +35,7 @@ function byVendor(list: Entry[]) {
 
 export default function PaymentProposalPage() {
   const { selectedCompany } = useCompany();
+  const { t, tx, locale } = useT();
   // El rango de Due Date se guarda en el navegador: al cambiar de empresa la página se recarga y se mantiene
   const [range, setRange] = useState(() => {
     try {
@@ -59,7 +60,7 @@ export default function PaymentProposalPage() {
       .then(async res => {
         const json = await res.json();
         if (cancelled) return;
-        if (!res.ok) { setError(json.error || 'Error al leer los movimientos de proveedor'); setData(null); }
+        if (!res.ok) { setError(json.error || t('Error reading the vendor ledger entries')); setData(null); }
         else setData(json);
       })
       .catch(e => { if (!cancelled) setError(e.message); })
@@ -75,7 +76,7 @@ export default function PaymentProposalPage() {
   const pending = entries.filter(e => e.approvalPct < APPROVED_PCT);
 
   const exportExcel = () => {
-    const head = ['Proveedor', 'Nº proveedor', 'Document Type', 'Nº documento', 'Nº documento externo', 'Descripción', 'Fecha registro', 'Vencimiento', '% Payment Approval', 'Approved Users', 'Pending Users', 'Divisa', 'Remaining Amount', `Remaining Amt. (${lcy})`];
+    const head = [t('Vendor'), t('Vendor No.'), 'Document Type', t('Document No.'), t('External document no.'), t('Description'), t('Posting date'), t('Due date'), '% Payment Approval', 'Approved Users', 'Pending Users', t('Currency'), 'Remaining Amount', `Remaining Amt. (${lcy})`];
     const line = (e: Entry) => [e.vendorName, e.vendorNo, e.docType, e.docNo, e.extDocNo, e.description, e.postingDate, e.dueDate, e.approvalPct, e.approvedUsers, e.pendingUsers, e.currency, e.remaining, e.remainingLCY];
     const sheet = (title: string, list: Entry[]) => {
       const ws = XLSX.utils.aoa_to_sheet([[title], head, ...list.map(line)]);
@@ -83,7 +84,7 @@ export default function PaymentProposalPage() {
       return ws;
     };
     const wb = XLSX.utils.book_new();
-    const sub = `${selectedCompany} · vencimiento ${dateEs(range.from)} – ${dateEs(range.to)}`;
+    const sub = `${selectedCompany} · ${t('due {from} – {to}', { from: dateEs(range.from), to: dateEs(range.to) })}`;
     XLSX.utils.book_append_sheet(wb, sheet(`Approved for Payment · ${sub}`, approved), 'Approved for Payment');
     XLSX.utils.book_append_sheet(wb, sheet(`Pending Approval · ${sub}`, [...pending].sort((a, b) => a.pendingUsers.localeCompare(b.pendingUsers) || a.vendorName.localeCompare(b.vendorName))), 'Pending Approval');
     XLSX.writeFile(wb, `Payment_Proposal_${selectedCompany}_${range.from}_${range.to}.xlsx`.replace(/\s+/g, '_'));
@@ -95,7 +96,7 @@ export default function PaymentProposalPage() {
         <div className="w-full px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="mr-auto">
             <p className="font-bold text-gray-900 leading-tight text-lg">Payment Proposal</p>
-            <p className="text-xs text-gray-500">{selectedCompany} · facturas y abonos abiertos · No Payment = No · forma de pago TRANSFER · sin proveedores CRAZE</p>
+            <p className="text-xs text-gray-500">{selectedCompany} · {t('open invoices and credit memos · No Payment = No · payment method TRANSFER · no CRAZE vendors')}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Due Date</span>
@@ -104,13 +105,13 @@ export default function PaymentProposalPage() {
             <span className="text-gray-400 text-sm">–</span>
             <input type="date" value={range.to} min={range.from} onChange={e => e.target.value && setRange(r => ({ ...r, to: e.target.value }))}
               className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-semibold bg-white" />
-            <button onClick={() => setReload(n => n + 1)} disabled={loading} title="Volver a leer de Business Central"
+            <button onClick={() => setReload(n => n + 1)} disabled={loading} title={t('Read again from Business Central')}
               className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">
               <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             </button>
             <button onClick={exportExcel} disabled={loading || !entries.length}
               className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
-              <Download size={16} /> Exportar Excel
+              <Download size={16} /> {t('Export Excel')}
             </button>
           </div>
         </div>
@@ -118,41 +119,41 @@ export default function PaymentProposalPage() {
 
       <main className="w-full px-4 md:px-8 pt-6 space-y-6">
         {selectedCompany === 'ALL' ? (
-          <p className="text-sm text-gray-600">Selecciona una empresa concreta en el menú lateral.</p>
+          <p className="text-sm text-gray-600">{t('Select a specific company in the side menu.')}</p>
         ) : error ? (
-          <p className="bg-white border border-red-200 rounded-xl p-4 text-sm text-red-700">{error}</p>
+          <p className="bg-white border border-red-200 rounded-xl p-4 text-sm text-red-700">{tx(error)}</p>
         ) : !data ? (
-          <p className="text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Leyendo movimientos de proveedor de Business Central…</p>
+          <p className="text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> {t('Reading vendor ledger entries from Business Central…')}</p>
         ) : (
           <>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <Kpi label={`Approved for Payment (${lcy})`} value={money(sum(approved, e => e.remainingLCY))} sub={`${approved.length} documentos · ${byVendor(approved).length} proveedores`} />
-              <Kpi label={`Pending Approval (${lcy})`} value={money(sum(pending, e => e.remainingLCY))} sub={`${pending.length} documentos · ${byVendor(pending).length} proveedores`} />
-              <Kpi label={`Total propuesta (${lcy})`} value={money(sum(entries, e => e.remainingLCY))} sub={`Vencimiento ${dateEs(range.from)} – ${dateEs(range.to)}`} />
+              <Kpi label={`Approved for Payment (${lcy})`} value={money(sum(approved, e => e.remainingLCY), locale)} sub={t('{docs} documents · {vendors} vendors', { docs: approved.length, vendors: byVendor(approved).length })} />
+              <Kpi label={`Pending Approval (${lcy})`} value={money(sum(pending, e => e.remainingLCY), locale)} sub={t('{docs} documents · {vendors} vendors', { docs: pending.length, vendors: byVendor(pending).length })} />
+              <Kpi label={t('Total proposal ({lcy})', { lcy })} value={money(sum(entries, e => e.remainingLCY), locale)} sub={t('Due {from} – {to}', { from: dateEs(range.from), to: dateEs(range.to) })} />
             </div>
 
             <ProposalTable title="Approved for Payment" subtitle={`% Payment Approval ≥ ${APPROVED_PCT}`} entries={approved} currencies={currencies} lcy={lcy} />
             {data.usersSource === 'none' && data.entries.length > 0 && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900">
-                No se han podido leer los Pending Users de Business Central, así que Pending Approval no se puede agrupar por usuario.
-                {data.usersTried.length > 0 && <ul className="mt-1 ml-4 list-disc font-mono text-xs break-words">{data.usersTried.map((t, i) => <li key={i}>{t}</li>)}</ul>}
-                <details className="mt-1 text-xs"><summary className="cursor-pointer">Campos que devuelve la API</summary><p className="font-mono break-words mt-1">{data.apiKeys.join(', ')}</p></details>
+                {t('The Pending Users could not be read from Business Central, so Pending Approval cannot be grouped by user.')}
+                {data.usersTried.length > 0 && <ul className="mt-1 ml-4 list-disc font-mono text-xs break-words">{data.usersTried.map((s, i) => <li key={i}>{tx(s)}</li>)}</ul>}
+                <details className="mt-1 text-xs"><summary className="cursor-pointer">{t('Fields returned by the API')}</summary><p className="font-mono break-words mt-1">{data.apiKeys.join(', ')}</p></details>
               </div>
             )}
-            <ProposalTable title="Pending Approval" subtitle={`% Payment Approval < ${APPROVED_PCT} · agrupado por Pending Users`} entries={pending} currencies={currencies} lcy={lcy} groupByPending />
+            <ProposalTable title="Pending Approval" subtitle={`% Payment Approval < ${APPROVED_PCT} · ${t('grouped by Pending Users')}`} entries={pending} currencies={currencies} lcy={lcy} groupByPending />
 
             <details className="text-xs text-gray-500" open={!data.usersSource.startsWith('odata:') || data.unmatched > 0}>
               <summary className="cursor-pointer">
-                Origen de Approval / Pending Users: {data.usersSource === 'api' ? 'API de BC' : data.usersSource.startsWith('odata:') ? `página ${data.usersSource.substring(6)} de BC` : data.usersSource === 'derived' ? 'calculado (aprobadores − aprobados)' : 'no disponible'}
-                {data.unmatched > 0 && ` · ${data.unmatched} documentos sin encontrar en esa página`}
+                {t('Source of Approval / Pending Users:')} {data.usersSource === 'api' ? t('BC API') : data.usersSource.startsWith('odata:') ? t('BC page {page}', { page: data.usersSource.substring(6) }) : data.usersSource === 'derived' ? t('calculated (approvers − approved)') : t('not available')}
+                {data.unmatched > 0 && ` · ${t('{n} documents not found on that page', { n: data.unmatched })}`}
               </summary>
-              {data.usersTried.length > 0 && <ul className="mt-1 ml-4 list-disc font-mono break-words">{data.usersTried.map((t, i) => <li key={i}>{t}</li>)}</ul>}
+              {data.usersTried.length > 0 && <ul className="mt-1 ml-4 list-disc font-mono break-words">{data.usersTried.map((s, i) => <li key={i}>{tx(s)}</li>)}</ul>}
             </details>
             <p className="text-xs text-gray-500">
-              Fuente: Vendor Ledger Entries de Business Central en directo. Importes = Remaining Amount en la divisa del documento; la columna {lcy} usa Remaining Amt. (LCY).
-              {data.usersSource.startsWith('odata:') && ` Approval / Pending Users de la página ${data.usersSource.substring(6)} de BC.`}
-              {data.usersSource === 'derived' && ' Pending Users calculado como Approval Users menos Approved Users.'}
-              {!data.fields.remainingLCY && data.entries.some(e => e.remainingLCY == null) && ` Los documentos en divisa no tienen importe en ${lcy} en la API: no suman en esa columna.`}
+              {t('Source: live Business Central Vendor Ledger Entries. Amounts = Remaining Amount in the document currency; the {lcy} column uses Remaining Amt. (LCY).', { lcy })}
+              {data.usersSource.startsWith('odata:') && ` ${t('Approval / Pending Users from BC page {page}.', { page: data.usersSource.substring(6) })}`}
+              {data.usersSource === 'derived' && ` ${t('Pending Users calculated as Approval Users minus Approved Users.')}`}
+              {!data.fields.remainingLCY && data.entries.some(e => e.remainingLCY == null) && ` ${t('Foreign-currency documents have no {lcy} amount in the API: they are not added to that column.', { lcy })}`}
             </p>
           </>
         )}
@@ -174,6 +175,7 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
 function ProposalTable({ title, subtitle, entries, currencies, lcy, groupByPending }: {
   title: string; subtitle: string; entries: Entry[]; currencies: string[]; lcy: string; groupByPending?: boolean;
 }) {
+  const { t, locale } = useT();
   const [open, setOpen] = useState<Set<string>>(new Set());
   const toggle = (key: string) => setOpen(s => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; });
   const cols = currencies.length + 2;
@@ -181,9 +183,9 @@ function ProposalTable({ title, subtitle, entries, currencies, lcy, groupByPendi
     <>
       {currencies.map(c => {
         const inCur = list.filter(e => e.currency === c);
-        return <td key={c} className={`px-3 py-2 text-right tabular-nums ${bold ? 'font-bold' : ''}`}>{inCur.length ? money(sum(inCur, e => e.remaining)) : ''}</td>;
+        return <td key={c} className={`px-3 py-2 text-right tabular-nums ${bold ? 'font-bold' : ''}`}>{inCur.length ? money(sum(inCur, e => e.remaining), locale) : ''}</td>;
       })}
-      <td className={`px-3 py-2 text-right tabular-nums ${bold ? 'font-bold' : 'font-semibold'}`}>{money(sum(list, e => e.remainingLCY))}</td>
+      <td className={`px-3 py-2 text-right tabular-nums ${bold ? 'font-bold' : 'font-semibold'}`}>{money(sum(list, e => e.remainingLCY), locale)}</td>
     </>
   );
   const groups: [string, Entry[]][] = groupByPending
@@ -194,24 +196,24 @@ function ProposalTable({ title, subtitle, entries, currencies, lcy, groupByPendi
     <section className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap items-baseline gap-x-3">
         <h2 className="text-sm font-bold text-gray-900">{title}</h2>
-        <span className="text-xs text-gray-500">{subtitle} · haz clic en un proveedor para ver sus facturas</span>
+        <span className="text-xs text-gray-500">{subtitle} · {t('click a vendor to see its invoices')}</span>
       </div>
       <div className="table-scroll">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-500">
             <tr>
-              <th className="text-left px-3 py-2">{groupByPending ? 'Pending Users / Proveedor' : 'Proveedor'}</th>
+              <th className="text-left px-3 py-2">{groupByPending ? t('Pending Users / Vendor') : t('Vendor')}</th>
               {currencies.map(c => <th key={c} className="text-right px-3 py-2">{c}</th>)}
               <th className="text-right px-3 py-2">Total ({lcy})</th>
             </tr>
           </thead>
           <tbody>
-            {!entries.length && <tr><td colSpan={cols} className="px-3 py-6 text-center text-gray-500">No hay documentos.</td></tr>}
+            {!entries.length && <tr><td colSpan={cols} className="px-3 py-6 text-center text-gray-500">{t('There are no documents.')}</td></tr>}
             {groups.map(([pendingUsers, list]) => (
               <React.Fragment key={pendingUsers || '-'}>
                 {groupByPending && (
                   <tr className="border-t border-gray-200 bg-indigo-50/60 text-gray-900">
-                    <td className="px-3 py-2 font-bold">{pendingUsers || '(sin usuarios pendientes)'}</td>
+                    <td className="px-3 py-2 font-bold">{pendingUsers || t('(no pending users)')}</td>
                     {amountCells(list, true)}
                   </tr>
                 )}
@@ -236,23 +238,23 @@ function ProposalTable({ title, subtitle, entries, currencies, lcy, groupByPendi
                             <table className="w-full text-xs">
                               <thead className="text-gray-500">
                                 <tr>
-                                  <th className="text-left py-1 pr-3">Tipo</th>
-                                  <th className="text-left py-1 pr-3">Nº documento</th>
-                                  <th className="text-left py-1 pr-3">Nº doc. externo</th>
-                                  <th className="text-left py-1 pr-3">Descripción</th>
-                                  <th className="text-left py-1 pr-3">Registro</th>
-                                  <th className="text-left py-1 pr-3">Vencimiento</th>
-                                  <th className="text-right py-1 pr-3">% Aprob.</th>
-                                  <th className="text-left py-1 pr-3">Aprobado por</th>
-                                  {groupByPending && <th className="text-left py-1 pr-3">Pendiente de</th>}
-                                  <th className="text-right py-1 pr-3">Importe</th>
+                                  <th className="text-left py-1 pr-3">{t('Type')}</th>
+                                  <th className="text-left py-1 pr-3">{t('Document No.')}</th>
+                                  <th className="text-left py-1 pr-3">{t('Ext. doc. no.')}</th>
+                                  <th className="text-left py-1 pr-3">{t('Description')}</th>
+                                  <th className="text-left py-1 pr-3">{t('Posting')}</th>
+                                  <th className="text-left py-1 pr-3">{t('Due date')}</th>
+                                  <th className="text-right py-1 pr-3">{t('% Appr.')}</th>
+                                  <th className="text-left py-1 pr-3">{t('Approved by')}</th>
+                                  {groupByPending && <th className="text-left py-1 pr-3">{t('Pending from')}</th>}
+                                  <th className="text-right py-1 pr-3">{t('Amount')}</th>
                                   <th className="text-right py-1">{lcy}</th>
                                 </tr>
                               </thead>
                               <tbody>
                                 {docs.map(d => (
                                   <tr key={d.entryNo} className="border-t border-gray-200 text-gray-800">
-                                    <td className="py-1 pr-3 whitespace-nowrap">{d.docType === 'Credit Memo' ? 'Abono' : 'Factura'}</td>
+                                    <td className="py-1 pr-3 whitespace-nowrap">{d.docType === 'Credit Memo' ? t('Credit memo') : t('Invoice')}</td>
                                     <td className="py-1 pr-3 font-mono whitespace-nowrap">{d.docNo}<DocPdfLink documentNo={d.docNo} kind={purchasePdfKind(d.docType)} /></td>
                                     <td className="py-1 pr-3">{d.extDocNo}</td>
                                     <td className="py-1 pr-3">{d.description}</td>
@@ -261,8 +263,8 @@ function ProposalTable({ title, subtitle, entries, currencies, lcy, groupByPendi
                                     <td className="py-1 pr-3 text-right tabular-nums">{d.approvalPct}</td>
                                     <td className="py-1 pr-3">{d.approvedUsers || '—'}</td>
                                     {groupByPending && <td className="py-1 pr-3">{d.pendingUsers || '—'}</td>}
-                                    <td className="py-1 pr-3 text-right tabular-nums whitespace-nowrap">{money(d.remaining)} {d.currency}</td>
-                                    <td className="py-1 text-right tabular-nums">{money(d.remainingLCY)}</td>
+                                    <td className="py-1 pr-3 text-right tabular-nums whitespace-nowrap">{money(d.remaining, locale)} {d.currency}</td>
+                                    <td className="py-1 text-right tabular-nums">{money(d.remainingLCY, locale)}</td>
                                   </tr>
                                 ))}
                               </tbody>
@@ -279,7 +281,7 @@ function ProposalTable({ title, subtitle, entries, currencies, lcy, groupByPendi
           {entries.length > 0 && (
             <tfoot className="bg-gray-50 text-gray-900">
               <tr className="border-t-2 border-gray-300">
-                <td className="px-3 py-2 font-bold">Total general</td>
+                <td className="px-3 py-2 font-bold">{t('Grand total')}</td>
                 {amountCells(entries, true)}
               </tr>
             </tfoot>

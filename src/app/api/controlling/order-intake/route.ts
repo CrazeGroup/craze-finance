@@ -13,14 +13,14 @@ export async function GET(req: Request) {
   try {
     const cookieStore = await cookies();
     const company = new URL(req.url).searchParams.get('company') || cookieStore.get('craze_selected_company')?.value || 'CRAZE';   // ?company= (selector del informe) o la empresa del menú
-    if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
+    if (company === 'ALL') return NextResponse.json({ error: 'Select a specific company.' }, { status: 400 });
 
     const { searchParams } = new URL(req.url);
     const year = Number(searchParams.get('year'));
     const from = Number(searchParams.get('from'));
     const to = Number(searchParams.get('to'));
     if (!Number.isInteger(year) || year < 2000 || !(from >= 1 && to <= 12 && from <= to)) {
-      return NextResponse.json({ error: 'Periodo no válido' }, { status: 400 });
+      return NextResponse.json({ error: 'Invalid period' }, { status: 400 });
     }
     const ctx = await getBcContext(company);
     return NextResponse.json(await orderIntakeYear(ctx, year, from, to, searchParams.get('open') === '1', searchParams.get('force') === '1'));

@@ -34,11 +34,11 @@ type Store = { checkedUntil: string; payments: Record<string, Stored>; items: Re
 export async function POST(req: Request) {
   try {
     const company = (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
-    if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
-    if (!amazonCompany(company)) return NextResponse.json({ error: 'Esta empresa no vende a Amazon: los pagos de Amazon Vendor son de CRAZE GmbH y CRAZE Toys Ltd (UK).' }, { status: 400 });
+    if (company === 'ALL') return NextResponse.json({ error: 'Select a specific company.' }, { status: 400 });
+    if (!amazonCompany(company)) return NextResponse.json({ error: 'This company does not sell to Amazon: the Amazon Vendor payments belong to CRAZE GmbH and CRAZE Toys Ltd (UK).' }, { status: 400 });
     const { bankNo, journalCode, from: askedFrom } = await req.json();
-    if (!bankNo) return NextResponse.json({ error: 'Elige la cuenta de banco.' }, { status: 400 });
-    if (askedFrom && !/^\d{4}-\d{2}-\d{2}$/.test(askedFrom)) return NextResponse.json({ error: 'Fecha "desde" no válida.' }, { status: 400 });
+    if (!bankNo) return NextResponse.json({ error: 'Choose the bank account.' }, { status: 400 });
+    if (askedFrom && !/^\d{4}-\d{2}-\d{2}$/.test(askedFrom)) return NextResponse.json({ error: 'Invalid "from" date.' }, { status: 400 });
 
     const key = `amazon:remittances:${company}:${bankNo}`;
     const store = await readSetting<Store>(key, { checkedUntil: '', payments: {}, items: {} });
@@ -142,14 +142,14 @@ export async function POST(req: Request) {
       });
       const diff = r2(r.amount - lines.reduce((t, l) => t + l.amount, 0));
       if (Math.abs(diff) >= 0.01) {
-        lines.push({ accountType: '', accountNo: '', accountName: '', description: 'Diferencia con el pago de Amazon', amount: diff });
+        lines.push({ accountType: '', accountNo: '', accountName: '', description: 'Difference from the Amazon payment', amount: diff });
       }
       const note = [
-        `${items.length} ${items.length === 1 ? 'factura' : 'facturas'} de la remesa`,
-        applied ? `${applied} liquidan facturas abiertas` : '',
-        byCountry ? `${byCountry} a la cuenta habitual de ${r.country} (sin factura abierta con ese nº)` : '',
-        empty ? `${empty} sin cuenta` : '',
-        Math.abs(diff) >= 0.01 ? `el detalle no suma el pago (${diff.toFixed(2)})` : '',
+        items.length === 1 ? 'Remittance with 1 invoice' : `Remittance with ${items.length} invoices`,
+        applied ? `Open invoices applied for ${applied} items` : '',
+        byCountry ? `Usual ${r.country} account for ${byCountry} items (no open invoice with that no.)` : '',
+        empty ? `No account for ${empty} items` : '',
+        Math.abs(diff) >= 0.01 ? `The detail does not add up to the payment (${diff.toFixed(2)})` : '',
       ].filter(Boolean).join(' · ');
       return { documentNo: r.paymentNumber, source: 'Amazon', note, lines };
     };
@@ -159,7 +159,7 @@ export async function POST(req: Request) {
     for (const [idx, r] of paid.entries()) {
       const base = {
         idx, date: r.date, valueDate: r.date, text: `Amazon Vendor · ${r.country} (${r.marketplace}) · ${r.method}`,
-        purpose: `PAYMENT-NUM ${r.paymentNumber} · ID ${r.uniquePaymentId} · ${r.lineCount} ${r.lineCount === 1 ? 'factura' : 'facturas'}${r.currency && r.currency !== 'EUR' ? ` · ${r.currency}` : ''}`,
+        purpose: `PAYMENT-NUM ${r.paymentNumber} · ID ${r.uniquePaymentId} · ${r.lineCount} ${r.lineCount === 1 ? 'invoice' : 'invoices'}${r.currency && r.currency !== 'EUR' ? ` · ${r.currency}` : ''}`,
         name: 'Amazon', iban: '', endToEnd: r.uniquePaymentId, amount: r2(r.amount), pending: false, account: '',
       };
       const posted = byDoc.get(r.paymentNumber);
@@ -181,7 +181,7 @@ export async function POST(req: Request) {
       }
       if (details >= MAX_DETAILS && !store.items[r.uniquePaymentId]) {
         pending++;
-        movements.push({ ...base, status: 'new', matched: [], suggestion: { documentNo: r.paymentNumber, source: 'Amazon', note: 'Detalle aún no leído: vuelve a pulsar Leer pagos de Amazon', lines: [] } });
+        movements.push({ ...base, status: 'new', matched: [], suggestion: { documentNo: r.paymentNumber, source: 'Amazon', note: 'Detail not read yet: press Read Amazon payments again', lines: [] } });
         continue;
       }
       movements.push({ ...base, status: 'new', matched: [], suggestion: await suggestion(r) });
@@ -192,13 +192,13 @@ export async function POST(req: Request) {
     await writeSetting(key, store);
 
     const warning = [
-      pending ? `${pending} pagos sin detalle (Amazon solo deja leer ${MAX_DETAILS} cada vez): vuelve a pulsar Leer pagos de Amazon.` : '',
+      pending ? `Payments without detail: ${pending} (Amazon only allows reading ${MAX_DETAILS} at a time). Press Read Amazon payments again.` : '',
     ].filter(Boolean).join(' ');
     return NextResponse.json({
       bankNo, journalCode: journal?.code || '', from, warning, entries: entries.length, movements,
       amazon: { readFrom: from, oldDone, checkedUntil: store.checkedUntil },
       // Pagos que Amazon aún está procesando: se muestran aparte, no se registran
-      held: held.map(r => ({ date: r.date, valueDate: r.date, name: `Amazon ${r.country} · ${r.status}`, purpose: `PAYMENT-NUM ${r.paymentNumber} · ${r.lineCount} facturas`, amount: r2(r.amount) })),
+      held: held.map(r => ({ date: r.date, valueDate: r.date, name: `Amazon ${r.country} · ${r.status}`, purpose: `PAYMENT-NUM ${r.paymentNumber} · ${r.lineCount} invoices`, amount: r2(r.amount) })),
     });
   } catch (error: any) {
     console.error('BANCO Amazon:', error);

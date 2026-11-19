@@ -29,7 +29,7 @@ export async function fetchPurchaseItems(company: string, from: string, to: stri
   return {
     items: Array.from(items.values()).sort((a, b) => b.net - a.net),
     excludedZero: sum('excludedZero'), excludedEqual: sum('excludedEqual'), cancelledPairs: sum('cancelledPairs'),
-    warnings: [...failed.map(f => `No incluida en el consolidado: ${f}`), ...parts.flatMap(p => (p.data.warnings || []).map((w: string) => `${p.co}: ${w}`))],
+    warnings: [...failed.map(f => `Not included in the consolidation: ${f}`), ...parts.flatMap(p => (p.data.warnings || []).map((w: string) => `${p.co}: ${w}`))],
     counts: {
       invoiceLines: parts.reduce((t, p) => t + (p.data.counts?.invoiceLines || 0), 0),
       creditMemoLines: parts.reduce((t, p) => t + (p.data.counts?.creditMemoLines || 0), 0),

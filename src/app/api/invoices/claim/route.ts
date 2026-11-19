@@ -12,7 +12,7 @@ export async function PATCH(request: Request) {
   try {
     const { invoiceIds, claimed } = await request.json();
     if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
-      return NextResponse.json({ error: 'Faltan las facturas' }, { status: 400 });
+      return NextResponse.json({ error: 'The invoices are missing' }, { status: 400 });
     }
     const ids = invoiceIds.map(Number).filter(n => Number.isInteger(n));
     const invoices = await prisma.invoice.findMany({ where: { id: { in: ids } }, select: { id: true, bcId: true } });
@@ -29,7 +29,7 @@ export async function PATCH(request: Request) {
       ]);
     }
 
-    await logAction(claimed ? 'Factura marcada como reclamada' : 'Factura desmarcada como reclamada', invoices.map(i => i.bcId).join(', '));
+    await logAction(claimed ? 'Invoice marked as claimed' : 'Invoice unmarked as claimed', invoices.map(i => i.bcId).join(', '));
     const updated = await prisma.invoice.findMany({ where: { id: { in: ids } }, select: { id: true, lastReminderDate: true, claimCount: true } });
     return NextResponse.json({ success: true, count: invoices.length, invoices: updated });
   } catch (error: any) {

@@ -23,13 +23,13 @@ export async function POST(request: Request) {
     const companyId = (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
     const { targetKey, text, label } = await request.json();
     if (!targetKey || !String(text || '').trim()) {
-      return NextResponse.json({ error: 'Falta el comentario' }, { status: 400 });
+      return NextResponse.json({ error: 'The comment is missing' }, { status: 400 });
     }
     const session = await getSession();
     const comment = await prisma.cashflowComment.create({
       data: { companyId, targetKey: String(targetKey), text: String(text).trim(), author: session?.username || null }
     });
-    await logAction('Comentario en Cashflow', `${label || targetKey}: ${comment.text}`, companyId);
+    await logAction('Cashflow comment', `${label || targetKey}: ${comment.text}`, companyId);
     return NextResponse.json(comment);
   } catch (error: any) {
     console.error('Failed to create cashflow comment:', error);
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const { id, targetKey } = await request.json();
-    if (!Number.isInteger(Number(id)) || !targetKey) return NextResponse.json({ error: 'Datos no válidos' }, { status: 400 });
+    if (!Number.isInteger(Number(id)) || !targetKey) return NextResponse.json({ error: 'Invalid data' }, { status: 400 });
     const comment = await prisma.cashflowComment.update({ where: { id: Number(id) }, data: { targetKey: String(targetKey) } });
     return NextResponse.json(comment);
   } catch (error: any) {
@@ -52,7 +52,7 @@ export async function PATCH(request: Request) {
 export async function DELETE(request: Request) {
   try {
     const id = Number(new URL(request.url).searchParams.get('id'));
-    if (!Number.isInteger(id)) return NextResponse.json({ error: 'Falta el comentario' }, { status: 400 });
+    if (!Number.isInteger(id)) return NextResponse.json({ error: 'The comment is missing' }, { status: 400 });
     await prisma.cashflowComment.delete({ where: { id } });
     return NextResponse.json({ success: true });
   } catch (error: any) {

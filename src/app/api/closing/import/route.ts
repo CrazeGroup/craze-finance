@@ -13,10 +13,10 @@ export async function POST(req: Request) {
     const form = await req.formData();
     const file = form.get('file');
     const year = parseInt(String(form.get('year') || ''), 10);
-    if (!(file instanceof File)) return NextResponse.json({ error: 'Sube el Excel de tareas.' }, { status: 400 });
-    if (!year) return NextResponse.json({ error: 'Indica el año.' }, { status: 400 });
+    if (!(file instanceof File)) return NextResponse.json({ error: 'Upload the task Excel file.' }, { status: 400 });
+    if (!year) return NextResponse.json({ error: 'Enter the year.' }, { status: 400 });
     const result = await importClosingWorkbook(new Uint8Array(await file.arrayBuffer()), year, ((await getSession())?.username as string) || null);
-    await logAction('Cierre mensual: Excel importado', `${file.name} · ${year} · ${result.summary.map(s => `${s.company} ${s.tasks}`).join(', ')}`);
+    await logAction('Monthly closing: Excel imported', `${file.name} · ${year} · ${result.summary.map(s => `${s.company} ${s.tasks}`).join(', ')}`);
     return NextResponse.json(result);
   } catch (error: any) {
     console.error('Cierre mensual importación:', error);

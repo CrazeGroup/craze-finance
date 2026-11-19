@@ -124,7 +124,7 @@ export async function orderIntakeYear(ctx: BcContext, year: number, fromMonth: n
     // Año en curso: se renueva cada hora (o con el botón de actualizar); años cerrados cada 12 h
     cached(`order-intake:inv2:${company}:${from}:${to}`, live ? HOUR : 12 * HOUR, () => postedInvoices(ctx, from, to), force),
     cached(`order-intake:archive:${company}:${year - 1}`, 6 * HOUR, () => archivedOrderDates(ctx, year - 1), force).catch(e => {
-      warnings.push(`No se han podido leer los pedidos archivados (Sales Order Archives): ${e.message}`);
+      warnings.push(`Could not read the archived orders (Sales Order Archives): ${e.message}`);
       return {} as Record<string, string>;
     }),
     // Pedidos abiertos: también dan la Order Date de facturas de pedidos aún no facturados del todo

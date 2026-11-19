@@ -39,12 +39,12 @@ export async function POST(request: Request) {
     const companyId = cookieStore.get('craze_selected_company')?.value || 'CRAZE';
     const body = await request.json();
     const description = String(body.description || '').trim();
-    if (!description) return NextResponse.json({ error: 'Falta la descripción' }, { status: 400 });
+    if (!description) return NextResponse.json({ error: 'The description is missing' }, { status: 400 });
 
     const created = await prisma.recurringPayment.create({
       data: { bcCode: `${MANUAL_PREFIX}${Date.now()}`, companyId, description, isActive: true, ...configData(body) }
     });
-    await logAction('Cashflow: pago recurrente manual creado', `${description} · ${body.amount} ${body.currencyCode || ''} · ${body.frequency || 'monthly'}`);
+    await logAction('Cashflow: manual recurring payment created', `${description} · ${body.amount} ${body.currencyCode || ''} · ${body.frequency || 'monthly'}`);
     return NextResponse.json({ success: true, payment: created });
   } catch (error) {
     console.error('Error creating recurring payment:', error);
@@ -59,9 +59,9 @@ export async function DELETE(request: Request) {
     const companyId = cookieStore.get('craze_selected_company')?.value || 'CRAZE';
     const id = parseInt(new URL(request.url).searchParams.get('id') || '');
     const rec = id ? await prisma.recurringPayment.findFirst({ where: { id, companyId } }) : null;
-    if (!rec || !rec.bcCode.startsWith(MANUAL_PREFIX)) return NextResponse.json({ error: 'Solo se pueden borrar los pagos manuales' }, { status: 400 });
+    if (!rec || !rec.bcCode.startsWith(MANUAL_PREFIX)) return NextResponse.json({ error: 'Only manual payments can be deleted' }, { status: 400 });
     await prisma.recurringPayment.delete({ where: { id } });
-    await logAction('Cashflow: pago recurrente manual borrado', rec.description);
+    await logAction('Cashflow: manual recurring payment deleted', rec.description);
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Error deleting recurring payment:', error);

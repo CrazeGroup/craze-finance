@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Send, X } from 'lucide-react';
 import { buildReminderPdf, previewReportUrl } from '@/lib/reminderPdf';
 import { claimCountOf } from '@/lib/claimLevel';
+import { useT } from '@/contexts/LanguageContext';
 
 // Recordatorio al cliente, el mismo en Recobros y en Cashflow. Tres niveles:
 // 1 = normal; 2 = se puede poner al comercial en copia; 3 = además, aviso de que pasaremos el caso a la aseguradora.
@@ -25,7 +26,7 @@ const INTRO: Record<number, string> = {
   3: 'Despite our previous reminders, the invoices listed in this reminder are still unpaid. This is our final reminder.\nPlease settle the outstanding amount immediately.',
 };
 
-const money = (n: number, cur?: string | null) => `${cur && cur !== 'EUR' ? `${cur} ` : '€'}${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const money = (n: number, cur: string | null | undefined, locale: string) => `${cur && cur !== 'EUR' ? `${cur} ` : '€'}${n.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 // Sin lista de facturas: ya van en la tabla del PDF (con el nº de recordatorio de cada una)
 function buildMessage(name: string, level: number, insurance: boolean) {
@@ -35,6 +36,7 @@ function buildMessage(name: string, level: number, insurance: boolean) {
 export default function ReminderDialog({ customer, invoices, onClose, onSent }: {
   customer: Customer; invoices: Inv[]; onClose: () => void; onSent: () => void;
 }) {
+  const { t, tx, locale } = useT();
   const proposed = Math.min(3, Math.max(...invoices.map(claimCountOf), 0) + 1);
   const [level, setLevel] = useState(proposed);
   const [ccSales, setCcSales] = useState(proposed >= 2);
@@ -85,11 +87,11 @@ export default function ReminderDialog({ customer, invoices, onClose, onSent }: 
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.details || data.error);
-      const pdfNote = attachInvoices ? `\n${data.invoicePdfs || 0} PDF de factura adjuntos.${data.missingPdfs?.length ? ` Sin PDF en BC: ${data.missingPdfs.join(', ')}` : ''}` : '';
-      alert(`Recordatorio ${level} enviado desde ${data.from || '—'} a ${to}${cc ? ` (copia a ${cc})` : ''}.` + pdfNote);
+      const pdfNote = attachInvoices ? `\n${t('{n} invoice PDF(s) attached.', { n: data.invoicePdfs || 0 })}${data.missingPdfs?.length ? ` ${t('No PDF in BC: {list}', { list: data.missingPdfs.join(', ') })}` : ''}` : '';
+      alert(t('Reminder {level} sent from {from} to {to}', { level, from: data.from || '—', to }) + (cc ? ` ${t('(copy to {cc})', { cc })}` : '') + '.' + pdfNote);
       onSent();
     } catch (e: any) {
-      alert(`Error al enviar el recordatorio: ${e.message || e}`);
+      alert(t('Error sending the reminder: {error}', { error: tx(String(e.message || e)) }));
     } finally {
       setSending(false);
     }
@@ -101,8 +103,8 @@ export default function ReminderDialog({ customer, invoices, onClose, onSent }: 
       <div className="bg-white border border-gray-200 p-6 rounded-2xl w-full max-w-2xl shadow-2xl max-h-[95vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-start justify-between mb-4">
           <div>
-            <h2 className="text-2xl font-bold text-gray-900">Recordatorio al cliente</h2>
-            <p className="text-sm text-gray-600">{customer.bcId ? `#${customer.bcId} · ` : ''}{customer.name} · {invoices.length} factura(s) · {money(total, invoices[0]?.currencyCode)}</p>
+            <h2 className="text-2xl font-bold text-gray-900">{t('Customer reminder')}</h2>
+            <p className="text-sm text-gray-600">{customer.bcId ? `#${customer.bcId} · ` : ''}{customer.name} · {t('{n} invoice(s)', { n: invoices.length })} · {money(total, invoices[0]?.currencyCode, locale)}</p>
           </div>
           <button onClick={onClose} className="p-1 text-gray-500 hover:text-black"><X size={20} /></button>
         </div>
@@ -112,8 +114,8 @@ export default function ReminderDialog({ customer, invoices, onClose, onSent }: 
           {[1, 2, 3].map(l => (
             <button key={l} type="button" onClick={() => changeLevel(l)}
               className={`rounded-lg border px-3 py-2 text-left ${level === l ? 'border-black bg-black text-white' : 'border-gray-200 hover:border-gray-400'}`}>
-              <div className="text-sm font-bold">{l}º recordatorio{l === proposed ? ' · sugerido' : ''}</div>
-              <div className={`text-[11px] ${level === l ? 'text-gray-300' : 'text-gray-500'}`}>{l === 1 ? 'Normal' : l === 2 ? 'Comercial en copia' : 'Aviso aseguradora'}</div>
+              <div className="text-sm font-bold">{t('Reminder no. {n}', { n: l })}{l === proposed ? ` · ${t('suggested')}` : ''}</div>
+              <div className={`text-[11px] ${level === l ? 'text-gray-300' : 'text-gray-500'}`}>{l === 1 ? t('Normal') : l === 2 ? t('Salesperson in copy') : t('Insurance notice')}</div>
             </button>
           ))}
         </div>
@@ -122,31 +124,31 @@ export default function ReminderDialog({ customer, invoices, onClose, onSent }: 
           {mailFrom && (
             <div className={`rounded-lg border px-3 py-2 text-xs ${mailFrom.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-red-200 bg-red-50 text-red-800'}`}>
               {mailFrom.ok
-                ? <>Se enviará desde <strong>{mailFrom.mailbox}</strong> (queda en sus Elementos enviados).</>
-                : <>No se puede enviar desde <strong>{mailFrom.mailbox}</strong>: {mailFrom.error}</>}
+                ? <>{t('Will be sent from')} <strong>{mailFrom.mailbox}</strong> {t('(it stays in its Sent Items).')}</>
+                : <>{t('Cannot send from')} <strong>{mailFrom.mailbox}</strong>: {mailFrom.error ? tx(mailFrom.error) : mailFrom.error}</>}
             </div>
           )}
           <div>
-            <label className="block text-sm font-bold text-gray-900 mb-1">Para</label>
-            <input type="text" value={to} onChange={e => setTo(e.target.value)} className={box} placeholder="cliente@empresa.com (varios separados por coma)" />
-            {!customer.email && <p className="text-xs text-amber-700 mt-1">El cliente no tiene email en su ficha de BC.</p>}
+            <label className="block text-sm font-bold text-gray-900 mb-1">{t('Send to')}</label>
+            <input type="text" value={to} onChange={e => setTo(e.target.value)} className={box} placeholder={t('customer@company.com (several separated by commas)')} />
+            {!customer.email && <p className="text-xs text-amber-700 mt-1">{t('The customer has no e-mail on their BC card.')}</p>}
           </div>
 
           {level >= 2 && (
             <div className="rounded-lg border border-gray-200 p-3 space-y-2">
               <label className="flex items-center gap-2 text-sm font-semibold text-gray-900">
                 <input type="checkbox" checked={ccSales} onChange={e => setCcSales(e.target.checked)} />
-                Comercial en copia{customer.salespersonName ? ` (${customer.salespersonName})` : ''}
+                {t('Salesperson in copy')}{customer.salespersonName ? ` (${customer.salespersonName})` : ''}
               </label>
               {ccSales && (
                 <input type="text" value={spEmail} onChange={e => setSpEmail(e.target.value)} className={box}
-                  placeholder={spLoading ? 'Buscando el email del comercial en BC…' : 'email del comercial'} />
+                  placeholder={spLoading ? t('Looking up the salesperson\'s e-mail in BC…') : t('salesperson\'s e-mail')} />
               )}
-              {ccSales && !spLoading && !spEmail && <p className="text-xs text-amber-700">{customer.salespersonName ? 'El comercial no tiene email en BC: escríbelo aquí.' : 'El cliente no tiene comercial asignado: escribe el email.'}</p>}
+              {ccSales && !spLoading && !spEmail && <p className="text-xs text-amber-700">{customer.salespersonName ? t('The salesperson has no e-mail in BC: enter it here.') : t('The customer has no salesperson assigned: enter the e-mail.')}</p>}
               {level >= 3 && (
                 <label className="flex items-start gap-2 text-sm font-semibold text-gray-900">
                   <input type="checkbox" className="mt-0.5" checked={insurance} onChange={e => toggleInsurance(e.target.checked)} />
-                  <span>Añadir aviso de aseguradora <span className="block text-xs font-normal text-gray-500">“{INSURANCE_TEXT}”</span></span>
+                  <span>{t('Add insurance notice')} <span className="block text-xs font-normal text-gray-500">“{INSURANCE_TEXT}”</span></span>
                 </label>
               )}
             </div>
@@ -154,26 +156,26 @@ export default function ReminderDialog({ customer, invoices, onClose, onSent }: 
 
           <label className="flex items-start gap-2 text-sm font-semibold text-gray-900">
             <input type="checkbox" className="mt-0.5" checked={attachInvoices} onChange={e => setAttachInvoices(e.target.checked)} />
-            <span>Adjuntar el PDF de las facturas de venta <span className="block text-xs font-normal text-gray-500">Impresión de BC de cada factura seleccionada, además del resumen (tarda unos segundos más por factura)</span></span>
+            <span>{t('Attach the PDF of the sales invoices')} <span className="block text-xs font-normal text-gray-500">{t('BC printout of each selected invoice, in addition to the summary (takes a few more seconds per invoice)')}</span></span>
           </label>
 
           <div>
-            <label className="block text-sm font-bold text-gray-900 mb-1">Asunto</label>
+            <label className="block text-sm font-bold text-gray-900 mb-1">{t('Subject')}</label>
             <input type="text" value={subject} onChange={e => setSubject(e.target.value)} className={box} />
           </div>
           <div>
-            <label className="block text-sm font-bold text-gray-900 mb-1">Mensaje (también va en el PDF)</label>
+            <label className="block text-sm font-bold text-gray-900 mb-1">{t('Message (also included in the PDF)')}</label>
             <textarea value={message} onChange={e => setMessage(e.target.value)} className={`${box} h-52 resize-y`} />
           </div>
         </div>
 
         <div className="flex justify-end gap-3 mt-5">
           <a href={previewReportUrl(customer.id, ids, message)} target="_blank" rel="noopener noreferrer"
-            className="mr-auto px-4 py-2 rounded-lg text-sm font-semibold text-black bg-gray-100 hover:bg-gray-200">📄 Ver PDF</a>
-          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-100">Cancelar</button>
+            className="mr-auto px-4 py-2 rounded-lg text-sm font-semibold text-black bg-gray-100 hover:bg-gray-200">📄 {t('View PDF')}</a>
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-100">{t('Cancel')}</button>
           <button onClick={send} disabled={sending || mailFrom?.ok === false || !to.trim() || (ccSales && level >= 2 && !spEmail.trim() && spLoading)}
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-black text-white hover:bg-gray-800 disabled:opacity-40">
-            <Send size={16} className={sending ? 'animate-pulse' : ''} /> {sending ? 'Enviando…' : `Enviar ${level}º recordatorio`}
+            <Send size={16} className={sending ? 'animate-pulse' : ''} /> {sending ? t('Sending…') : t('Send reminder no. {n}', { n: level })}
           </button>
         </div>
       </div>

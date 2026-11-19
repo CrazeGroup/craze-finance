@@ -14,10 +14,10 @@ export const maxDuration = 300;
 export async function GET(req: Request) {
   try {
     const company = (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
-    if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
+    if (company === 'ALL') return NextResponse.json({ error: 'Select a specific company.' }, { status: 400 });
     const { searchParams } = new URL(req.url);
     const month = searchParams.get('month');
-    if (!isValidMonth(month)) return NextResponse.json({ error: 'Mes no válido' }, { status: 400 });
+    if (!isValidMonth(month)) return NextResponse.json({ error: 'Invalid month' }, { status: 400 });
     const ctx = await getBcContext(company);
     const force = searchParams.get('force') === '1';
     const kind = searchParams.get('kind');

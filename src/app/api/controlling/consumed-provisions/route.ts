@@ -14,10 +14,10 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const from = searchParams.get('from'), to = searchParams.get('to');
-    if (!isDate(from) || !isDate(to) || from > to) return NextResponse.json({ error: 'Fechas no válidas' }, { status: 400 });
+    if (!isDate(from) || !isDate(to) || from > to) return NextResponse.json({ error: 'Invalid dates' }, { status: 400 });
     const cookieStore = await cookies();
     const company = cookieStore.get('craze_selected_company')?.value || 'CRAZE';
-    if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
+    if (company === 'ALL') return NextResponse.json({ error: 'Select a specific company.' }, { status: 400 });
     const ctx = await getBcContext(company);
     // Diagnóstico: asientos PROV* agrupados por cuenta, descripción y mes, con el tipo de cuenta (balance / resultados)
     if (searchParams.get('probe') === 'provgl') {

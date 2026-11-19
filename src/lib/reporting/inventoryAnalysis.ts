@@ -190,7 +190,7 @@ export async function purchasesAnalysis(ctx: BcContext, company: string, month: 
     for (const e of entries) {
       const rest = -e.amountLCY - (covered.get(e.documentNo) || 0);
       const di = monthIdx(String(e.postingDate));
-      if (di >= 0 && Math.abs(rest) >= 0.5) idx.add(di, '(sin líneas)', '', none, rest, 0);
+      if (di >= 0 && Math.abs(rest) >= 0.5) idx.add(di, '(no lines)', '', none, rest, 0);
     }
     const totals = [...prev, ...cur].map((date, di) => ({
       date, value: idx.rows.filter(r => r[0] === di).reduce((t, r) => t + r[3], 0), qty: 0, skus: 0,

@@ -270,21 +270,21 @@ export async function intercompanyReport(source: string, from: string, requested
       const corrected: string[] = [];
       const cancel = cancelledBy.get(no);
       const replacement = cancel ? replacementOf(no, target, s(x.externalDocumentNumber)) : undefined;
-      if (cancel) corrected.push(`Anulada con el abono ${s(cancel.number)}${replacement ? ` y sustituida por ${s(replacement.x.number)} (${fmtA(n(replacement.x.totalAmountExcludingTax))})` : ''}`);
+      if (cancel) corrected.push(`Cancelled with credit memo ${s(cancel.number)}${replacement ? ` and replaced by ${s(replacement.x.number)} (${fmtA(n(replacement.x.totalAmountExcludingTax))})` : ''}`);
       const p = tg?.purchases.get(norm(no));
       let purchase: IcRow['purchase'] = null;
       let lines: IcRow['lines'] = [];
-      if (!tg) issues.push(`No se ha podido leer ${target}`);
+      if (!tg) issues.push(`Could not read ${target}`);
       else if (!p) {
         const draft = tg.drafts.get(norm(no));
-        issues.push(`Sin factura de compra en ${target} con Vendor Invoice No. ${no}${draft ? ` (está en borrador, sin registrar: ${draft})` : ''}`);
+        issues.push(`No purchase invoice in ${target} with Vendor Invoice No. ${no}${draft ? ` (it is a draft, not posted: ${draft})` : ''}`);
         // Factura que sustituye a otra anulada: la compra puede estar registrada con el nº de la anulada y este importe
         const isOld = (o: any) => cancelledBy.has(s(o.number)) && s(o.number) !== no && norm(o.externalDocumentNumber) === norm(x.externalDocumentNumber) && !!norm(x.externalDocumentNumber);
         const oldX = ic.find(r => r.target === target && isOld(r.x))?.x || (outside.get(`${target}|${norm(x.externalDocumentNumber)}`) || []).find(isOld);
         const old = oldX ? { x: oldX } : undefined;
         const op = old && tg.purchases.get(norm(old.x.number));
         if (old && op && Math.abs(n(op.totalAmountExcludingTax) - amount) < 0.05 && !tg.purchMemos.has(s(op.number))) {
-          corrected.push(`Sustituye a ${s(old.x.number)} (anulada con ${s(cancelledBy.get(s(old.x.number)).number)}); la compra está registrada con el nº de la anulada: ${s(op.number)} por ${fmtA(n(op.totalAmountExcludingTax))}${draft ? `. Ojo: no registres el borrador ${draft}, se duplicaría` : ''}`);
+          corrected.push(`Replaces ${s(old.x.number)} (cancelled with ${s(cancelledBy.get(s(old.x.number)).number)}); the purchase is posted under the cancelled invoice number: ${s(op.number)} for ${fmtA(n(op.totalAmountExcludingTax))}${draft ? `. Careful: do not post the draft ${draft}, it would be duplicated` : ''}`);
         }
       } else {
         purchase = {
@@ -292,32 +292,32 @@ export async function intercompanyReport(source: string, from: string, requested
           vendor: s(p.vendorName), currency: s(p.currencyCode) || lcyOf(target), amount: n(p.totalAmountExcludingTax),
         };
         // Un punto final de más (factura corregida al introducirla) se da por bueno
-        if (purchase.vendorInvoiceNo.replace(/\.+$/, '') !== no) issues.push(`Vendor Invoice No. escrito distinto (${purchase.vendorInvoiceNo})`);
+        if (purchase.vendorInvoiceNo.replace(/\.+$/, '') !== no) issues.push(`Vendor Invoice No. written differently (${purchase.vendorInvoiceNo})`);
         if (Math.abs(purchase.amount - amount) > 0.05) {
-          issues.push(`Importe distinto (${amount.toFixed(2)} vs ${purchase.amount.toFixed(2)})`);
+          issues.push(`Different amount (${amount.toFixed(2)} vs ${purchase.amount.toFixed(2)})`);
           // Compra abonada en el destino
           const pm = tg.purchMemos.get(purchase.no) || [];
-          if (pm.length) corrected.push(`Compra abonada con ${pm.map((m: any) => `${s(m.number)} (${fmtA(n(m.totalAmountExcludingTax))})`).join(', ')}`);
+          if (pm.length) corrected.push(`Purchase credited with ${pm.map((m: any) => `${s(m.number)} (${fmtA(n(m.totalAmountExcludingTax))})`).join(', ')}`);
         }
-        if (purchase.currency !== currency) issues.push(`Divisa distinta (${currency} vs ${purchase.currency})`);
-        if (purchase.invoiceDate !== d10(x.invoiceDate)) issues.push(`Fecha distinta (${d10(x.invoiceDate)} vs ${purchase.invoiceDate})`);
+        if (purchase.currency !== currency) issues.push(`Different currency (${currency} vs ${purchase.currency})`);
+        if (purchase.invoiceDate !== d10(x.invoiceDate)) issues.push(`Different date (${d10(x.invoiceDate)} vs ${purchase.invoiceDate})`);
         const cmp = compareLines(salesLines.get(no), tg.purchLines.get(purchase.no), target === 'Craze Entertainment');
         lines = cmp.rows;
-        if (!cmp.ok) issues.push('Artículos o cantidades distintos en la compra');
+        if (!cmp.ok) issues.push('Items or quantities differ in the purchase');
       }
       let final: IcRow['final'] = null;
       if (source === 'CRAZE' && DROP_SHIP_TARGETS.includes(target) && tg) {
         const ext = s(x.externalDocumentNumber);
         const f = tg.finals.get(norm(no));
-        if (!ext) issues.push('Sin External Document No. (factura final del drop shipment)');
-        else if (!f) issues.push(`Sin factura de venta final en ${target} con nº o External Document No. ${ext}`);
+        if (!ext) issues.push('No External Document No. (final invoice of the drop shipment)');
+        else if (!f) issues.push(`No final sales invoice in ${target} with no. or External Document No. ${ext}`);
         const cmp = compareLines(salesLines.get(no), f ? tg.finalLines.get(s(f.number)) : []);
         final = {
           no: f ? s(f.number) : ext, customer: s(f?.customerName), postingDate: d10(f?.postingDate), currency: s(f?.currencyCode) || lcyOf(target),
           amount: n(f?.totalAmountExcludingTax), found: !!f, lines: cmp.rows,
         };
         if (f && !cmp.ok) {
-          issues.push('Artículos o cantidades distintos en la venta final');
+          issues.push('Items or quantities differ in the final sale');
           // Corregido con abonos y facturas nuevas: todas las facturas del origen al destino con ese External Document No.
           // frente a todas las ventas finales con ese nº (menos sus abonos) cuadran en artículos y cantidades
           const group = tg.finalGroups.get(norm(ext)) || [];
@@ -334,11 +334,11 @@ export async function intercompanyReport(source: string, from: string, requested
             const others = mineAll.filter((x: any) => s(x.number) !== no).map((x: any) => s(x.number));
             if (!net.ok) {
               // Facturado por separado pero aún con diferencias: qué artículos no cuadran en el conjunto
-              const diff = net.rows.filter(d => Math.abs(d.a - d.b) > 0.0001).map(d => `${d.no} ${d.description} (${d.a} de ${source}, ${d.b} en las ventas finales)`);
-              issues[issues.length - 1] = `Artículos o cantidades distintos en la venta final: con todas las facturas de ${ext} (${[no, ...others].join(', ')} de ${source}; ${group.map((g: any) => s(g.number)).join(', ') || '–'}${memos.length ? ` menos ${memos.map((m: any) => s(m.number)).join(', ')}` : ''} en ${target}) no cuadra: ${diff.join(' · ')}`;
+              const diff = net.rows.filter(d => Math.abs(d.a - d.b) > 0.0001).map(d => `${d.no} ${d.description} (${source}: ${d.a}, final: ${d.b})`);
+              issues[issues.length - 1] = `Items or quantities differ in the final sale: with all invoices for ${ext} (${[no, ...others].join(', ')} from ${source}; ${group.map((g: any) => s(g.number)).join(', ') || '–'}${memos.length ? ` less ${memos.map((m: any) => s(m.number)).join(', ')}` : ''} in ${target}) it does not match: ${diff.join(' · ')}`;
             }
             if (net.ok) {
-              corrected.push(`Venta final ${ext} corregida: ${group.map((g: any) => `${s(g.number)} (${fmtA(n(g.totalAmountExcludingTax))})`).join(', ')}${memos.length ? ` menos los abonos ${memos.map((m: any) => `${s(m.number)} (${fmtA(n(m.totalAmountExcludingTax))})`).join(', ')}` : ''}${others.length ? `, junto con ${others.join(', ')} de ${source}` : ''}: cuadran los artículos y cantidades`);
+              corrected.push(`Final sale ${ext} corrected: ${group.map((g: any) => `${s(g.number)} (${fmtA(n(g.totalAmountExcludingTax))})`).join(', ')}${memos.length ? ` less the credit memos ${memos.map((m: any) => `${s(m.number)} (${fmtA(n(m.totalAmountExcludingTax))})`).join(', ')}` : ''}${others.length ? `, together with ${others.join(', ')} from ${source}` : ''}: items and quantities match`);
             }
           }
         }

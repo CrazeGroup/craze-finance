@@ -14,11 +14,11 @@ export async function POST(req: Request) {
   try {
     const form = await req.formData();
     const file = form.get('excel');
-    if (!(file instanceof File)) return NextResponse.json({ error: 'Sube el Excel de Mailfinish.' }, { status: 400 });
+    if (!(file instanceof File)) return NextResponse.json({ error: 'Upload the Mailfinish Excel file.' }, { status: 400 });
     const date = String(form.get('date') || '') || dateFromFileName(file.name);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return NextResponse.json({ error: 'El nombre del fichero no lleva la fecha (p. ej. 20260929): indícala.' }, { status: 400 });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return NextResponse.json({ error: 'The file name does not contain the date (e.g. 20260929): enter it.' }, { status: 400 });
     const gadgets = parseMailfinishExcel(await file.arrayBuffer());
-    if (!gadgets.length) return NextResponse.json({ error: 'El Excel no tiene gadgets con cantidades en I. Wahl ni II. Wahl.' }, { status: 422 });
+    if (!gadgets.length) return NextResponse.json({ error: 'The Excel file has no gadgets with quantities in I. Wahl or II. Wahl.' }, { status: 422 });
     const ctx = await getBcContext(DFORCE_COMPANY);
     const outputs = JSON.parse(String(form.get('outputs') || '{}')) as Record<string, string>;
     const result = await suggestOrders(ctx, gadgets, date, outputs);

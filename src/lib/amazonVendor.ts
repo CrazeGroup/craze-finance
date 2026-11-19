@@ -37,14 +37,14 @@ async function accessToken(mk: string) {
   if (!refresh || !id || !secret) {
     // Qué variables SP_API_ ve el servidor (solo nombre y longitud, nunca el valor)
     const seen = Object.keys(process.env).filter(k => k.startsWith('SP_API_')).map(k => `${k} (${String(process.env[k] || '').length})`);
-    throw new Error(`Faltan las credenciales de Amazon Vendor (SP_API_CLIENT_ID, SP_API_CLIENT_SECRET y SP_API_VENDOR_REFRESH_TOKEN_DE, _FR, _IT, _ES, _UK…) en las variables de entorno de Vercel. El servidor ve: ${seen.join(', ') || 'ninguna'}.`);
+    throw new Error(`The Amazon Vendor credentials (SP_API_CLIENT_ID, SP_API_CLIENT_SECRET and SP_API_VENDOR_REFRESH_TOKEN_DE, _FR, _IT, _ES, _UK…) are missing from the Vercel environment variables. The server sees: ${seen.join(', ') || 'none'}.`);
   }
   const res = await fetch('https://api.amazon.com/auth/o2/token', {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refresh, client_id: id, client_secret: secret }),
   });
   const j: any = await res.json().catch(() => ({}));
-  if (!j.access_token) throw new Error(`Amazon no ha dado acceso (${res.status} ${j.error || ''}).`);
+  if (!j.access_token) throw new Error(`Amazon did not grant access (${res.status} ${j.error || ''}).`);
   tokenCache.set(mk, { token: j.access_token, until: Date.now() + (Number(j.expires_in || 3600) - 120) * 1000 });
   return j.access_token as string;
 }

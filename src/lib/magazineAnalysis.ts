@@ -83,7 +83,7 @@ const isGeneralCost = (no: string, description: string) => /^AA-0000(9|10)$/.tes
 // Description 2 de D-FORCE con variantes de escritura → un nombre
 function normLocation(s: string) {
   const t = String(s || '').trim().replace(/\s+/g, ' ').replace(/^Grosso\s*-\s*/i, 'Grosso - ');
-  if (!t) return '(sin localización)';
+  if (!t) return '(no location)';
   if (/^bahnhofsbu[s]?chhandel$/i.test(t)) return 'Bahnhofsbuchhandel';
   return t;
 }
@@ -154,12 +154,12 @@ async function pdfMagazines(ctx: BcContext, docs: [string, MagEntry['kind']][]):
     const credit = kind === 'purchCrMemo';
     try {
       const head = (await (await get(odataUrl(`${ctx.apiBase}/${credit ? 'purchaseCreditMemos' : 'purchaseInvoices'}`, { $filter: `number eq '${doc.replace(/'/g, "''")}'`, $select: 'id' }))).json()).value?.[0];
-      if (!head) { stored[doc] = { mags: [], snippet: '', error: 'Documento no encontrado en BC' }; continue; }
+      if (!head) { stored[doc] = { mags: [], snippet: '', error: 'Document not found in BC' }; continue; }
       const atts: any[] = (await (await get(odataUrl(`${ctx.apiBase}/documentAttachments`, {
         $filter: `parentType eq '${credit ? 'Purchase Credit Memo' : 'Purchase Invoice'}' and parentId eq ${head.id}`, $select: 'id,fileName',
       }))).json()).value || [];
       const files = atts.filter(a => /\.pdf$/i.test(a.fileName || ''));
-      if (!files.length) { stored[doc] = { mags: [], snippet: '', error: 'Sin PDF adjunto en BC' }; continue; }
+      if (!files.length) { stored[doc] = { mags: [], snippet: '', error: 'No PDF attached in BC' }; continue; }
       const found = new Map<string, string>();
       for (const a of files) {
         const text = await pdfText(new Uint8Array(await (await get(`${ctx.apiBase}/documentAttachments(${a.id})/attachmentContent`)).arrayBuffer())).catch(() => '');
@@ -168,7 +168,7 @@ async function pdfMagazines(ctx: BcContext, docs: [string, MagEntry['kind']][]):
       stored[doc] = { mags: Array.from(found.keys()), snippet: Array.from(found.values())[0] || '' };
     } catch (e: any) {
       // Error de BC: no se guarda, se reintenta en el próximo cálculo
-      transient[doc] = { mags: [], snippet: '', error: `No se ha podido leer el PDF: ${String(e.message).substring(0, 80)}` };
+      transient[doc] = { mags: [], snippet: '', error: `Could not read the PDF: ${String(e.message).substring(0, 80)}` };
     }
   }
   await writeSetting('magazines:pdf-mags', stored);
@@ -231,8 +231,8 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
         if (!wrong) addProject(m, project);
         const t = task === TASK_SALES || task === TASK_RETURNS ? task : kind === 'salesInv' ? TASK_SALES : TASK_RETURNS;
         const location = normLocation(r.description2);
-        const fixed = wrong ? `En BC con el proyecto ${project} (${pm}); se cuenta en ${item}, la revista del artículo` : undefined;
-        if (wrong) corrections.push({ reason: 'Proyecto de otra revista', ...base, location, qty: sign * qty, amount: sign * amount, bcProject: project, bcTask: task, magazine: item, task: t });
+        const fixed = wrong ? `In BC with project ${project} (${pm}); counted under ${item}, the item's magazine` : undefined;
+        if (wrong) corrections.push({ reason: 'Project of another magazine', ...base, location, qty: sign * qty, amount: sign * amount, bcProject: project, bcTask: task, magazine: item, task: t });
         push(m, { ...base, task: t, qty: sign * qty, value: sign * amount, location, fixed });
         const byLoc = locs.get(item) || new Map<string, MagLocation>();
         locs.set(item, byLoc);
@@ -251,7 +251,7 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
       const item = fromText || pm;
       const lineTask = task || (ads ? TASK_ADS : '');
       if (item && lineTask && (item !== pm || lineTask !== task)) {
-        const reason = !project ? 'Sin Project No.: revista del External Document No.' : item !== pm ? 'Proyecto de otra revista según el External Document No.' : 'Sin Project Task No.: Magazine Ads';
+        const reason = !project ? 'No Project No.: magazine from the External Document No.' : item !== pm ? 'Project of another magazine according to the External Document No.' : 'No Project Task No.: Magazine Ads';
         corrections.push({ reason, ...base, location: '', qty: sign * qty, amount: sign * amount, bcProject: project, bcTask: task, magazine: item, task: lineTask });
         const m = mag(item);
         push(m, { ...base, task: lineTask, qty: sign * qty, value: sign * amount, location: '', fixed: `${reason} (${raw.extDoc.get(base.doc) || base.description})` });
@@ -264,7 +264,7 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
         if (isDforce || project || /magazine|galupy|inkee/i.test(s(r.description))) {
           unassigned.push({
             key: `${kind}|${base.doc}|${s(r.lineNo)}`,
-            reason: !project ? 'Sin Project No.' : !item ? 'Proyecto que no es de revista' : 'Sin Project Task No.',
+            reason: !project ? 'No Project No.' : !item ? 'Project that is not a magazine' : 'No Project Task No.',
             kind, doc: base.doc, date: base.date, partner, no: base.no, description: base.description, project, task, qty: sign * qty, amount: sign * amount,
           });
         }
@@ -294,10 +294,10 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
       .filter(([item, date]) => item.startsWith(prefix) && prefix && a.base.date && days(date, a.base.date) <= 21)
       .sort((x, y) => Number(hasAds(x[0])) - Number(hasAds(y[0])) || days(x[1], a.base.date) - days(y[1], a.base.date))[0];
     if (!best) {
-      unassigned.push({ key: a.key, suggestedTask: TASK_ADS, reason: 'Magazine Ads sin revista (ni proyecto ni External Document No.)', ...a.base, project: a.project, task: a.task, qty: a.qty, amount: a.amount });
+      unassigned.push({ key: a.key, suggestedTask: TASK_ADS, reason: 'Magazine Ads without magazine (neither project nor External Document No.)', ...a.base, project: a.project, task: a.task, qty: a.qty, amount: a.amount });
       continue;
     }
-    const reason = `Sin revista en BC: On Sale ${best[1].split('-').reverse().join('/')} (External Document No. ${raw.extDoc.get(a.base.doc) || '—'})`;
+    const reason = `No magazine in BC: On Sale ${best[1].split('-').reverse().join('/')} (External Document No. ${raw.extDoc.get(a.base.doc) || '—'})`;
     corrections.push({ reason, ...a.base, location: '', qty: a.qty, amount: a.amount, bcProject: a.project, bcTask: a.task, magazine: best[0], task: TASK_ADS });
     push(mag(best[0]), { ...a.base, task: TASK_ADS, qty: a.qty, value: a.amount, location: '', fixed: reason });
   }
@@ -335,7 +335,7 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
             sign, base,
             u: {
               key: `${kind}|${base.doc}|${s(r.lineNo)}`,
-              reason: !project ? 'Sin Project No.' : !item ? 'Proyecto que no es de revista' : 'Sin Project Task No.',
+              reason: !project ? 'No Project No.' : !item ? 'Project that is not a magazine' : 'No Project Task No.',
               kind, doc: base.doc, date: base.date, partner: base.partner, no: base.no, description: base.description, project, task, qty: n(r.quantity), amount: -sign * amount,
             },
           });
@@ -368,16 +368,16 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
     const list = (found?.mags || []).filter(m => known.has(m));
     const task = p.u.task || usualTask(p.u.no);
     if (list.length === 1 && task) {
-      const reason = `Sin Project No.: revista del PDF («${found.snippet}»)`;
+      const reason = `No Project No.: magazine from the PDF («${found.snippet}»)`;
       corrections.push({ reason, ...p.base, qty: p.u.qty, amount: p.u.amount, bcProject: p.u.project, bcTask: p.u.task, magazine: list[0], task });
       push(mag(list[0]), { ...p.base, task, qty: p.u.qty * -p.sign, value: -p.u.amount, fixed: reason });
       continue;
     }
     const pdf = !found ? undefined
       : found.error ? found.error
-      : list.length > 1 ? `El PDF menciona varias revistas: ${list.join(', ')}`
-      : list.length === 1 ? `El PDF dice ${list[0]}, pero no se sabe la tarea del artículo ${p.u.no}`
-      : 'El PDF no dice la revista';
+      : list.length > 1 ? `The PDF mentions several magazines: ${list.join(', ')}`
+      : list.length === 1 ? `The PDF says ${list[0]}, but the task of item ${p.u.no} is unknown`
+      : 'The PDF does not name the magazine';
     unassigned.push({ ...p.u, pdf, suggestedTask: p.u.task || usualTask(p.u.no) });
   }
 
@@ -392,7 +392,7 @@ export async function computeMagazineAnalysis(ctx: BcContext): Promise<MagazineA
     push(mag(item), {
       kind: 'assembly', doc: s(e.Document_No), date: s(e.Posting_Date), partner: s(e.Location_Code), no: s(e.Item_No), description: s(e.Item_Description),
       location: '', key: `assembly|${s(e.Document_No)}|${s(e.Entry_No)}`, task: TASK_GADGET, qty: -n(e.Quantity), value,
-      fixed: 'Gadget reutilizado (sin compra en 004.001): coste del consumo de la Assembly Order de la revista',
+      fixed: 'Reused gadget (no purchase in 004.001): consumption cost of the magazine\'s Assembly Order',
     });
   }
 
@@ -492,7 +492,7 @@ export function applyManual(data: MagazineAnalysis, manual: Record<string, Manua
     const purchase = u.kind === 'purchInv' || u.kind === 'purchCrMemo';
     const value = purchase ? -u.amount : u.amount;
     const qty = purchase ? (u.kind === 'purchInv' ? u.qty : -u.qty) : u.qty;
-    const reason = `Asignada a mano en la app (${a.by || 'usuario'}, ${a.at.substring(0, 10).split('-').reverse().join('/')})`;
+    const reason = `Assigned manually in the app (${a.by || 'user'}, ${a.at.substring(0, 10).split('-').reverse().join('/')})`;
     m.entries.push({ task: a.task, qty, value, kind: u.kind, doc: u.doc, date: u.date, partner: u.partner, no: u.no, description: u.description, location: '', fixed: reason, key: u.key });
     const t = (m.tasks[a.task] ||= { qty: 0, value: 0 });
     t.qty += qty; t.value += value;
@@ -550,7 +550,7 @@ export function applyExcluded(data: MagazineAnalysis, excluded: Record<string, E
     for (const e of m.entries) {
       const x = e.key && excluded[e.key];
       if (!x) continue;
-      e.excluded = `Excluida del margen (${x.by || 'usuario'}, ${x.at.substring(0, 10).split('-').reverse().join('/')})`;
+      e.excluded = `Excluded from the margin (${x.by || 'user'}, ${x.at.substring(0, 10).split('-').reverse().join('/')})`;
       const t = m.tasks[e.task];
       if (t) { t.qty = r2(t.qty - e.qty); t.value = r2(t.value - e.value); }
       // Venta/devolución de D-FORCE: también fuera de su localización

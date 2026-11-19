@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
 import { Card, ErrorBox, Grid, Kpi, Loading, Section, Table } from '../reporting/ui';
 import DocPdfLink from '@/components/DocPdfLink';
+import { useT } from '@/contexts/LanguageContext';
 
 // Controlling · Consumed Provisions: provisión generada en la LM frente a lo consumido por facturas/abonos de compra
 // en las cuentas PROV-*.
@@ -23,19 +24,20 @@ const iso = (d: Date) => d.toISOString().substring(0, 10);
 // Solo las facturas y abonos de compra tienen PDF adjunto que abrir
 const pdfKind = (type: string) => (type === 'Invoice' ? 'purchInv' : type === 'Credit Memo' ? 'purchCrMemo' : null);
 const LM_COLS: ['conditions' | 'markant' | 'kam' | 'royalties' | 'marketing' | 'amazon', string][] = [
-  ['conditions', 'Conditions (sin Markant)'], ['markant', 'Markant (Accounting Partner)'], ['kam', 'KAM'], ['royalties', 'Royalties'], ['marketing', 'Marketing (sin Amazon)'], ['amazon', 'Amazon Promotion'],
+  ['conditions', 'Conditions (excl. Markant)'], ['markant', 'Markant (Accounting Partner)'], ['kam', 'KAM'], ['royalties', 'Royalties'], ['marketing', 'Marketing (excl. Amazon)'], ['amazon', 'Amazon Promotion'],
 ];
 // Pendiente (provisionado − consumido), en rojo si se ha consumido más de lo provisionado
-const Pending = ({ v }: { v: number }) => (
-  <span className={v < -0.5 ? 'text-[#C0392B]' : ''}>{Math.round(v).toLocaleString('es-ES')}</span>
-);
+const Pending = ({ v }: { v: number }) => {
+  const { locale } = useT();
+  return <span className={v < -0.5 ? 'text-[#C0392B]' : ''}>{Math.round(v).toLocaleString(locale)}</span>;
+};
 
 // Columnas ordenables de los documentos de una provisión
 type SortKey = 'documentNo' | 'type' | 'firstDate' | 'vendor' | 'externalDocNo' | 'initialAccounts' | 'reclassified' | 'amount';
 const DOC_COLS: { key: SortKey; label: string; right?: boolean }[] = [
-  { key: 'documentNo', label: 'Document No.' }, { key: 'type', label: 'Tipo' }, { key: 'firstDate', label: 'Fecha' },
-  { key: 'vendor', label: 'Proveedor' }, { key: 'externalDocNo', label: 'Nº doc. proveedor' }, { key: 'initialAccounts', label: 'Registrado en' },
-  { key: 'reclassified', label: 'Reclasificado' }, { key: 'amount', label: 'Importe', right: true },
+  { key: 'documentNo', label: 'Document No.' }, { key: 'type', label: 'Type' }, { key: 'firstDate', label: 'Date' },
+  { key: 'vendor', label: 'Vendor' }, { key: 'externalDocNo', label: 'Vendor doc. no.' }, { key: 'initialAccounts', label: 'Posted to' },
+  { key: 'reclassified', label: 'Reclassified' }, { key: 'amount', label: 'Amount', right: true },
 ];
 const sortValue = (d: Doc, k: SortKey): string | number =>
   k === 'amount' ? d.amount : k === 'vendor' ? (d.vendorName || d.vendorNo).toLowerCase()
@@ -44,7 +46,9 @@ const th = 'py-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-gr
 const td = 'py-1.5 px-2 whitespace-nowrap';
 
 export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; company: string }) {
+  const { t, tx } = useT();
   const { num, pct, date, monthName } = fmt;
+  const typeLabel = (type: string) => (type === 'Invoice' ? t('Invoice') : type === 'Credit Memo' ? t('Credit memo') : type);
   // Por defecto: del 1 de enero al último día del mes anterior (en enero, el año anterior completo)
   const [to, setTo] = useState(() => { const d = new Date(); return iso(new Date(Date.UTC(d.getFullYear(), d.getMonth(), 0))); });
   const [from, setFrom] = useState(() => `${to.substring(0, 4)}-01-01`);
@@ -69,34 +73,34 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
   // Excel: resumen, por mes, documentos (con su grupo) y movimientos
   const exportExcel = () => {
     if (!d) return;
-    const group = (x: Doc) => (x.type === 'Invoice' ? 'Factura' : x.type === 'Credit Memo' ? 'Abono' : 'Asiento');
+    const group = (x: Doc) => (x.type === 'Invoice' ? t('Invoice') : x.type === 'Credit Memo' ? t('Credit memo') : t('Journal entry'));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.concepts.map(c => ({
-      Concepto: c.label, 'Cuenta consumo': c.account, 'Provisionado (G/L)': c.provision, 'Calculado LM': c.lm,
-      Consumido: c.consumed, Pendiente: c.pending, '% consumido': c.consumed !== null && c.provision ? c.consumed / c.provision : null, Documentos: c.docs.length,
-    }))), 'Resumen');
+      [t('Concept')]: tx(c.label), [t('Consumption account')]: c.account, [t('Provisioned (G/L)')]: c.provision, [t('LM calculation')]: c.lm,
+      [t('Consumed')]: c.consumed, [t('Pending')]: c.pending, [t('% consumed')]: c.consumed !== null && c.provision ? c.consumed / c.provision : null, [t('Documents')]: c.docs.length,
+    }))), t('Summary'));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.lmByGroup.map(g => ({
       'Customer Group': g.code, 'Customer Group Name': g.name,
-      ...Object.fromEntries(LM_COLS.flatMap(([k, label]) => [[`${label} calc.`, g[k]], ...(k !== 'kam' ? [[`${label} cons.`, g.consumed[k] || 0]] : []), [`${label} pend.`, g[k] - (g.consumed[k] || 0)]])),
-      'Total calc.': g.total, 'Total cons.': g.consumedTotal, Pendiente: g.total - g.consumedTotal,
-    }))), 'LM por Customer Group');
+      ...Object.fromEntries(LM_COLS.flatMap(([k, label]) => [[`${t(label)} ${t('calc.')}`, g[k]], ...(k !== 'kam' ? [[`${t(label)} ${t('cons.')}`, g.consumed[k] || 0]] : []), [`${t(label)} ${t('pend.')}`, g[k] - (g.consumed[k] || 0)]])),
+      [t('Total calc.')]: g.total, [t('Total cons.')]: g.consumedTotal, [t('Pending')]: g.total - g.consumedTotal,
+    }))), t('LM by Customer Group'));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.lmByGroup.flatMap(g => g.docs.map(x => ({
-      'Customer Group': g.code, 'Customer Group Name': g.name, Concepto: LM_COLS.find(([k]) => k === x.concept)?.[1] || x.concept,
-      'Document No.': x.documentNo, Tipo: x.type === 'Invoice' ? 'Factura' : x.type === 'Credit Memo' ? 'Abono' : x.type, Fecha: x.date, 'Vendor No.': x.vendorNo, Proveedor: x.vendorName,
-      'Nº doc. proveedor': x.externalDocNo, Importe: x.amount,
-    })))), 'Facturas por Customer Group');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.byMonth.map(m => Object.fromEntries([['Mes', m.month], ...d.concepts.flatMap(c => {
+      'Customer Group': g.code, 'Customer Group Name': g.name, [t('Concept')]: t(LM_COLS.find(([k]) => k === x.concept)?.[1] || x.concept),
+      'Document No.': x.documentNo, [t('Type')]: typeLabel(x.type), [t('Date')]: x.date, 'Vendor No.': x.vendorNo, [t('Vendor')]: x.vendorName,
+      [t('Vendor doc. no.')]: x.externalDocNo, [t('Amount')]: x.amount,
+    })))), t('Invoices by Customer Group'));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.byMonth.map(m => Object.fromEntries([[t('Month'), m.month], ...d.concepts.flatMap(c => {
       const v = m[c.key];
-      const name = c.label.replace('Provision ', '');
-      return [[`${name} prov.`, v.provision], ...(c.account ? [[`${name} cons.`, v.consumed], [`${name} pend.`, v.provision - v.consumed]] : [])];
-    })]))), 'Por mes');
+      const name = tx(c.label).replace('Provision ', '');
+      return [[`${name} ${t('prov.')}`, v.provision], ...(c.account ? [[`${name} ${t('cons.')}`, v.consumed], [`${name} ${t('pend.')}`, v.provision - v.consumed]] : [])];
+    })]))), t('By month'));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.concepts.flatMap(c => c.docs.map(x => ({
-      Concepto: c.label, Grupo: group(x), 'Document No.': x.documentNo, Tipo: x.type, Fecha: x.firstDate, 'Vendor No.': x.vendorNo, Proveedor: x.vendorName,
-      'Nº doc. proveedor': x.externalDocNo, 'Registrado en': x.initialAccounts.join(', '), Reclasificado: x.reclassified ? 'Sí' : 'No', [`Importe`]: x.amount, 'Cuenta consumo': c.account,
-    })))), 'Documentos');
+      [t('Concept')]: tx(c.label), [t('Group')]: group(x), 'Document No.': x.documentNo, [t('Type')]: x.type, [t('Date')]: x.firstDate, 'Vendor No.': x.vendorNo, [t('Vendor')]: x.vendorName,
+      [t('Vendor doc. no.')]: x.externalDocNo, [t('Posted to')]: x.initialAccounts.join(', '), [t('Reclassified')]: x.reclassified ? t('Yes') : t('No'), [t('Amount')]: x.amount, [t('Consumption account')]: c.account,
+    })))), t('Documents'));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.concepts.flatMap(c => c.docs.flatMap(x => x.movements.map(m => ({
-      Concepto: c.label, 'Document No.': x.documentNo, Fecha: m.date, Cuenta: m.account, Origen: m.source, Descripción: m.description, Contrapartida: m.balAccount, Importe: m.amount,
-    }))))), 'Movimientos');
+      [t('Concept')]: tx(c.label), 'Document No.': x.documentNo, [t('Date')]: m.date, [t('Account')]: m.account, [t('Source')]: m.source, [t('Description')]: m.description, [t('Bal. account')]: m.balAccount, [t('Amount')]: m.amount,
+    }))))), t('Entries'));
     XLSX.writeFile(wb, `Consumed_Provisions_${company}_${from}_${to}.xlsx`.replace(/\s+/g, '_'));
   };
 
@@ -107,19 +111,19 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
     const inv = c.docs.filter(x => x.type === 'Invoice'), cm = c.docs.filter(x => x.type === 'Credit Memo');
     const other = c.docs.filter(x => x.type !== 'Invoice' && x.type !== 'Credit Memo');
     return [
-      { id: 'purchase', label: 'Facturas y abonos de compra', docs: [...inv, ...cm], children: [
-        { id: 'invoices', label: 'Facturas', docs: inv }, { id: 'creditMemos', label: 'Abonos', docs: cm },
+      { id: 'purchase', label: t('Purchase invoices and credit memos'), docs: [...inv, ...cm], children: [
+        { id: 'invoices', label: t('Invoices'), docs: inv }, { id: 'creditMemos', label: t('Credit memos'), docs: cm },
       ] },
-      { id: 'entries', label: 'Asientos (diario, traspasos y refacturación)', docs: other },
+      { id: 'entries', label: t('Journal entries (journal, transfers and re-invoicing)'), docs: other },
     ].filter(g => g.docs.length);
   };
 
   // Documentos agrupados según "Agrupar por": cada grupo se despliega con su tabla
-  const MONTHS_ES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
   const groupKeyOf = (doc: Doc) => grouping === 'month' ? (doc.firstDate || '').substring(0, 7)
-    : grouping === 'vendor' ? `${doc.vendorNo}|${doc.vendorName || doc.vendorNo || '(sin proveedor)'}`
-    : (doc.movements[0]?.source || '(sin origen)');
-  const groupLabelOf = (k: string) => grouping === 'month' ? (k ? `${MONTHS_ES[Number(k.substring(5, 7)) - 1]} ${k.substring(0, 4)}` : '(sin fecha)')
+    : grouping === 'vendor' ? `${doc.vendorNo}|${doc.vendorName || doc.vendorNo || t('(no vendor)')}`
+    : (doc.movements[0]?.source || t('(no source)'));
+  const groupLabelOf = (k: string) => grouping === 'month' ? (k ? `${cap(fmt.monthOnly(k))} ${k.substring(0, 4)}` : t('(no date)'))
     : grouping === 'vendor' ? `${k.split('|').slice(1).join('|')}${k.split('|')[0] ? ` · ${k.split('|')[0]}` : ''}` : k;
   const docsTable = (gk: string, docs: Doc[], account: string) => {
     if (grouping === 'none') return docsTableFlat(gk, docs, account);
@@ -135,7 +139,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
               <button onClick={() => toggle(ok)} className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-gray-50">
                 {open[ok] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                 <span className="text-gray-800">{groupLabelOf(k)}</span>
-                <span className="ml-auto text-xs text-gray-500">{g.length} doc.</span>
+                <span className="ml-auto text-xs text-gray-500">{t('{n} doc.', { n: g.length })}</span>
                 <span className="w-36 text-right font-semibold font-mono">{num(sum(g), 2)}</span>
               </button>
               {open[ok] && <div className="px-2 pb-2">{docsTableFlat(ok, g, account)}</div>}
@@ -155,7 +159,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
           {DOC_COLS.map(col => (
             <th key={col.key} className={`${th} ${col.right ? 'text-right' : ''} cursor-pointer select-none hover:text-gray-900`} onClick={() => sortBy(gk, col.key)}>
               <span className={`inline-flex items-center gap-1 ${col.right ? 'flex-row-reverse' : ''}`}>
-                {col.key === 'amount' ? `Importe en ${account}` : col.label}
+                {col.key === 'amount' ? t('Amount in {account}', { account }) : t(col.label)}
                 {sort[gk]?.key === col.key && (sort[gk].dir === 1 ? <ArrowUp size={11} /> : <ArrowDown size={11} />)}
               </span>
             </th>
@@ -170,19 +174,19 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
               <tr className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => toggle(k)}>
                 <td className={td}>{open[k] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</td>
                 <td className={`${td} font-mono`}>{doc.documentNo}{pdfKind(doc.type) && <DocPdfLink company={company} documentNo={doc.documentNo} kind={pdfKind(doc.type)!} />}</td>
-                <td className={td}>{doc.type}</td>
+                <td className={td}>{typeLabel(doc.type)}</td>
                 <td className={`${td} font-mono`}>{date(doc.firstDate)}</td>
                 <td className="py-1.5 px-2 min-w-[180px]">{doc.vendorName || doc.vendorNo || '–'} <span className="text-gray-400 font-mono">{doc.vendorName ? doc.vendorNo : ''}</span></td>
                 <td className={td}>{doc.externalDocNo || '–'}</td>
                 <td className={`${td} font-mono`}>{doc.initialAccounts.join(', ') || '–'}</td>
-                <td className={td}>{doc.reclassified ? <span className="text-[#C8186C] font-semibold">Sí</span> : 'No'}</td>
+                <td className={td}>{doc.reclassified ? <span className="text-[#C8186C] font-semibold">{t('Yes')}</span> : t('No')}</td>
                 <td className={`${td} text-right font-mono font-semibold`}>{num(doc.amount, 2)}</td>
               </tr>
               {open[k] && (
                 <tr>
                   <td />
                   <td colSpan={8} className="py-2 pr-2">
-                    <Table cols={[{ label: 'Fecha', mono: true }, { label: 'Cuenta', mono: true }, { label: 'Origen', mono: true }, { label: 'Descripción', wide: true }, { label: 'Contrapartida', mono: true }, { label: 'Importe', align: 'right', mono: true }]}
+                    <Table cols={[{ label: t('Date'), mono: true }, { label: t('Account'), mono: true }, { label: t('Source'), mono: true }, { label: t('Description'), wide: true }, { label: t('Bal. account'), mono: true }, { label: t('Amount'), align: 'right', mono: true }]}
                       rows={doc.movements.map(m => [date(m.date), m.account, m.source, m.description, m.balAccount || '–', num(m.amount, 2)])} />
                   </td>
                 </tr>
@@ -219,9 +223,9 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
   } : null;
 
   return (
-    <Section title="Consumed Provisions" source="Provisionado: asientos PROV* en cuentas de resultados (4769 02, 6020 10, 6600 30, 6600 31, 6837 00) · Calculado LM: Documents LM Components (referencia) · Consumido: facturas y abonos de compra en PROV-KONDITIONS / PROV-MARKETING / PROV-ROYALTIES / PROV-AMZPROM (G/L Entries, por Document No.)">
+    <Section title="Consumed Provisions" source={t('Provisioned: PROV* entries on income-statement accounts (4769 02, 6020 10, 6600 30, 6600 31, 6837 00) · LM calculation: Documents LM Components (reference) · Consumed: purchase invoices and credit memos on PROV-KONDITIONS / PROV-MARKETING / PROV-ROYALTIES / PROV-AMZPROM (G/L Entries, by Document No.)')}>
       <div className="flex flex-wrap items-end gap-4">
-        {([['Desde', from, setFrom], ['Hasta', to, setTo]] as const).map(([label, value, set]) => (
+        {([[t('From'), from, setFrom], [t('Until'), to, setTo]] as const).map(([label, value, set]) => (
           <label key={label} className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
             {label}
             <input type="date" value={value} onChange={e => set(e.target.value)}
@@ -229,43 +233,43 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
           </label>
         ))}
         <label className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
-          Agrupar facturas por
+          {t('Group invoices by')}
           <select value={grouping} onChange={e => setGrouping(e.target.value as typeof grouping)}
             className="block mt-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-900 bg-white normal-case tracking-normal">
-            <option value="none">Sin agrupar</option>
-            <option value="month">Mes</option>
-            <option value="vendor">Proveedor</option>
-            <option value="source">Origen (Source Code)</option>
+            <option value="none">{t('No grouping')}</option>
+            <option value="month">{t('Month')}</option>
+            <option value="vendor">{t('Vendor')}</option>
+            <option value="source">{t('Source (Source Code)')}</option>
           </select>
         </label>
         <button onClick={exportExcel} disabled={state.loading || !d}
           className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
-          <FileDown size={16} /> Exportar Excel
+          <FileDown size={16} /> {t('Export Excel')}
         </button>
-        <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={state.loading} title="Volver a leer de BC"
+        <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={state.loading} title={t('Reload from BC')}
           className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">
           <RefreshCw size={16} className={state.loading ? 'animate-spin' : ''} />
         </button>
       </div>
 
-      {from > to ? <ErrorBox message="La fecha Desde es posterior a Hasta." />
-        : state.error ? <ErrorBox message={state.error} />
-        : state.loading || !d || !totals ? <Loading text="Leyendo la LM y los movimientos contables de Business Central…" />
+      {from > to ? <ErrorBox message={t('The From date is after the To date.')} />
+        : state.error ? <ErrorBox message={tx(state.error)} />
+        : state.loading || !d || !totals ? <Loading text={t('Reading the LM and the G/L entries from Business Central…')} />
         : (
           <>
             <Grid cols={3}>
-              <Kpi label="Provisionado (G/L)" value={num(totals.provision)} sub={`Calculado por la LM: ${num(totals.lm)}`} />
-              <Kpi label="Consumido (facturas y abonos)" value={num(totals.consumed)} sub={totals.provision ? `${pct((totals.consumed / totals.provision) * 100)} de lo generado` : undefined} />
-              <Kpi highlight tone="main" label="Pendiente" value={num(totals.provision - totals.consumed)} sub="Provisionado − consumido" />
+              <Kpi label={t('Provisioned (G/L)')} value={num(totals.provision)} sub={t('Calculated by the LM: {v}', { v: num(totals.lm) })} />
+              <Kpi label={t('Consumed (invoices and credit memos)')} value={num(totals.consumed)} sub={totals.provision ? t('{p} of the amount generated', { p: pct((totals.consumed / totals.provision) * 100) }) : undefined} />
+              <Kpi highlight tone="main" label={t('Pending')} value={num(totals.provision - totals.consumed)} sub={t('Provisioned − consumed')} />
             </Grid>
 
             <div className="rpt-card bg-white rounded-xl border border-gray-200 table-scroll">
               <table className="w-full text-[13px]">
                 <thead>
                   <tr className="border-b border-gray-200 text-left">
-                    <th className={th} /><th className={th}>Concepto</th><th className={th}>Cuenta consumo</th>
-                    <th className={`${th} text-right`}>Provisionado (G/L)</th><th className={`${th} text-right`}>Calculado LM</th><th className={`${th} text-right`}>Consumido</th>
-                    <th className={`${th} text-right`}>Pendiente</th><th className={`${th} text-right`}>% consumido</th><th className={`${th} text-right`}>Documentos</th>
+                    <th className={th} /><th className={th}>{t('Concept')}</th><th className={th}>{t('Consumption account')}</th>
+                    <th className={`${th} text-right`}>{t('Provisioned (G/L)')}</th><th className={`${th} text-right`}>{t('LM calculation')}</th><th className={`${th} text-right`}>{t('Consumed')}</th>
+                    <th className={`${th} text-right`}>{t('Pending')}</th><th className={`${th} text-right`}>{t('% consumed')}</th><th className={`${th} text-right`}>{t('Documents')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -273,7 +277,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                     <Fragment key={c.key}>
                       <tr className={`border-b border-gray-100 ${c.docs.length ? 'hover:bg-gray-50 cursor-pointer' : ''}`} onClick={() => c.docs.length && toggle(c.key)}>
                         <td className={td}>{c.docs.length ? (open[c.key] ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : null}</td>
-                        <td className={`${td} font-semibold text-gray-900`}>{c.label}</td>
+                        <td className={`${td} font-semibold text-gray-900`}>{tx(c.label)}</td>
                         <td className={`${td} font-mono`}>{c.account || '–'}</td>
                         <td className={`${td} text-right font-mono`}>{amt(c.provision)}</td>
                         <td className={`${td} text-right font-mono text-gray-500`}>{amt(c.lm)}</td>
@@ -293,7 +297,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                                     <tr className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => toggle(`${c.key}|${g.id}`)}>
                                       <td className={`${td} w-6`}>{open[`${c.key}|${g.id}`] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</td>
                                       <td className={`${td} font-semibold text-gray-900`}>{g.label}</td>
-                                      <td className={`${td} text-right text-gray-500`}>{g.docs.length} documentos</td>
+                                      <td className={`${td} text-right text-gray-500`}>{t('{n} documents', { n: g.docs.length })}</td>
                                       <td className={`${td} text-right font-mono font-semibold`}>{num(sum(g.docs), 2)}</td>
                                     </tr>
                                     {open[`${c.key}|${g.id}`] && (
@@ -308,7 +312,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                                                     <tr className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => toggle(`${c.key}|${sub.id}`)}>
                                                       <td className={`${td} w-6`}>{open[`${c.key}|${sub.id}`] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</td>
                                                       <td className={`${td} font-semibold text-gray-900`}>{sub.label}</td>
-                                                      <td className={`${td} text-right text-gray-500`}>{sub.docs.length} documentos</td>
+                                                      <td className={`${td} text-right text-gray-500`}>{t('{n} documents', { n: sub.docs.length })}</td>
                                                       <td className={`${td} text-right font-mono font-semibold`}>{num(sum(sub.docs), 2)}</td>
                                                     </tr>
                                                     {open[`${c.key}|${sub.id}`] && (
@@ -332,7 +336,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                     </Fragment>
                   ))}
                   <tr className="border-t border-gray-300 font-semibold">
-                    <td /><td className={td}>Total</td><td />
+                    <td /><td className={td}>{t('Total')}</td><td />
                     <td className={`${td} text-right font-mono`}>{num(totals.provision, 2)}</td>
                     <td className={`${td} text-right font-mono text-gray-500`}>{num(totals.lm, 2)}</td>
                     <td className={`${td} text-right font-mono`}>{num(totals.consumed, 2)}</td>
@@ -344,7 +348,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
               </table>
             </div>
 
-            <Card title="Calculado por la LM y consumido por Customer Group" sub="Calculado: Documents LM Components (60000, sin Main Item); Markant = Provision Accounting Partner (parte de Conditions). Consumido: facturas y abonos de compra de proveedores que son clientes del grupo (por CIF o nombre) en las cuentas PROV-*; las facturas de Markant se reparten en proporción al Markant calculado de cada grupo. Pincha un grupo para ver sus documentos.">
+            <Card title={t('LM calculation and consumption by Customer Group')} sub={t('Calculated: Documents LM Components (60000, without Main Item); Markant = Provision Accounting Partner (part of Conditions). Consumed: purchase invoices and credit memos of vendors that are customers of the group (by VAT no. or name) on the PROV-* accounts; Markant invoices are spread in proportion to the calculated Markant of each group. Click a group to see its documents.')}>
               <div className="table-scroll">
                 <table className="w-full text-[12px]">
                   <thead>
@@ -352,12 +356,12 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                       <th className={th} /><th className={th}>Customer Group</th><th className={th}>Customer Group Name</th>
                       {LM_COLS.map(([k, label]) => (
                         <Fragment key={k}>
-                          <th className={`${th} text-right`}>{label} calc.</th>
-                          {k !== 'kam' && <th className={`${th} text-right`}>cons.</th>}
-                          <th className={`${th} text-right`}>pend.</th>
+                          <th className={`${th} text-right`}>{t(label)} {t('calc.')}</th>
+                          {k !== 'kam' && <th className={`${th} text-right`}>{t('cons.')}</th>}
+                          <th className={`${th} text-right`}>{t('pend.')}</th>
                         </Fragment>
                       ))}
-                      <th className={`${th} text-right`}>Total calc.</th><th className={`${th} text-right`}>Total cons.</th><th className={`${th} text-right`}>Pendiente</th>
+                      <th className={`${th} text-right`}>{t('Total calc.')}</th><th className={`${th} text-right`}>{t('Total cons.')}</th><th className={`${th} text-right`}>{t('Pending')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -395,17 +399,17 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                                         <Fragment key={k}>
                                           <tr className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => toggle(ck)}>
                                             <td className={`${td} w-6`}>{open[ck] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</td>
-                                            <td className={`${td} font-semibold text-gray-900`}>{label}</td>
-                                            <td className={`${td} text-right text-gray-500`}>{docs.length} documentos</td>
+                                            <td className={`${td} font-semibold text-gray-900`}>{t(label)}</td>
+                                            <td className={`${td} text-right text-gray-500`}>{t('{n} documents', { n: docs.length })}</td>
                                             <td className={`${td} text-right font-mono font-semibold`}>{num(docs.reduce((t, x) => t + x.amount, 0), 2)}</td>
                                           </tr>
                                           {open[ck] && (
                                             <tr>
                                               <td />
                                               <td colSpan={3} className="py-2 pr-2">
-                                                <Table cols={[{ label: 'Document No.', mono: true }, { label: 'Tipo' }, { label: 'Fecha', mono: true }, { label: 'Proveedor', wide: true }, { label: 'Nº doc. proveedor' }, { label: 'Importe', align: 'right', mono: true }]}
-                                                  rows={docs.map(x => [<>{x.documentNo}{pdfKind(x.type) && <DocPdfLink company={company} documentNo={x.documentNo} kind={pdfKind(x.type)!} />}</>, x.type === 'Invoice' ? 'Factura' : x.type === 'Credit Memo' ? 'Abono' : x.type, date(x.date), `${x.vendorName || ''} ${x.vendorNo}`.trim(), x.externalDocNo || '–', num(x.amount, 2)])}
-                                                  total={['Total', '', '', '', '', num(docs.reduce((t, x) => t + x.amount, 0), 2)]} />
+                                                <Table cols={[{ label: 'Document No.', mono: true }, { label: t('Type') }, { label: t('Date'), mono: true }, { label: t('Vendor'), wide: true }, { label: t('Vendor doc. no.') }, { label: t('Amount'), align: 'right', mono: true }]}
+                                                  rows={docs.map(x => [<>{x.documentNo}{pdfKind(x.type) && <DocPdfLink company={company} documentNo={x.documentNo} kind={pdfKind(x.type)!} />}</>, typeLabel(x.type), date(x.date), `${x.vendorName || ''} ${x.vendorNo}`.trim(), x.externalDocNo || '–', num(x.amount, 2)])}
+                                                  total={[t('Total'), '', '', '', '', num(docs.reduce((t, x) => t + x.amount, 0), 2)]} />
                                               </td>
                                             </tr>
                                           )}
@@ -413,12 +417,12 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                                       );
                                     })}
                                     <tr className="border-t border-gray-300 font-semibold">
-                                      <td /><td className={td}>Total</td><td className={`${td} text-right text-gray-500`}>{g.docs.length} documentos</td>
+                                      <td /><td className={td}>{t('Total')}</td><td className={`${td} text-right text-gray-500`}>{t('{n} documents', { n: g.docs.length })}</td>
                                       <td className={`${td} text-right font-mono`}>{num(g.consumedTotal, 2)}</td>
                                     </tr>
                                   </tbody>
                                 </table>
-                                {g.cancelledPairs > 0 && <p className="text-xs text-gray-500 mt-2">No se muestran {g.cancelledPairs} facturas anuladas por su abono (abono aplicado a la factura en BC, o mismo proveedor, fecha, concepto e importe); cada pareja suma 0.</p>}
+                                {g.cancelledPairs > 0 && <p className="text-xs text-gray-500 mt-2">{t('{n} invoices cancelled by their credit memo are not shown (credit memo applied to the invoice in BC, or same vendor, date, concept and amount); each pair adds up to 0.', { n: g.cancelledPairs })}</p>}
                               </td>
                             </tr>
                           )}
@@ -426,7 +430,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                       );
                     })}
                     <tr className="border-t border-gray-300 font-semibold">
-                      <td /><td className={td}>Total</td><td />
+                      <td /><td className={td}>{t('Total')}</td><td />
                       {LM_COLS.map(([k]) => (
                         <Fragment key={k}>
                           <td className={`${td} text-right font-mono`}>{num(d.lmByGroup.reduce((t, g) => t + g[k], 0), 2)}</td>
@@ -441,21 +445,21 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
                   </tbody>
                 </table>
               </div>
-              <p className="text-xs text-gray-500 mt-2">Solo cuentan las facturas y abonos de proveedores que se han podido emparejar con un Customer Group; los asientos (Skonto, traspasos…) y los proveedores sin cliente equivalente no salen aquí.</p>
+              <p className="text-xs text-gray-500 mt-2">{t('Only invoices and credit memos of vendors that could be matched with a Customer Group count; journal entries (Skonto, transfers…) and vendors without an equivalent customer are not shown here.')}</p>
             </Card>
 
-            <Card title="Por mes" sub="Provisionado (G/L), consumido en las cuentas PROV-* y pendiente (provisionado − consumido) por fecha de registro">
+            <Card title={t('By month')} sub={t('Provisioned (G/L), consumed on the PROV-* accounts and pending (provisioned − consumed) by posting date')}>
               <div className="overflow-x-auto">
                 <Table
-                  cols={[{ label: 'Mes' }, ...d.concepts.flatMap(c => [
-                    { label: `${c.label.replace('Provision ', '')} prov.`, align: 'right' as const, mono: true },
-                    ...(c.account ? [{ label: 'cons.', align: 'right' as const, mono: true }, { label: 'pend.', align: 'right' as const, mono: true }] : []),
+                  cols={[{ label: t('Month') }, ...d.concepts.flatMap(c => [
+                    { label: `${tx(c.label).replace('Provision ', '')} ${t('prov.')}`, align: 'right' as const, mono: true },
+                    ...(c.account ? [{ label: t('cons.'), align: 'right' as const, mono: true }, { label: t('pend.'), align: 'right' as const, mono: true }] : []),
                   ])]}
                   rows={d.byMonth.map(m => [monthName(m.month), ...d.concepts.flatMap(c => {
                     const v = m[c.key];
                     return [num(v.provision), ...(c.account ? [num(v.consumed), <Pending key="p" v={v.provision - v.consumed} />] : [])];
                   })])}
-                  total={['Total', ...d.concepts.flatMap(c => {
+                  total={[t('Total'), ...d.concepts.flatMap(c => {
                     const p = d.byMonth.reduce((s, m) => s + m[c.key].provision, 0);
                     const k = d.byMonth.reduce((s, m) => s + (m[c.key].consumed || 0), 0);
                     return [num(p), ...(c.account ? [num(k), <Pending key="p" v={p - k} />] : [])];
@@ -464,7 +468,7 @@ export default function ConsumedProvisionsView({ fmt, company }: { fmt: Fmt; com
               </div>
             </Card>
             <p className="text-xs text-gray-500">
-              Provision KAM es la columna «Provision HHRR» de la LM; no tiene cuenta PROV de consumo. El consumido incluye las facturas y abonos de compra, los asientos de diario en las cuentas PROV-* (p. ej. Skonto Reclassification) y los traspasos de los asientos PROV-… que rebajan la cuenta de provisión contra otras cuentas de balance (p. ej. PROV-00049 desde la 3071 06).
+              {t('Provision KAM is the «Provision HHRR» column of the LM; it has no PROV consumption account. Consumed includes purchase invoices and credit memos, journal entries on the PROV-* accounts (e.g. Skonto Reclassification) and the transfers in PROV-… entries that reduce the provision account against other balance-sheet accounts (e.g. PROV-00049 from 3071 06).')}
             </p>
           </>
         )}

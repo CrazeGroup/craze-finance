@@ -29,10 +29,10 @@ export async function POST(req: Request) {
     const form = await req.formData();
     const data = JSON.parse(String(form.get('data') || '{}'));
     const area = data.area === 'banco' ? 'banco' : data.area === 'ocr' ? 'ocr' : null;
-    if (!area) return NextResponse.json({ error: 'Área no válida' }, { status: 400 });
+    if (!area) return NextResponse.json({ error: 'Invalid area' }, { status: 400 });
     const kind = data.kind === 'auto' ? 'auto' : 'manual';
     const message = String(data.message || '').trim().slice(0, 4000);
-    if (kind === 'manual' && !message && !form.getAll('images').length) return NextResponse.json({ error: 'Escribe qué está mal o adjunta una captura.' }, { status: 400 });
+    if (kind === 'manual' && !message && !form.getAll('images').length) return NextResponse.json({ error: 'Describe what is wrong or attach a screenshot.' }, { status: 400 });
     const pdf = form.get('pdf');
     const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
     const hasPdf = pdf instanceof File && pdf.size > 0 && pdf.size <= 4 * 1024 * 1024;
@@ -58,7 +58,7 @@ export async function PATCH(req: Request) {
   try {
     const body = await req.json();
     const f = await getFeedback(String(body?.id || ''));
-    if (!f) return NextResponse.json({ error: 'No existe' }, { status: 404 });
+    if (!f) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     if (['pending', 'applied', 'dismissed'].includes(body.status)) {
       f.status = body.status as FeedbackStatus;
       if (f.status === 'pending') { delete f.resolvedBy; delete f.resolvedAt; }

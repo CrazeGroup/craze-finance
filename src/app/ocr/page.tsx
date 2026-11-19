@@ -5,6 +5,7 @@ import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, Eye, EyeOff, File
 import DocPdfLink from '@/components/DocPdfLink';
 import FeedbackButton, { sendFeedback } from '@/components/FeedbackButton';
 import { useCompany } from '@/contexts/CompanyContext';
+import { useT } from '@/contexts/LanguageContext';
 import { ACCEPT, droppedFiles, expandFiles, isPdf, pickInvoice } from './emailFiles';
 import { ocrPdf } from './tesseract';
 
@@ -25,8 +26,8 @@ type FormLine = Omit<Line, 'quantity' | 'unitCost'> & { quantity: string; unitCo
 type Form = { invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string; postingDescription: string; vatBusPostingGroup: string; currency: string; lines: FormLine[] };
 type Status = { saving?: boolean; created?: { id: string; no: string; net: number | null; total: number | null; currency: string }; warnings?: string[]; error?: string | null };
 
-const nf = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmt = (v: number | null | undefined) => (v == null ? '—' : nf.format(v));
+// Importes mostrados en el idioma de la app (los campos editables siguen en formato es-ES, ver toNum/toText)
+const fmtNum = (locale: string) => { const nf = new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return (v: number | null | undefined) => (v == null ? '—' : nf.format(v)); };
 const toNum = (s: string) => parseFloat(String(s).replace(/\./g, '').replace(',', '.')) || 0;
 const toText = (v: number) => String(v).replace('.', ',');
 const input = 'border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white';
@@ -68,6 +69,7 @@ const toForm = (s: Suggestion | null): Form => ({
 // anteriores del mismo proveedor
 export default function OcrPage() {
   const { selectedCompany } = useCompany();
+  const { t, tx } = useT();
   const [files, setFiles] = useState<File[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
   const [forms, setForms] = useState<Record<string, Form>>({});
@@ -97,7 +99,7 @@ export default function OcrPage() {
         if (text != null) form.append('text', text);
         const res = await fetch('/api/ocr/parse', { method: 'POST', body: form });
         const json = await res.json();
-        if (!res.ok) throw new Error(json.error || 'Error al leer el PDF');
+        if (!res.ok) throw new Error(json.error || t('Error reading the PDF'));
         return json;
       };
       let json = await post(ocrTexts.current[file.name]);
@@ -118,7 +120,7 @@ export default function OcrPage() {
   const read = async (list: File[]) => {
     const pdfs = list.filter(f => isPdf(f) && !files.some(x => x.name === f.name));
     const dup = list.filter(f => files.some(x => x.name === f.name));
-    setNotice(dup.length ? `Ya están en la lista y no se procesan otra vez: ${dup.map(f => f.name).join(', ')}` : null);
+    setNotice(dup.length ? t('Already in the list and not processed again: {files}', { files: dup.map(f => f.name).join(', ') }) : null);
     if (!pdfs.length) return;
     setFiles(l => [...l, ...pdfs]);
     setDocs(l => [...l, ...pdfs.map(f => ({ file: f.name, loading: true, scanned: false, currency: '', ids: [], candidates: [], vendor: null, history: [], suggestion: null, existing: [], warnings: [] }))]);
@@ -147,7 +149,7 @@ export default function OcrPage() {
   // Ficheros elegidos o soltados: PDFs, o correos de Outlook (.msg/.eml) de los que se sacan sus PDFs
   const expand = async (list: File[], types: string[] = []) => {
     if (!list.length) {
-      setNotice(`No ha llegado ningún fichero${types.length ? ` (el navegador ha recibido: ${types.join(', ')})` : ''}. Si arrastras desde Outlook y no funciona, guarda el PDF en el escritorio y arrástralo desde ahí.`);
+      setNotice(t('No file received{received}. If dragging from Outlook does not work, save the PDF to the desktop and drag it from there.', { received: types.length ? t(' (the browser received: {types})', { types: types.join(', ') }) : '' }));
       return [];
     }
     const { pdfs, notes } = await expandFiles(list);
@@ -196,7 +198,7 @@ export default function OcrPage() {
         form.append('file', a.file);
         const res = await fetch('/api/ocr/attach', { method: 'POST', body: form });
         const json = await res.json();
-        if (!res.ok) throw new Error(json.error || 'Error al adjuntar');
+        if (!res.ok) throw new Error(json.error || t('Error attaching the file'));
         setAttachments(l => l.map(x => (x.file === a.file ? { ...x, done: id, error: undefined } : x)));
       } catch (e: any) {
         setAttachments(l => l.map(x => (x.file === a.file ? { ...x, error: e.message } : x)));
@@ -208,9 +210,9 @@ export default function OcrPage() {
 
   const create = async (d: Doc, confirmed = false) => {
     const f = forms[d.file];
-    if (!d.vendor || !f.invoiceNo.trim()) { setStatus(s => ({ ...s, [d.file]: { error: 'Elige el proveedor y escribe el nº de factura.' } })); return; }
+    if (!d.vendor || !f.invoiceNo.trim()) { setStatus(s => ({ ...s, [d.file]: { error: t('Choose the vendor and enter the invoice no.') } })); return; }
     const force = d.existing.length > 0;
-    if (force && !confirmed && !confirm(`La factura ${f.invoiceNo} de ${d.vendor.name} ya existe en BC (${d.existing.map(e => e.no).join(', ')}). ¿Crearla de nuevo?`)) return;
+    if (force && !confirmed && !confirm(t('Invoice {invoice} from {vendor} already exists in BC ({existing}). Create it again?', { invoice: f.invoiceNo, vendor: d.vendor.name, existing: d.existing.map(e => e.no).join(', ') }))) return;
     setStatus(s => ({ ...s, [d.file]: { saving: true } }));
     try {
       const form = new FormData();
@@ -223,7 +225,7 @@ export default function OcrPage() {
       if (pdf) form.append('pdf', pdf);
       const res = await fetch('/api/ocr/create', { method: 'POST', body: form });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Error al crear la factura');
+      if (!res.ok) throw new Error(json.error || t('Error creating the invoice'));
       setStatus(s => ({ ...s, [d.file]: { created: json, warnings: json.warnings } }));
       // Feedback automático: lo que se cambió de la propuesta (para corregir la lógica del OCR)
       const changes = formChanges(detected.current[d.file], d, f);
@@ -241,7 +243,7 @@ export default function OcrPage() {
   const toSend = docs.filter(d => ready(d) && selected.has(d.file));
   const createSelected = async () => {
     const again = toSend.filter(d => d.existing.length);
-    if (again.length && !confirm(`${again.length} de las ${toSend.length} facturas ya existen en BC (${again.map(d => forms[d.file]?.invoiceNo).join(', ')}). ¿Crearlas de nuevo también?`)) return;
+    if (again.length && !confirm(t('{n} of the {total} invoices already exist in BC ({list}). Create them again too?', { n: again.length, total: toSend.length, list: again.map(d => forms[d.file]?.invoiceNo).join(', ') }))) return;
     for (const d of toSend) await create(d, true);
   };
   const toggle = (file: string) => setSelected(prev => { const n = new Set(prev); if (n.has(file)) n.delete(file); else n.add(file); return n; });
@@ -258,13 +260,13 @@ export default function OcrPage() {
         <header>
           <h1 className="text-3xl font-black text-black tracking-tight flex items-center gap-2"><ScanText /> OCR</h1>
           <p className="text-gray-500 mt-1 text-sm">
-            Sube facturas de proveedor en PDF: se reconoce el proveedor y se proponen la cabecera y las líneas igual que en sus últimas facturas registradas en BC ({selectedCompany}).
-            Revisa y crea cada una como Purchase Invoice sin registrar, con el PDF adjunto; regístrala (Post) en BC.
+            {t('Upload vendor invoices as PDF: the vendor is recognised and the header and lines are proposed just like its latest invoices posted in BC ({company}).', { company: selectedCompany })}{' '}
+            {t('Review each one and create it as an unposted Purchase Invoice with the PDF attached; then post it in BC.')}
           </p>
         </header>
 
         {selectedCompany === 'ALL' ? (
-          <div className="bg-white border rounded-lg p-4 text-sm text-gray-600">Selecciona una empresa en el menú.</div>
+          <div className="bg-white border rounded-lg p-4 text-sm text-gray-600">{t('Select a company in the menu.')}</div>
         ) : (
           <div className="grid gap-4 lg:grid-cols-2 items-start">
             {/* Opción 1: varios PDFs, cada uno una factura */}
@@ -272,36 +274,36 @@ export default function OcrPage() {
               onDragOver={e => e.preventDefault()}
               onDrop={async e => { e.preventDefault(); const d = await droppedFiles(e); toBatch(d.files, d.types); }}>
               <div>
-                <p className="font-bold text-gray-900">1 · Solo facturas</p>
-                <p className="text-xs text-gray-500">Cada PDF es una factura. Elige o arrastra todos los que quieras, también desde Outlook (adjuntos o el correo entero).</p>
+                <p className="font-bold text-gray-900">{t('1 · Invoices only')}</p>
+                <p className="text-xs text-gray-500">{t('Each PDF is one invoice. Pick or drag as many as you like, also from Outlook (attachments or the whole email).')}</p>
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 <label className="cursor-pointer inline-flex items-center gap-2 bg-white border border-gray-300 text-gray-900 text-sm font-semibold px-4 py-2 rounded-lg hover:bg-gray-50">
-                  <Upload size={16} /> Elegir facturas PDF
+                  <Upload size={16} /> {t('Choose PDF invoices')}
                   <input type="file" accept={ACCEPT} multiple className="hidden" onChange={e => { toBatch(Array.from(e.target.files || [])); e.target.value = ''; }} />
                 </label>
                 <button onClick={processBatch} disabled={!batch.length}
                   className="ml-auto inline-flex items-center gap-2 bg-black text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-gray-800 disabled:opacity-40">
-                  <ScanText size={16} /> Procesar{batch.length ? ` (${batch.length})` : ''}
+                  <ScanText size={16} /> {t('Process')}{batch.length ? ` (${batch.length})` : ''}
                 </button>
               </div>
               {batch.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">
                   {batch.map(f => <FileChip key={f.name} name={f.name} onRemove={() => setBatch(b => b.filter(x => x !== f))} />)}
                 </div>
-              ) : <p className="text-sm text-gray-400 border border-dashed border-gray-300 rounded-lg px-3 py-4 text-center">Arrastra aquí las facturas</p>}
+              ) : <p className="text-sm text-gray-400 border border-dashed border-gray-300 rounded-lg px-3 py-4 text-center">{t('Drag the invoices here')}</p>}
             </div>
 
             {/* Opción 2: una fila por factura con sus adjuntos */}
             <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
               <div className="flex items-start gap-3">
                 <div>
-                  <p className="font-bold text-gray-900">2 · Factura + adjuntos</p>
-                  <p className="text-xs text-gray-500">Una fila por factura: se lee la factura y los adjuntos se añaden como Attachment al enviarla a BC.</p>
+                  <p className="font-bold text-gray-900">{t('2 · Invoice + attachments')}</p>
+                  <p className="text-xs text-gray-500">{t('One row per invoice: the invoice is read and the attachments are added as Attachment when it is sent to BC.')}</p>
                 </div>
                 <button onClick={processRows} disabled={!filledRows.length}
                   className="ml-auto inline-flex items-center gap-2 bg-black text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-gray-800 disabled:opacity-40">
-                  <ScanText size={16} /> Procesar{filledRows.length ? ` (${filledRows.length})` : ''}
+                  <ScanText size={16} /> {t('Process')}{filledRows.length ? ` (${filledRows.length})` : ''}
                 </button>
               </div>
               <div className="space-y-2">
@@ -312,20 +314,20 @@ export default function OcrPage() {
                     {r.invoice ? <FileChip name={r.invoice.name} strong onRemove={() => setRowInvoice(r.id, null)} /> : (
                       <label {...drop(`${r.id}:invoice`, (l, t) => toRow(r, l, 'invoice', t))}
                         className={`cursor-pointer inline-flex items-center gap-1.5 text-sm font-semibold text-gray-900 border rounded-lg px-3 py-1.5 hover:bg-gray-50 ${dragOver === `${r.id}:invoice` ? 'border-indigo-500 bg-indigo-50 border-dashed' : 'border-gray-300'}`}
-                        title="Elige o arrastra aquí la factura">
-                        <Upload size={14} /> Factura PDF
+                        title={t('Pick or drag the invoice here')}>
+                        <Upload size={14} /> {t('Invoice PDF')}
                         <input type="file" accept={ACCEPT} className="hidden" onChange={e => { toRow(r, Array.from(e.target.files || []), 'invoice'); e.target.value = ''; }} />
                       </label>
                     )}
                     {r.attachments.map(a => <FileChip key={a.name} name={a.name} attachment onRemove={() => removeRowAttachment(r.id, a.name)} />)}
                     <label {...(r.invoice ? drop(`${r.id}:att`, (l, t) => toRow(r, l, 'att', t)) : {})}
-                      title={r.invoice ? 'Elige o arrastra aquí los adjuntos' : 'Primero la factura'}
+                      title={r.invoice ? t('Pick or drag the attachments here') : t('Invoice first')}
                       className={`inline-flex items-center gap-1.5 text-sm font-semibold rounded-lg px-3 py-1.5 border ${!r.invoice ? 'text-gray-300 border-gray-200 cursor-not-allowed' : dragOver === `${r.id}:att` ? 'cursor-pointer text-gray-700 border-indigo-500 bg-indigo-50 border-dashed' : 'cursor-pointer text-gray-700 border-gray-300 hover:bg-gray-50'}`}>
-                      <Paperclip size={14} /> Adjuntos
+                      <Paperclip size={14} /> {t('Attachments')}
                       <input type="file" accept={ACCEPT} multiple disabled={!r.invoice} className="hidden" onChange={e => { toRow(r, Array.from(e.target.files || []), 'att'); e.target.value = ''; }} />
                     </label>
                     {(r.invoice || r.attachments.length > 0) && (
-                      <button onClick={() => removeRow(r.id)} title="Quitar la fila" className="ml-auto p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"><Trash2 size={14} /></button>
+                      <button onClick={() => removeRow(r.id)} title={t('Remove the row')} className="ml-auto p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"><Trash2 size={14} /></button>
                     )}
                   </div>
                 ))}
@@ -334,31 +336,31 @@ export default function OcrPage() {
           </div>
         )}
 
-        {notice && <div className="rounded-lg border px-4 py-2 text-sm bg-amber-50 border-amber-200 text-amber-800">{notice}</div>}
+        {notice && <div className="rounded-lg border px-4 py-2 text-sm bg-amber-50 border-amber-200 text-amber-800">{tx(notice)}</div>}
         {(docs.some(d => d.loading) || valid.length > 1) && (
           <div className="flex flex-wrap items-center gap-3">
-            {docs.some(d => d.loading) && <span className="text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Leyendo y buscando las facturas anteriores del proveedor…</span>}
+            {docs.some(d => d.loading) && <span className="text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> {t('Reading and looking up the vendor’s previous invoices…')}</span>}
             {valid.length > 1 && (
               <div className="ml-auto flex items-center gap-3">
                 <label className="flex items-center gap-2 text-sm text-gray-700">
                   <input type="checkbox" checked={allSelected} onChange={() => setSelected(allSelected ? new Set() : new Set(valid.map(d => d.file)))} />
-                  Marcar todas
+                  {t('Select all')}
                 </label>
                 {selectedExisting.length > 0 && (
                   <button onClick={() => unselect(selectedExisting)} title={selectedExisting.map(d => forms[d.file]?.invoiceNo || d.file).join(', ')}
                     className="text-sm font-semibold text-amber-800 border border-amber-200 bg-amber-50 rounded-lg px-3 py-2 hover:bg-amber-100">
-                    Desmarcar las que ya existen en BC ({selectedExisting.length})
+                    {t('Unselect those already in BC ({n})', { n: selectedExisting.length })}
                   </button>
                 )}
                 {selectedWarned.length > 0 && (
                   <button onClick={() => unselect(selectedWarned)} title={selectedWarned.map(d => d.file).join(', ')}
                     className="text-sm font-semibold text-gray-700 border border-gray-300 rounded-lg px-3 py-2 hover:bg-gray-50">
-                    Desmarcar las que tienen avisos ({selectedWarned.length})
+                    {t('Unselect those with warnings ({n})', { n: selectedWarned.length })}
                   </button>
                 )}
                 <button onClick={createSelected} disabled={!toSend.length || Object.values(status).some(s => s.saving)}
                   className="inline-flex items-center gap-2 bg-indigo-600 text-white text-sm font-semibold px-4 py-2.5 rounded-lg hover:bg-indigo-700 disabled:opacity-40">
-                  Enviar seleccionadas a BC ({toSend.length})
+                  {t('Send selected to BC ({n})', { n: toSend.length })}
                 </button>
               </div>
             )}
@@ -383,6 +385,8 @@ function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRem
   setField: (k: Exclude<keyof Form, 'lines'>, v: string) => void; setLine: (i: number, k: keyof FormLine, v: string) => void;
   addLine: (l?: Line) => void; removeLine: (i: number) => void; pdf?: File;
 }) {
+  const { t, tx, locale } = useT();
+  const fmt = fmtNum(locale);
   const [showHistory, setShowHistory] = useState(false);
   // Vista previa del PDF subido (se crea al mostrarla y se libera al ocultarla)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
@@ -391,14 +395,14 @@ function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRem
   const s = d.suggestion;
   const head = (<>
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 border-b border-gray-200">
-      {!d.loading && !d.error && d.vendor && !st.created && <input type="checkbox" checked={selected} onChange={onToggle} title="Marcar para enviar junto con las demás" />}
+      {!d.loading && !d.error && d.vendor && !st.created && <input type="checkbox" checked={selected} onChange={onToggle} title={t('Select to send together with the others')} />}
       <FileText size={16} className="text-gray-400" />
-      <span className="font-bold text-gray-900">{d.vendor ? `${d.vendor.number} · ${d.vendor.name}` : 'Proveedor sin reconocer'}</span>
-      <span className="text-xs text-gray-500">{d.file}{d.ocr ? ' · sin texto, leído con OCR' : d.scanned ? ' · escaneado (sin texto)' : ''}</span>
-      {s && <span className="ml-auto text-sm text-gray-600">PDF: neto <b>{fmt(s.net)}</b> · IVA {fmt(s.vat)} · total <b>{fmt(s.total)} {s.currency || d.currency}</b></span>}
+      <span className="font-bold text-gray-900">{d.vendor ? `${d.vendor.number} · ${d.vendor.name}` : t('Vendor not recognised')}</span>
+      <span className="text-xs text-gray-500">{d.file}{d.ocr ? ` · ${t('no text, read with OCR')}` : d.scanned ? ` · ${t('scanned (no text)')}` : ''}</span>
+      {s && <span className="ml-auto text-sm text-gray-600">PDF: {t('net')} <b>{fmt(s.net)}</b> · {t('VAT')} {fmt(s.vat)} · {t('total')} <b>{fmt(s.total)} {s.currency || d.currency}</b></span>}
       {pdf && (
         <button onClick={togglePdf} className={`${s ? '' : 'ml-auto '}inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg border ${pdfUrl ? 'border-indigo-300 bg-indigo-50 text-indigo-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}>
-          {pdfUrl ? <EyeOff size={14} /> : <Eye size={14} />} {pdfUrl ? 'Ocultar PDF' : 'Ver PDF'}
+          {pdfUrl ? <EyeOff size={14} /> : <Eye size={14} />} {pdfUrl ? t('Hide PDF') : t('View PDF')}
         </button>
       )}
       {!d.loading && (
@@ -408,17 +412,17 @@ function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRem
           context: { file: d.file, vendor: d.vendor, candidates: d.candidates.slice(0, 5), suggestion: d.suggestion, current: f, warnings: d.warnings, existing: d.existing, error: d.error, created: st.created?.no },
         })} />
       )}
-      <button onClick={onRemove} title="Quitar de la lista (no se envía a BC)" className={`${s || pdf ? '' : 'ml-auto '}p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50`}><X size={16} /></button>
+      <button onClick={onRemove} title={t('Remove from the list (not sent to BC)')} className={`${s || pdf ? '' : 'ml-auto '}p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50`}><X size={16} /></button>
     </div>
     {pdfUrl && (
       <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
         <iframe src={pdfUrl} title={d.file} className="w-full max-w-3xl h-[480px] border border-gray-300 rounded-lg bg-white" />
-        <a href={pdfUrl} target="_blank" rel="noreferrer" className="inline-block mt-1 text-xs text-indigo-700 hover:underline">Abrir en otra pestaña</a>
+        <a href={pdfUrl} target="_blank" rel="noreferrer" className="inline-block mt-1 text-xs text-indigo-700 hover:underline">{t('Open in a new tab')}</a>
       </div>
     )}
   </>);
-  if (d.loading) return <section className="bg-white border border-gray-200 rounded-xl shadow-sm">{head}<p className="p-4 text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> {d.reading ? 'PDF sin texto: leyendo la imagen con OCR…' : 'Leyendo el PDF…'}</p></section>;
-  if (d.error) return <div className="rounded-lg border px-4 py-3 text-sm bg-red-50 border-red-200 text-red-800"><b>{d.file}</b>: {d.error}</div>;
+  if (d.loading) return <section className="bg-white border border-gray-200 rounded-xl shadow-sm">{head}<p className="p-4 text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> {d.reading ? t('PDF without text: reading the image with OCR…') : t('Reading the PDF…')}</p></section>;
+  if (d.error) return <div className="rounded-lg border px-4 py-3 text-sm bg-red-50 border-red-200 text-red-800"><b>{d.file}</b>: {tx(d.error)}</div>;
   if (!f) return null;
 
   const sum = f.lines.filter(l => l.lineType !== 'Comment').reduce((a, l) => a + toNum(l.quantity) * toNum(l.unitCost), 0);
@@ -429,25 +433,25 @@ function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRem
       <div className="p-4 space-y-3">
         <VendorPicker d={d} onVendor={onVendor} />
         <div className="flex flex-wrap gap-3 items-end">
-          <label className="text-xs font-semibold text-gray-500">Nº factura proveedor (Vendor Invoice No.)
+          <label className="text-xs font-semibold text-gray-500">{t('Vendor Invoice No.')}
             <input value={f.invoiceNo} onChange={e => setField('invoiceNo', e.target.value)} className={`${input} block mt-1 w-64 font-mono`} />
           </label>
-          <label className="text-xs font-semibold text-gray-500">Fecha factura
+          <label className="text-xs font-semibold text-gray-500">{t('Invoice date')}
             <input type="date" value={f.invoiceDate} onChange={e => setField('invoiceDate', e.target.value)} className={`${input} block mt-1`} />
           </label>
-          <label className="text-xs font-semibold text-gray-500">Fecha registro
+          <label className="text-xs font-semibold text-gray-500">{t('Posting date')}
             <input type="date" value={f.postingDate} onChange={e => setField('postingDate', e.target.value)} className={`${input} block mt-1`} />
           </label>
-          <label className="text-xs font-semibold text-gray-500">Vencimiento <span className="font-normal">(vacío: según términos de pago)</span>
+          <label className="text-xs font-semibold text-gray-500">{t('Due date')} <span className="font-normal">{t('(empty: per payment terms)')}</span>
             <input type="date" value={f.dueDate} onChange={e => setField('dueDate', e.target.value)} className={`${input} block mt-1`} />
           </label>
           <label className="text-xs font-semibold text-gray-500 flex-1 min-w-[260px]">Posting Description
             <input value={f.postingDescription} maxLength={100} onChange={e => setField('postingDescription', e.target.value)} className={`${input} block mt-1 w-full`} />
           </label>
-          <label className="text-xs font-semibold text-gray-500">VAT Bus. Posting Group <span className="font-normal">(vacío: el del proveedor)</span>
+          <label className="text-xs font-semibold text-gray-500">VAT Bus. Posting Group <span className="font-normal">{t('(empty: the vendor’s group)')}</span>
             <input value={f.vatBusPostingGroup} onChange={e => setField('vatBusPostingGroup', e.target.value)} className={`${input} block mt-1 w-40 font-mono`} />
           </label>
-          <label className="text-xs font-semibold text-gray-500">Divisa <span className="font-normal">(vacío: la del proveedor)</span>
+          <label className="text-xs font-semibold text-gray-500">{t('Invoice currency')} <span className="font-normal">{t('(empty: the vendor’s currency)')}</span>
             <input value={f.currency} maxLength={10} onChange={e => setField('currency', e.target.value.toUpperCase())} className={`${input} block mt-1 w-24 font-mono`} />
           </label>
         </div>
@@ -455,9 +459,9 @@ function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRem
         <table className="w-full text-sm">
           <thead className="text-xs uppercase tracking-wider text-gray-500 bg-gray-50">
             <tr>
-              <th className="p-2 text-left">Tipo</th><th className="p-2 text-left">Nº</th><th className="p-2 text-left">Descripción</th><th className="p-2 text-left">Description 2</th>
-              <th className="p-2 text-right">Cantidad</th><th className="p-2 text-right">Coste unit. ({f.currency || d.vendor?.currency || ''})</th><th className="p-2 text-left">Grupo IVA</th>
-              <th className="p-2 text-right">Importe</th><th />
+              <th className="p-2 text-left">{t('Type')}</th><th className="p-2 text-left">{t('No.')}</th><th className="p-2 text-left">{t('Description')}</th><th className="p-2 text-left">Description 2</th>
+              <th className="p-2 text-right">{t('Quantity')}</th><th className="p-2 text-right">{t('Unit cost ({currency})', { currency: f.currency || d.vendor?.currency || '' })}</th><th className="p-2 text-left">{t('VAT group')}</th>
+              <th className="p-2 text-right">{t('Amount')}</th><th />
             </tr>
           </thead>
           <tbody>
@@ -478,47 +482,47 @@ function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRem
                   }
                 }} disabled={l.lineType === 'Comment'} /></td>
                 <td className="p-2 text-right tabular-nums whitespace-nowrap">{l.lineType === 'Comment' ? '' : fmt(toNum(l.quantity) * toNum(l.unitCost))}</td>
-                <td className="p-1"><button onClick={() => removeLine(i)} title="Quitar línea" className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"><Trash2 size={14} /></button></td>
+                <td className="p-1"><button onClick={() => removeLine(i)} title={t('Remove line')} className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"><Trash2 size={14} /></button></td>
               </tr>
             ))}
             <tr className="border-t border-gray-200">
               <td colSpan={7} className="p-2">
-                <button onClick={() => addLine()} className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-700 hover:underline"><Plus size={13} /> Añadir línea</button>
+                <button onClick={() => addLine()} className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-700 hover:underline"><Plus size={13} /> {t('Add line')}</button>
               </td>
               <td className="p-2 text-right font-bold tabular-nums whitespace-nowrap">{fmt(sum)}</td><td />
             </tr>
           </tbody>
         </table>
         {diff != null && Math.abs(diff) >= 0.01 && (
-          <p className="text-xs text-red-700 flex items-center gap-1"><AlertCircle size={13} /> Las líneas suman {fmt(sum)} y el neto del PDF es {fmt(s!.net)} (diferencia {fmt(diff)}).</p>
+          <p className="text-xs text-red-700 flex items-center gap-1"><AlertCircle size={13} /> {t('The lines add up to {sum} and the PDF net is {net} (difference {diff}).', { sum: fmt(sum), net: fmt(s!.net), diff: fmt(diff) })}</p>
         )}
         {attachments.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-600">
-            <Paperclip size={13} /> Adjuntos:
+            <Paperclip size={13} /> {t('Attachments')}:
             {attachments.map(a => (
               <span key={a.file.name} className={`inline-flex items-center gap-1 border rounded px-2 py-0.5 ${a.done ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : a.error ? 'border-red-200 bg-red-50 text-red-700' : 'border-gray-200 bg-gray-50'}`} title={a.error}>
                 {a.done && <CheckCircle2 size={12} />}{a.file.name}{a.error ? ' (error)' : ''}
               </span>
             ))}
-            {st.created && attachments.some(a => !a.done) && <button onClick={onAttachNow} className="font-semibold text-indigo-700 hover:underline">Adjuntar ahora a {st.created.no}</button>}
+            {st.created && attachments.some(a => !a.done) && <button onClick={onAttachNow} className="font-semibold text-indigo-700 hover:underline">{t('Attach now to {no}', { no: st.created.no })}</button>}
           </div>
         )}
-        {s?.comment && <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2"><b>Propuesta:</b> {s.comment}</p>}
-        {d.warnings.map(w => <p key={w} className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {w}</p>)}
-        {d.existing.map(e => <p key={e.no} className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> Ya existe en BC: {e.no} ({e.status === 'Draft' ? 'pendiente' : 'registrada'})<DocPdfLink documentNo={e.no} /></p>)}
+        {s?.comment && <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2"><b>{t('Proposal:')}</b> {tx(s.comment)}</p>}
+        {d.warnings.map(w => <p key={w} className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {tx(w)}</p>)}
+        {d.existing.map(e => <p key={e.no} className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {e.status === 'Draft' ? t('Already in BC: {no} (pending)', { no: e.no }) : t('Already in BC: {no} (posted)', { no: e.no })}<DocPdfLink documentNo={e.no} /></p>)}
 
         {d.history.length > 0 && (
           <div className="border border-gray-200 rounded-lg">
             <button onClick={() => setShowHistory(!showHistory)} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-gray-50">
               {showHistory ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-              <span className="font-semibold text-gray-900">Últimas facturas de {d.vendor?.name}</span>
-              <span className="text-gray-500">{d.history.length} registradas · modelo de la propuesta</span>
+              <span className="font-semibold text-gray-900">{t('Latest invoices from {vendor}', { vendor: d.vendor?.name })}</span>
+              <span className="text-gray-500">{t('{n} posted · model for the proposal', { n: d.history.length })}</span>
             </button>
             {showHistory && (
               <table className="w-full text-sm border-t border-gray-200">
                 <thead className="text-xs uppercase tracking-wider text-gray-500 bg-gray-50">
-                  <tr><th className="p-2 text-left">Factura</th><th className="p-2 text-left">Fecha</th><th className="p-2 text-left">Tipo · Nº</th><th className="p-2 text-left">Descripción</th>
-                    <th className="p-2 text-right">Cant.</th><th className="p-2 text-right">Coste unit.</th><th className="p-2 text-left">Grupo IVA</th><th /></tr>
+                  <tr><th className="p-2 text-left">{t('Invoice')}</th><th className="p-2 text-left">{t('Date')}</th><th className="p-2 text-left">{t('Type · No.')}</th><th className="p-2 text-left">{t('Description')}</th>
+                    <th className="p-2 text-right">{t('Qty')}</th><th className="p-2 text-right">{t('Unit cost')}</th><th className="p-2 text-left">{t('VAT group')}</th><th /></tr>
                 </thead>
                 <tbody>
                   {d.history.map(h => (
@@ -532,7 +536,7 @@ function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRem
                           <td className="p-2 text-right tabular-nums">{l.lineType === 'Comment' ? '' : l.quantity}</td>
                           <td className="p-2 text-right tabular-nums">{l.lineType === 'Comment' ? '' : `${fmt(l.unitCost)} ${h.currency}`}</td>
                           <td className="p-2 text-xs">{l.taxCode}</td>
-                          <td className="p-2"><button onClick={() => addLine(l)} title="Copiar esta línea a la factura" className="text-xs font-semibold text-indigo-700 hover:underline whitespace-nowrap">+ copiar</button></td>
+                          <td className="p-2"><button onClick={() => addLine(l)} title={t('Copy this line to the invoice')} className="text-xs font-semibold text-indigo-700 hover:underline whitespace-nowrap">+ {t('copy')}</button></td>
                         </tr>
                       ))}
                     </Fragment>
@@ -543,17 +547,17 @@ function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRem
           </div>
         )}
 
-        {st.warnings?.map(w => <p key={w} className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {w}</p>)}
-        {st.error && <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{st.error}</p>}
+        {st.warnings?.map(w => <p key={w} className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {tx(w)}</p>)}
+        {st.error && <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{tx(st.error)}</p>}
         <div className="flex items-center gap-3">
           {st.created ? (
             <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold">
-              <CheckCircle2 size={16} /> Purchase Invoice {st.created.no} creada · neto {fmt(st.created.net)} {st.created.currency}<DocPdfLink documentNo={st.created.no} />
+              <CheckCircle2 size={16} /> {t('Purchase Invoice {no} created · net {net} {currency}', { no: st.created.no, net: fmt(st.created.net), currency: st.created.currency })}<DocPdfLink documentNo={st.created.no} />
             </span>
           ) : (
             <button onClick={onCreate} disabled={st.saving || !d.vendor}
               className="inline-flex items-center gap-2 bg-indigo-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed">
-              {st.saving && <RefreshCw size={14} className="animate-spin" />} Enviar a BC{d.existing.length ? ' de nuevo' : ''}
+              {st.saving && <RefreshCw size={14} className="animate-spin" />} {d.existing.length ? t('Send to BC again') : t('Send to BC')}
             </button>
           )}
         </div>
@@ -583,6 +587,7 @@ function VatSelect({ value, onChange, disabled }: { value: string; onChange: (v:
 }
 
 function VendorPicker({ d, onVendor }: { d: Doc; onVendor: (v: string) => void }) {
+  const { t, tx } = useT();
   const [term, setTerm] = useState('');
   const [results, setResults] = useState<{ number: string; name: string; currency: string; invoices: number }[]>([]);
   const [searching, setSearching] = useState(false);
@@ -598,35 +603,36 @@ function VendorPicker({ d, onVendor }: { d: Doc; onVendor: (v: string) => void }
   };
   return (
     <div className="flex flex-wrap items-end gap-3">
-      <label className="text-xs font-semibold text-gray-500">Proveedor
+      <label className="text-xs font-semibold text-gray-500">{t('Vendor')}
         <select value={d.vendor?.number || ''} onChange={e => onVendor(e.target.value)} className={`${input} block mt-1 max-w-[520px]`}>
-          {!d.vendor && <option value="">— elige un proveedor —</option>}
+          {!d.vendor && <option value="">{t('— choose a vendor —')}</option>}
           {d.vendor && !d.candidates.some(c => c.number === d.vendor!.number) && <option value={d.vendor.number}>{d.vendor.number} · {d.vendor.name}</option>}
           {d.candidates.map(c => (
-            <option key={c.number} value={c.number}>{c.number} · {c.name} ({c.currency}, {c.invoices} fact./año) — {c.reasons.join(', ')}</option>
+            <option key={c.number} value={c.number}>{c.number} · {c.name} ({c.currency}, {t('{n} inv./year', { n: c.invoices })}) — {c.reasons.map(x => tx(x)).join(', ')}</option>
           ))}
           {results.filter(r => r.number !== d.vendor?.number && !d.candidates.some(c => c.number === r.number)).map(r => (
-            <option key={r.number} value={r.number}>{r.number} · {r.name} ({r.currency}, {r.invoices} fact./año)</option>
+            <option key={r.number} value={r.number}>{r.number} · {r.name} ({r.currency}, {t('{n} inv./year', { n: r.invoices })})</option>
           ))}
         </select>
       </label>
       <div className="flex items-center gap-1">
-        <input value={term} onChange={e => setTerm(e.target.value)} onKeyDown={e => e.key === 'Enter' && search()} placeholder="Buscar otro proveedor (nº o nombre)" className={`${input} w-64`} />
-        <button onClick={search} className="p-2 rounded-lg border border-gray-300 bg-white hover:bg-gray-50" title="Buscar">
+        <input value={term} onChange={e => setTerm(e.target.value)} onKeyDown={e => e.key === 'Enter' && search()} placeholder={t('Search another vendor (no. or name)')} className={`${input} w-64`} />
+        <button onClick={search} className="p-2 rounded-lg border border-gray-300 bg-white hover:bg-gray-50" title={t('Search')}>
           {searching ? <RefreshCw size={14} className="animate-spin" /> : <Search size={14} />}
         </button>
       </div>
-      {results.length > 0 && <span className="text-xs text-gray-500">{results.length} encontrados: elígelo en el desplegable</span>}
+      {results.length > 0 && <span className="text-xs text-gray-500">{t('{n} found: pick it in the drop-down', { n: results.length })}</span>}
     </div>
   );
 }
 
 function FileChip({ name, onRemove, strong, attachment }: { name: string; onRemove: () => void; strong?: boolean; attachment?: boolean }) {
+  const { t } = useT();
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs max-w-[280px] ${strong ? 'border-gray-900 bg-gray-50 font-semibold text-gray-900' : 'border-gray-200 bg-gray-50 text-gray-700'}`}>
       {attachment ? <Paperclip size={12} className="shrink-0" /> : <FileText size={12} className="shrink-0" />}
       <span className="truncate" title={name}>{name}</span>
-      <button onClick={onRemove} title="Quitar" className="shrink-0 text-gray-400 hover:text-red-600"><X size={12} /></button>
+      <button onClick={onRemove} title={t('Remove')} className="shrink-0 text-gray-400 hover:text-red-600"><X size={12} /></button>
     </span>
   );
 }

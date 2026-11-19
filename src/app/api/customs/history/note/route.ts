@@ -11,7 +11,7 @@ export async function POST(req: Request) {
   try {
     const company = (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
     const body = await req.json();
-    if (!body?.key) return NextResponse.json({ error: 'Falta la línea.' }, { status: 400 });
+    if (!body?.key) return NextResponse.json({ error: 'The line is missing.' }, { status: 400 });
     const session: any = await getSession().catch(() => null);
     const notes = await setHistoryNote(company, String(body.key), { ignored: !!body.ignored, approved: !!body.approved, comment: String(body.comment || ''), by: session?.username });
     return NextResponse.json({ notes });

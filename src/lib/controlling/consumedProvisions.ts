@@ -29,7 +29,7 @@ export const CONCEPTS = [
   { key: 'conditions', label: 'Provision Conditions', account: 'PROV-KONDITIONS' },
   { key: 'kam', label: 'Provision KAM', account: 'PROV-KAM' },
   { key: 'royalties', label: 'Provision Royalties', account: 'PROV-ROYALTIES' },
-  { key: 'marketing', label: 'Provision Marketing (sin Amazon)', account: 'PROV-MARKETING' },
+  { key: 'marketing', label: 'Provision Marketing (without Amazon)', account: 'PROV-MARKETING' },
   { key: 'amazon', label: 'Provision Amazon Promotion', account: 'PROV-AMZPROM' },
 ] as const;
 type Key = typeof CONCEPTS[number]['key'];
@@ -75,7 +75,7 @@ async function generated(ctx: BcContext, from: string, to: string) {
     partner: k('Provision_Accounting_Partner'),
   };
   const missing = Object.entries(F).filter(([n, v]) => !v && !['vat', 'billVat', 'dim', 'partner'].includes(n)).map(([n]) => n);
-  if (sample.length && missing.length) throw new Error(`El servicio "${service.name}" no tiene los campos ${missing.join(', ')}.`);
+  if (sample.length && missing.length) throw new Error(`The service "${service.name}" does not have the fields ${missing.join(', ')}.`);
   if (!sample.length) return { conditions: 0, kam: 0, royalties: 0, marketing: 0, amazon: 0, lines: 0, byMonth: {} as Record<string, Record<Key, number>>, byGroup: {} as Record<string, Record<Key, number>>, groupIds: {} as Record<string, { vats: Set<string>; names: Set<string> }>, markantByGroup: {} as Record<string, number> };
   const rows = await bcFetchAll(odataUrl(service.url, {
     $filter: `${F.date} ge ${from} and ${F.date} le ${to}`, $select: Object.values(F).filter(Boolean).join(','),
@@ -170,7 +170,7 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
       const byAccount: Record<string, number> = {};
       for (const e of list) byAccount[str(e.G_L_Account_No)] = r2((byAccount[str(e.G_L_Account_No)] || 0) + num(e.Amount));
       docs.push({
-        documentNo: doc, type: reinvoicing ? 'Refacturación (diario)' : journal ? 'Diario' : str(typed.Document_Type).replace(/_x0020_/g, ' ') || '–', vendorNo, vendorName: vendorName.get(vendorNo) || '',
+        documentNo: doc, type: reinvoicing ? 'Re-invoicing (journal)' : journal ? 'Journal' : str(typed.Document_Type).replace(/_x0020_/g, ' ') || '–', vendorNo, vendorName: vendorName.get(vendorNo) || '',
         externalDocNo: str(orig.find(e => str(e.External_Document_No))?.External_Document_No),
         firstDate: [...list, ...orig].map(e => str(e.Posting_Date).substring(0, 10)).sort()[0],
         initialAccounts: journal ? Array.from(new Set(list.map(e => str(e.Bal_Account_No)).filter(Boolean)))
@@ -205,7 +205,7 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
         });
         const date = list.map(e => str(e.Posting_Date).substring(0, 10)).sort().pop() as string;
         docs.push({
-          documentNo: doc, type: 'Traspaso (asiento PROV)', vendorNo: '', vendorName: '', externalDocNo: '', firstDate: date,
+          documentNo: doc, type: 'Transfer (PROV entry)', vendorNo: '', vendorName: '', externalDocNo: '', firstDate: date,
           initialAccounts: Array.from(new Set(sources.map(e => str(e.G_L_Account_No)))), reclassified: false,
           movements: sources.sort((a, b) => a.Entry_No - b.Entry_No).map(e => ({
             date: str(e.Posting_Date).substring(0, 10), account: str(e.G_L_Account_No), amount: r2(num(e.Amount)),
@@ -247,7 +247,7 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
     const lmByGroup = Object.entries(gen.byGroup).map(([code, v]) => {
       const markant = gen.markantByGroup[code] || 0;
       return {
-        code: code || '(sin grupo)', name: groupName.get(code) || '',
+        code: code || '(no group)', name: groupName.get(code) || '',
         ...Object.fromEntries(Object.entries(v).map(([k, x]) => [k, r2(x)])) as Record<Key, number>,
         conditions: r2(v.conditions - markant), markant: r2(markant),
         total: r2(Object.values(v).reduce((t, x) => t + x, 0)),
@@ -320,11 +320,11 @@ export async function consumedProvisionsReport(ctx: BcContext, company: string, 
     const markantConsumed = markantDocs.reduce((t, x) => t + x.amount, 0);
     const markantCalc = lmByGroup.reduce((t, g) => t + g.markant, 0);
     const withConsumed = lmByGroup.map(g => {
-      const docs = [...(groupDocs.get(g.code === '(sin grupo)' ? '' : g.code) || [])];
+      const docs = [...(groupDocs.get(g.code === '(no group)' ? '' : g.code) || [])];
       const share = markantCalc ? g.markant / markantCalc : 0;
       if (share && markantConsumed) docs.push({
-        concept: 'markant', documentNo: `Facturas Markant (${markantDocs.length})`, type: 'Reparto', date: markantDocs.map(x => x.firstDate).sort().pop() || '',
-        vendorNo: '', vendorName: `Markant · ${(share * 100).toFixed(1)} % del total`, externalDocNo: '', amount: r2(markantConsumed * share),
+        concept: 'markant', documentNo: `Markant invoices (${markantDocs.length})`, type: 'Allocation', date: markantDocs.map(x => x.firstDate).sort().pop() || '',
+        vendorNo: '', vendorName: `Markant · ${(share * 100).toFixed(1)} % of total`, externalDocNo: '', amount: r2(markantConsumed * share),
       });
       const consumed = Object.fromEntries([...CONCEPTS.map(c => c.key), 'markant'].map(k => [k, r2(docs.filter(x => x.concept === k).reduce((t, x) => t + x.amount, 0))])) as Record<Key | 'markant', number>;
       // Factura y abono que se anulan (mismo proveedor, fecha, concepto e importe contrario): no se listan (suman 0)

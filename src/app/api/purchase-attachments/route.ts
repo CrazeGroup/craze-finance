@@ -13,11 +13,11 @@ export const maxDuration = 60;
 const q = (s: string) => s.replace(/'/g, "''");
 
 export async function GET(req: Request) {
-  if (!(await getSession())) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+  if (!(await getSession())) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try {
     const { searchParams } = new URL(req.url);
     const vendor = (searchParams.get('vendor') || '').trim();
-    if (!vendor) return NextResponse.json({ error: 'Falta ?vendor=' }, { status: 400 });
+    if (!vendor) return NextResponse.json({ error: 'Missing ?vendor=' }, { status: 400 });
     const top = Math.min(Number(searchParams.get('top')) || 3, 10);
     const company = searchParams.get('company') || (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
     const ctx = await getBcContext(company === 'ALL' ? 'CRAZE' : company);
@@ -31,7 +31,7 @@ export async function GET(req: Request) {
     const findVendors = (filter: string) => bcFetchAll(odataUrl(`${ctx.apiBase}/vendors`, { $filter: filter, $select: 'id,number,displayName' }), ctx.token);
     let vendors = await findVendors(`number eq '${q(vendor)}'`);
     if (!vendors.length) vendors = await findVendors(`contains(displayName,'${q(vendor)}')`);
-    if (vendors.length !== 1) return NextResponse.json({ company: ctx.companyName, error: vendors.length ? 'Varios proveedores, indica el nº' : 'Proveedor no encontrado', vendors });
+    if (vendors.length !== 1) return NextResponse.json({ company: ctx.companyName, error: vendors.length ? 'Several vendors, enter the no.' : 'Vendor not found', vendors });
     const v = vendors[0];
 
     const invoices = (await get(odataUrl(`${ctx.apiBase}/purchaseInvoices`, {

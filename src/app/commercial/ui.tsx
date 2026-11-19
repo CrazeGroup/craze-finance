@@ -6,6 +6,7 @@ import {
 } from 'chart.js';
 import { Bar, Doughnut, Line } from 'react-chartjs-2';
 import { ChevronDown, X } from 'lucide-react';
+import { useT } from '@/contexts/LanguageContext';
 
 ChartJS.register(ArcElement, BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend, Filler);
 
@@ -14,8 +15,16 @@ ChartJS.register(ArcElement, BarElement, LineElement, PointElement, CategoryScal
 export const COLORS = { prev: '#9CA3AF', cur: '#24305E', bdg: '#C8186C', proj: '#D9982B', so: '#6366F1', green: '#2E7D4F', red: '#C0392B' };
 const PALETTE = ['#24305E', '#C8186C', '#D9982B', '#2E7D4F', '#6366F1', '#0EA5E9', '#9333EA', '#F97316', '#64748B', '#14B8A6', '#EAB308', '#EF4444'];
 
-const nf0 = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 });
-const nf1 = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+// Formato de números en el idioma de la app: la página llama a setNumberLocale(locale) al pintar
+let nf0 = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 0 });
+let nf1 = new Intl.NumberFormat('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+let nfLocale = 'en-GB';
+export function setNumberLocale(locale: string) {
+  if (locale === nfLocale) return;
+  nfLocale = locale;
+  nf0 = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 });
+  nf1 = new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+}
 export const fmtNum = (v: number) => (Math.abs(v) < 0.5 ? '–' : nf0.format(v));
 export const fmtPct = (v: number | null) => (v == null || !isFinite(v) ? '–' : `${v > 0 ? '+' : ''}${nf1.format(v * 100)} %`);
 export const fmtShare = (v: number | null) => (v == null || !isFinite(v) ? '–' : `${nf1.format(v * 100)} %`);
@@ -31,6 +40,7 @@ export const tone = (v: number | null) => (v == null ? 'text-gray-400' : v > 0 ?
 export function MultiSelect({ label, options, value, onChange, width = 'w-44' }: {
   label: string; options: { value: string; label: string }[]; value: string[]; onChange: (v: string[]) => void; width?: string;
 }) {
+  const { t } = useT();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const ref = useRef<HTMLDivElement>(null);
@@ -40,7 +50,7 @@ export function MultiSelect({ label, options, value, onChange, width = 'w-44' }:
     return () => document.removeEventListener('mousedown', close);
   }, []);
   const shown = options.filter(o => !q || o.label.toLowerCase().includes(q.toLowerCase()));
-  const text = !value.length ? 'Todos' : value.length === 1 ? (options.find(o => o.value === value[0])?.label || value[0]) : `${value.length} seleccionados`;
+  const text = !value.length ? t('All') : value.length === 1 ? (options.find(o => o.value === value[0])?.label || value[0]) : t('{n} selected items', { n: value.length });
   return (
     <div ref={ref} className={`relative ${width}`}>
       <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-0.5">{label}</p>
@@ -51,7 +61,7 @@ export function MultiSelect({ label, options, value, onChange, width = 'w-44' }:
       </button>
       {open && (
         <div className="absolute z-30 mt-1 w-72 max-h-80 overflow-auto bg-white border border-gray-200 rounded-lg shadow-xl p-2">
-          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar…" className="w-full border border-gray-200 rounded px-2 py-1 text-sm mb-1" />
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={t('Search…')} className="w-full border border-gray-200 rounded px-2 py-1 text-sm mb-1" />
           {shown.slice(0, 300).map(o => (
             <label key={o.value} className="flex items-center gap-2 px-1 py-0.5 text-sm hover:bg-gray-50 rounded cursor-pointer">
               <input type="checkbox" checked={value.includes(o.value)}
@@ -59,7 +69,7 @@ export function MultiSelect({ label, options, value, onChange, width = 'w-44' }:
               <span className="truncate">{o.label}</span>
             </label>
           ))}
-          {!shown.length && <p className="text-xs text-gray-400 px-1 py-2">Sin resultados</p>}
+          {!shown.length && <p className="text-xs text-gray-400 px-1 py-2">{t('No results')}</p>}
         </div>
       )}
     </div>
@@ -128,18 +138,19 @@ export function Donut({ labels, data, height = 220 }: { labels: string[]; data: 
 
 // Medidor (gauge del Power BI): valor, objetivo (proyección) y máximo (presupuesto)
 export function Gauge({ value, target, max, currency }: { value: number; target: number; max: number; currency: string }) {
+  const { t } = useT();
   const scale = Math.max(max, value, target) || 1;
   return (
     <div className="space-y-1">
       <div className="relative h-5 bg-gray-100 rounded-full overflow-hidden">
         <div className="absolute inset-y-0 left-0 bg-[#24305E] rounded-full" style={{ width: `${Math.min(100, (value / scale) * 100)}%` }} />
-        <div className="absolute inset-y-0 w-0.5 bg-[#D9982B]" style={{ left: `${Math.min(100, (target / scale) * 100)}%` }} title="Proyección" />
-        <div className="absolute inset-y-0 w-0.5 bg-[#C8186C]" style={{ left: `${Math.min(100, (max / scale) * 100)}%` }} title="Presupuesto" />
+        <div className="absolute inset-y-0 w-0.5 bg-[#D9982B]" style={{ left: `${Math.min(100, (target / scale) * 100)}%` }} title={t('Projection')} />
+        <div className="absolute inset-y-0 w-0.5 bg-[#C8186C]" style={{ left: `${Math.min(100, (max / scale) * 100)}%` }} title={t('Budget')} />
       </div>
       <div className="flex justify-between text-[11px] text-gray-500">
         <span>Sell-in {fmtMoney(value, currency)}</span>
-        <span className="text-[#D9982B]">Proyección {fmtMoney(target, currency)}</span>
-        <span className="text-[#C8186C]">Presupuesto {fmtMoney(max, currency)}</span>
+        <span className="text-[#D9982B]">{t('Projection')} {fmtMoney(target, currency)}</span>
+        <span className="text-[#C8186C]">{t('Budget')} {fmtMoney(max, currency)}</span>
       </div>
     </div>
   );

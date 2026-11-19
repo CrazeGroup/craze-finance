@@ -12,10 +12,10 @@ export async function GET(req: Request) {
   try {
     const cookieStore = await cookies();
     const company = cookieStore.get('craze_selected_company')?.value || 'CRAZE';
-    if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
+    if (company === 'ALL') return NextResponse.json({ error: 'Select a specific company.' }, { status: 400 });
     const { searchParams } = new URL(req.url);
     const month = searchParams.get('month');
-    if (!isValidMonth(month)) return NextResponse.json({ error: 'Mes no válido' }, { status: 400 });
+    if (!isValidMonth(month)) return NextResponse.json({ error: 'Invalid month' }, { status: 400 });
     const ctx = await getBcContext(company);
     return NextResponse.json(await averageCostValuation(ctx, company, month, searchParams.get('force') === '1'));
   } catch (error: any) {

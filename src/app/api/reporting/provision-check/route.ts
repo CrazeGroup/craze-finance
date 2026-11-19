@@ -15,7 +15,7 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const doc = (searchParams.get('doc') || '').trim().toUpperCase();
-    if (!doc) return NextResponse.json({ error: 'Indica ?doc=PROV-00049' }, { status: 400 });
+    if (!doc) return NextResponse.json({ error: 'Specify ?doc=PROV-00049' }, { status: 400 });
     const cookieStore = await cookies();
     const company = searchParams.get('company') || cookieStore.get('craze_selected_company')?.value || 'CRAZE';
     const month = searchParams.get('month');
@@ -31,7 +31,7 @@ export async function GET(req: Request) {
       company: ctx.companyName, doc, cutoff: date,
       reporting: row ? {
         series: row.account, original: row.orig, consumed: row.cons, open: row.open, latestOfSeries: row.latest,
-        note: 'Abierto = saldo de la cuenta de provisión de la serie con todos sus documentos PROV* del año, en el último documento',
+        note: 'Open = balance of the series provision account including all its PROV* documents of the year, shown on the last document',
       } : 'El documento no tiene movimientos PROV* en una cuenta de balance hasta la fecha de corte',
       seriesDocuments: series.map(r => ({ doc: r.doc, date: r.date, desc: r.desc, original: r.orig, open: r.open })),
       entries: docEntries.map(e => ({

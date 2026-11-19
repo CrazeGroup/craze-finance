@@ -11,7 +11,7 @@ export async function companyAddress(company: string): Promise<CompanyAddress | 
     return await cached(`companyAddress:${company}`, 24 * HOUR, async () => {
       const ctx = await getBcContext(company);
       const [r] = await bcFetchAll(`${ctx.apiBase}/companyInformation`, ctx.token);
-      if (!r) throw new Error('sin companyInformation');
+      if (!r) throw new Error('no companyInformation');
       const s = (v: any) => String(v ?? '').trim();
       return {
         name: s(r.displayName), line1: s(r.addressLine1), line2: s(r.addressLine2),

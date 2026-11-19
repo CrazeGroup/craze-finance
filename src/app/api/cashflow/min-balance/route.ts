@@ -19,14 +19,14 @@ export async function PUT(req: Request) {
     const k = await key();
     if (amount === null || amount === '' || amount === undefined) {
       await prisma.apiConfig.deleteMany({ where: { key: k } });
-      await logAction('Cashflow: mínimo de saldo consolidado eliminado');
+      await logAction('Cashflow: consolidated minimum balance removed');
       return NextResponse.json(null);
     }
     const value = { amount: Number(amount), currency: String(currency || 'EUR') };
-    if (!isFinite(value.amount)) return NextResponse.json({ error: 'Importe no válido' }, { status: 400 });
+    if (!isFinite(value.amount)) return NextResponse.json({ error: 'Invalid amount' }, { status: 400 });
     const config = JSON.stringify(value);
     await prisma.apiConfig.upsert({ where: { key: k }, update: { config }, create: { key: k, url: '', config } });
-    await logAction('Cashflow: mínimo de saldo consolidado', `${value.amount} ${value.currency}`);
+    await logAction('Cashflow: consolidated minimum balance', `${value.amount} ${value.currency}`);
     return NextResponse.json(value);
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

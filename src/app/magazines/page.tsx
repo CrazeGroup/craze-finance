@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { companyLabel, useCompany } from '@/contexts/CompanyContext';
+import { useT } from '@/contexts/LanguageContext';
 import DForceView from './DForceView';
 import MailfinishView from './MailfinishView';
 
@@ -15,6 +16,7 @@ const COMPANY = 'Craze Entertainment';
 
 export default function MagazinesPage() {
   const { selectedCompany } = useCompany();
+  const { t } = useT();
   const [tab, setTab] = useState<TabId>('dforce');
 
   useEffect(() => {
@@ -31,7 +33,7 @@ export default function MagazinesPage() {
   if (selectedCompany !== COMPANY) {
     return (
       <div className="min-h-screen bg-[#F3F4F7] p-8">
-        <p className="text-sm text-gray-600">D-FORCE/MF solo está disponible para {companyLabel(COMPANY)}. Selecciónala en el menú lateral.</p>
+        <p className="text-sm text-gray-600">{t('{module} is only available for {company}. Select it in the side menu.', { module: 'D-FORCE/MF', company: companyLabel(COMPANY) })}</p>
       </div>
     );
   }
@@ -45,10 +47,10 @@ export default function MagazinesPage() {
             <p className="text-xs text-gray-500">{companyLabel(COMPANY)}</p>
           </div>
           <div className="flex bg-gray-100 rounded-lg p-1">
-            {TABS.map(t => (
-              <button key={t.id} onClick={() => change(t.id)}
-                className={`px-4 py-1.5 rounded-md text-sm font-semibold ${tab === t.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
-                {t.label}
+            {TABS.map(tb => (
+              <button key={tb.id} onClick={() => change(tb.id)}
+                className={`px-4 py-1.5 rounded-md text-sm font-semibold ${tab === tb.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
+                {tb.label}
               </button>
             ))}
           </div>

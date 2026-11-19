@@ -19,11 +19,11 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const { company, file } = await req.json();
-    if (!company || !file?.year || !Array.isArray(file.accounts) || !file.accounts.length) return NextResponse.json({ error: 'Datos no válidos' }, { status: 400 });
+    if (!company || !file?.year || !Array.isArray(file.accounts) || !file.accounts.length) return NextResponse.json({ error: 'Invalid data' }, { status: 400 });
     const config = JSON.stringify(file);
     const k = key(company, file.year);
     await prisma.apiConfig.upsert({ where: { key: k }, update: { config }, create: { key: k, url: '', config } });
-    await logAction('BWA (Power BI): Excel DATEV cargado', `${company} ${file.year}: ${file.name} (${file.accounts.length} cuentas, ${file.months} meses)`, company);
+    await logAction('BWA (Power BI): DATEV Excel uploaded', `${company} ${file.year}: ${file.name} (${file.accounts.length} accounts, ${file.months} months)`, company);
     return NextResponse.json({ ok: true });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

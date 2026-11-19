@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Check, Copy, Loader2, MessageSquare, Plus, Trash2, Upload, X } from 'lucide-react';
 import { useCompany, companyLabel } from '@/contexts/CompanyContext';
+import { useT } from '@/contexts/LanguageContext';
 
 // Tracking Cierre Mensual: tareas del cierre por empresa y año, con cada mes hecho / pendiente / vacío (la tarea no toca
 // ese mes) y un comentario por celda. Cada empresa puede tener subempresas (p. ej. Allike en GmbH), cada una en su tabla.
 const COMPANIES = ['CRAZE', 'Craze Iberia SL', 'Craze UK', 'CRAZE Group AG', 'Craze Entertainment'];
-const MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 type Cell = { id: number; taskId: number; month: number; done: boolean | null; comment: string | null; updatedBy: string | null; updatedAt: string };
 type Task = { id: number; number: number; description: string; assignee: string | null; notes: string | null; group: string | null; cells: Cell[] };
 
@@ -16,6 +17,8 @@ const label = companyLabel;
 
 export default function CierreMensualPage() {
   const { selectedCompany } = useCompany();
+  // tr en vez de t: en esta página t es una tarea
+  const { t: tr, tx, locale } = useT();
   const [company, setCompany] = useState(COMPANIES.includes(selectedCompany) ? selectedCompany : 'CRAZE');
   const thisYear = new Date().getFullYear();
   const [year, setYear] = useState(thisYear);
@@ -35,12 +38,12 @@ export default function CierreMensualPage() {
   useEffect(() => { if (COMPANIES.includes(selectedCompany)) setCompany(selectedCompany); }, [selectedCompany]);
 
   const load = async () => {
-    setLoading('Cargando…');
+    setLoading(tr('Loading…'));
     setError('');
     try {
       const res = await fetch(`/api/closing?company=${encodeURIComponent(company)}&year=${year}`);
       const d = await res.json();
-      if (!res.ok) throw new Error(d.error || 'Error al cargar las tareas');
+      if (!res.ok) throw new Error(d.error || tr('Error loading the tasks'));
       setTasks(d.tasks);
       setUsers(d.users);
       setPreviousYearTasks(d.previousYearTasks);
@@ -62,7 +65,7 @@ export default function CierreMensualPage() {
     try {
       const res = await fetch('/api/closing/cell', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: t.id, month, ...patch }) });
       const d = await res.json();
-      if (!res.ok) throw new Error(d.error || 'No se ha podido guardar');
+      if (!res.ok) throw new Error(d.error || tr('Could not save'));
       replaceCell(d);
     } catch (e: any) {
       if (before) replaceCell(before); else setTasks(ts => ts.map(x => (x.id === t.id ? { ...x, cells: x.cells.filter(c => c.month !== month) } : x)));
@@ -79,10 +82,10 @@ export default function CierreMensualPage() {
     setTasks(ts => ts.map(x => (x.id === t.id ? { ...x, ...patch } : x)));
     const res = await fetch(`/api/closing/${t.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
     const d = await res.json();
-    if (!res.ok) { setError(d.error || 'No se ha podido guardar'); load(); }
+    if (!res.ok) { setError(d.error || tr('Could not save')); load(); }
   };
   const deleteTask = async (t: Task) => {
-    if (!confirm(`¿Eliminar la tarea ${t.number}. ${t.description} de ${year}?`)) return;
+    if (!confirm(tr('Delete task {no}. {description} of {year}?', { no: t.number, description: t.description, year }))) return;
     const res = await fetch(`/api/closing/${t.id}`, { method: 'DELETE' });
     if (res.ok) setTasks(ts => ts.filter(x => x.id !== t.id)); else setError((await res.json()).error);
   };
@@ -104,14 +107,14 @@ export default function CierreMensualPage() {
   };
 
   const addGroup = () => {
-    const name = prompt(`Nombre de la subempresa de ${label(company)} (p. ej. Allike)`)?.trim();
+    const name = prompt(tr('Name of the sub-company of {company} (e.g. Allike)', { company: label(company) }))?.trim();
     if (!name) return;
-    if (groups.includes(name)) { setError(`Ya existe la subempresa ${name}.`); return; }
+    if (groups.includes(name)) { setError(tr('The sub-company {name} already exists.', { name })); return; }
     setExtraGroups(g => [...g, name]);
     setNewTask({ description: '', assignee: '', group: name });
   };
   const renameGroup = async (from: string) => {
-    const to = prompt('Nuevo nombre de la subempresa', from)?.trim();
+    const to = prompt(tr('New name of the sub-company'), from)?.trim();
     if (!to || to === from) return;
     if (!tasks.some(t => t.group === from)) { setExtraGroups(g => g.map(x => (x === from ? to : x))); return; }
     const res = await fetch(`/api/closing?company=${encodeURIComponent(company)}&year=${year}`, {
@@ -121,7 +124,7 @@ export default function CierreMensualPage() {
   };
   const deleteGroup = async (group: string) => {
     const n = tasks.filter(t => t.group === group).length;
-    if (n && !confirm(`¿Eliminar la subempresa ${group} y sus ${n} tareas de ${year}?`)) return;
+    if (n && !confirm(tr('Delete the sub-company {group} and its {n} tasks of {year}?', { group, n, year }))) return;
     if (n) {
       const res = await fetch(`/api/closing?company=${encodeURIComponent(company)}&year=${year}&group=${encodeURIComponent(group)}`, { method: 'DELETE' });
       if (!res.ok) { setError((await res.json()).error); return; }
@@ -133,8 +136,8 @@ export default function CierreMensualPage() {
   const importExcel = async (file: File | null) => {
     if (fileRef.current) fileRef.current.value = '';
     if (!file) return;
-    if (!confirm(`El Excel sustituye las tareas de ${year} de cada empresa que tenga una pestaña (GmbH, Iberia, UK, AG, Entertainment; Allike como subempresa de GmbH). ¿Continuar?`)) return;
-    setLoading('Importando el Excel…');
+    if (!confirm(tr('The Excel replaces the {year} tasks of every company that has a sheet (GmbH, Iberia, UK, AG, Entertainment; Allike as a sub-company of GmbH). Continue?', { year }))) return;
+    setLoading(tr('Importing the Excel…'));
     setError('');
     try {
       const form = new FormData();
@@ -142,8 +145,8 @@ export default function CierreMensualPage() {
       form.append('year', String(year));
       const res = await fetch('/api/closing/import', { method: 'POST', body: form });
       const d = await res.json();
-      if (!res.ok) throw new Error(d.error || 'Error al importar');
-      setMessage(`Importado ${year}: ${d.summary.map((s: any) => `${label(s.company)}${s.group ? ` / ${s.group}` : ''} ${s.tasks}`).join(' · ')}${d.skipped.length ? ` · pestañas sin empresa: ${d.skipped.join(', ')}` : ''}`);
+      if (!res.ok) throw new Error(d.error || tr('Error importing'));
+      setMessage(`${tr('Imported {year}:', { year })} ${d.summary.map((s: any) => `${label(s.company)}${s.group ? ` / ${s.group}` : ''} ${s.tasks}`).join(' · ')}${d.skipped.length ? ` · ${tr('sheets without a company: {list}', { list: d.skipped.join(', ') })}` : ''}`);
       await load();
     } catch (e: any) {
       setError(e.message);
@@ -169,22 +172,22 @@ export default function CierreMensualPage() {
       <header className="sticky top-0 z-20 bg-white border-b border-gray-200">
         <div className="w-full px-4 md:px-8 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="mr-auto">
-            <p className="font-bold text-gray-900 leading-tight text-lg">Tracking Cierre Mensual</p>
-            <p className="text-xs text-gray-500">Clic en un mes: hecho → pendiente → vacío (no toca) · clic derecho: comentario</p>
+            <p className="font-bold text-gray-900 leading-tight text-lg">{tr('Monthly Closing Tracking')}</p>
+            <p className="text-xs text-gray-500">{tr('Click a month: done → pending → empty (not applicable) · right-click: comment')}</p>
           </div>
           {loading && <span className="flex items-center gap-2 text-sm text-gray-500"><Loader2 size={16} className="animate-spin" /> {loading}</span>}
           <select value={year} onChange={e => setYear(Number(e.target.value))} className={input}>
             {[thisYear + 1, thisYear, thisYear - 1, thisYear - 2].map(y => <option key={y} value={y}>{y}</option>)}
           </select>
           <button onClick={() => fileRef.current?.click()} className="flex items-center gap-2 border border-gray-200 text-sm font-semibold px-3 py-2 rounded-lg hover:bg-gray-50">
-            <Upload size={16} /> Importar Excel
+            <Upload size={16} /> {tr('Import Excel')}
           </button>
           <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e => importExcel(e.target.files?.[0] || null)} />
           <button onClick={addGroup} className="flex items-center gap-2 border border-gray-200 text-sm font-semibold px-3 py-2 rounded-lg hover:bg-gray-50">
-            <Plus size={16} /> Nueva subempresa
+            <Plus size={16} /> {tr('New sub-company')}
           </button>
           <button onClick={() => setNewTask({ description: '', assignee: '', group: null })} className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black">
-            <Plus size={16} /> Nueva tarea
+            <Plus size={16} /> {tr('New task')}
           </button>
         </div>
         <div className="w-full px-4 md:px-8 pb-3 flex flex-wrap items-center gap-3">
@@ -197,14 +200,14 @@ export default function CierreMensualPage() {
             ))}
           </div>
           <select value={assigneeFilter} onChange={e => setAssigneeFilter(e.target.value)} className={input}>
-            <option value="">Todos los responsables</option>
+            <option value="">{tr('All owners')}</option>
             {assignees.map(a => <option key={a} value={a}>{shortUser(a)}</option>)}
           </select>
         </div>
       </header>
 
       <main className="w-full px-4 md:px-8 pt-6 space-y-4">
-        {error && <p className="bg-white border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-center gap-2"><AlertCircle size={16} /> {error}<button onClick={() => setError('')} className="ml-auto"><X size={14} /></button></p>}
+        {error && <p className="bg-white border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-center gap-2"><AlertCircle size={16} /> {tx(error)}<button onClick={() => setError('')} className="ml-auto"><X size={14} /></button></p>}
         {message && <p className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-sm text-green-900 flex items-center gap-2"><Check size={16} /> {message}<button onClick={() => setMessage('')} className="ml-auto"><X size={14} /></button></p>}
 
         {[null, ...groups].map(group => {
@@ -215,21 +218,21 @@ export default function CierreMensualPage() {
           {group && (
             <div className="px-4 py-2.5 border-b border-gray-200 flex flex-wrap items-center gap-3">
               <p className="font-bold text-gray-900">{group}</p>
-              <span className="text-xs text-gray-500">subempresa de {label(company)}</span>
-              <button onClick={() => setNewTask({ description: '', assignee: '', group })} className="ml-auto flex items-center gap-1 text-xs font-semibold text-gray-700 hover:text-gray-900"><Plus size={12} /> Tarea</button>
-              <button onClick={() => renameGroup(group)} className="text-xs font-semibold text-gray-500 hover:text-gray-900">Renombrar</button>
-              <button onClick={() => deleteGroup(group)} className="text-xs font-semibold text-gray-400 hover:text-red-600" title="Eliminar la subempresa"><Trash2 size={13} /></button>
+              <span className="text-xs text-gray-500">{tr('sub-company of {company}', { company: label(company) })}</span>
+              <button onClick={() => setNewTask({ description: '', assignee: '', group })} className="ml-auto flex items-center gap-1 text-xs font-semibold text-gray-700 hover:text-gray-900"><Plus size={12} /> {tr('Task')}</button>
+              <button onClick={() => renameGroup(group)} className="text-xs font-semibold text-gray-500 hover:text-gray-900">{tr('Rename')}</button>
+              <button onClick={() => deleteGroup(group)} className="text-xs font-semibold text-gray-400 hover:text-red-600" title={tr('Delete the sub-company')}><Trash2 size={13} /></button>
             </div>
           )}
           <div className="table-scroll [--table-offset:126px]">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-500">
                 <tr>
-                  <th className={`${th} text-left w-12`}>Nº</th>
-                  <th className={`${th} text-left min-w-72`}>Descripción</th>
-                  <th className={`${th} text-left`}>Responsable</th>
-                  {MONTHS.map((m, i) => <th key={m} className={`${th} text-center w-12 ${i + 1 === currentMonth ? 'bg-amber-100 text-amber-900' : ''}`}>{m}</th>)}
-                  <th className={`${th} text-left min-w-48`}>Notas</th>
+                  <th className={`${th} text-left w-12`}>{tr('No.')}</th>
+                  <th className={`${th} text-left min-w-72`}>{tr('Description')}</th>
+                  <th className={`${th} text-left`}>{tr('Owner')}</th>
+                  {MONTHS.map((m, i) => <th key={m} className={`${th} text-center w-12 ${i + 1 === currentMonth ? 'bg-amber-100 text-amber-900' : ''}`}>{tr(m)}</th>)}
+                  <th className={`${th} text-left min-w-48`}>{tr('Notes')}</th>
                   <th className={`${th} w-8`} />
                 </tr>
               </thead>
@@ -247,12 +250,12 @@ export default function CierreMensualPage() {
                     <td className="px-2 py-1">
                       <select value={t.assignee || ''} onChange={e => {
                         let v = e.target.value;
-                        if (v === '__other') { v = prompt('Nombre del responsable (sin usuario en la web)')?.trim() || ''; if (!v) return; }
+                        if (v === '__other') { v = prompt(tr('Name of the owner (without a user in the app)'))?.trim() || ''; if (!v) return; }
                         patchTask(t, { assignee: v || null });
                       }} className="bg-transparent text-sm text-gray-700 rounded px-1 py-0.5 hover:bg-gray-50 focus:outline-none">
                         <option value="">—</option>
-                        {assignees.map(a => <option key={a} value={a}>{shortUser(a)}{users.includes(a) ? '' : ' (sin usuario)'}</option>)}
-                        <option value="__other">Otro…</option>
+                        {assignees.map(a => <option key={a} value={a}>{shortUser(a)}{users.includes(a) ? '' : ` ${tr('(no user)')}`}</option>)}
+                        <option value="__other">{tr('Other…')}</option>
                       </select>
                     </td>
                     {MONTHS.map((_, i) => {
@@ -264,7 +267,7 @@ export default function CierreMensualPage() {
                           <button
                             onClick={e => { e.stopPropagation(); cycle(t, month); }}
                             onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setCommentCell({ task: t, month, x: e.clientX, y: e.clientY, text: c?.comment || '' }); }}
-                            title={[c?.comment, c?.updatedBy ? `${shortUser(c.updatedBy)} · ${new Date(c.updatedAt).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}` : ''].filter(Boolean).join('\n')}
+                            title={[c?.comment, c?.updatedBy ? `${shortUser(c.updatedBy)} · ${new Date(c.updatedAt).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' })}` : ''].filter(Boolean).join('\n')}
                             className={`relative w-10 h-8 rounded-md font-bold text-sm transition-colors ${done === true ? 'bg-green-100 text-green-700 hover:bg-green-200' : done === false ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'text-gray-300 hover:bg-gray-100'}`}>
                             {done === true ? '✓' : done === false ? '✗' : '·'}
                             {c?.comment && <span className="absolute top-0 right-0 w-0 h-0 border-t-[7px] border-l-[7px] border-t-sky-500 border-l-transparent rounded-tr-md" />}
@@ -277,14 +280,14 @@ export default function CierreMensualPage() {
                         placeholder="—" className="w-full bg-transparent text-xs text-gray-600 focus:bg-white focus:outline-none focus:ring-1 focus:ring-gray-300 rounded px-1" />
                     </td>
                     <td className="px-2 py-1">
-                      <button onClick={() => deleteTask(t)} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600" title="Eliminar tarea"><Trash2 size={14} /></button>
+                      <button onClick={() => deleteTask(t)} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600" title={tr('Delete task')}><Trash2 size={14} /></button>
                     </td>
                   </tr>
                 ))}
                 {newTask && newTask.group === group && (
                   <tr className="bg-gray-50">
                     <td className="px-2 py-2 text-gray-400">+</td>
-                    <td className="px-2 py-2"><input autoFocus value={newTask.description} onChange={e => setNewTask({ ...newTask, description: e.target.value })} onKeyDown={e => e.key === 'Enter' && addTask()} placeholder="Descripción de la tarea" className={`${input} w-full`} /></td>
+                    <td className="px-2 py-2"><input autoFocus value={newTask.description} onChange={e => setNewTask({ ...newTask, description: e.target.value })} onKeyDown={e => e.key === 'Enter' && addTask()} placeholder={tr('Task description')} className={`${input} w-full`} /></td>
                     <td className="px-2 py-2">
                       <select value={newTask.assignee} onChange={e => setNewTask({ ...newTask, assignee: e.target.value })} className={input}>
                         <option value="">—</option>
@@ -293,20 +296,20 @@ export default function CierreMensualPage() {
                     </td>
                     <td colSpan={14} className="px-2 py-2">
                       <div className="flex gap-2">
-                        <button onClick={addTask} disabled={!newTask.description.trim()} className="bg-gray-900 text-white text-sm font-semibold px-3 py-1.5 rounded-lg hover:bg-black disabled:opacity-40">Añadir</button>
-                        <button onClick={() => setNewTask(null)} className="text-sm font-semibold text-gray-500 hover:text-gray-900 px-2">Cancelar</button>
+                        <button onClick={addTask} disabled={!newTask.description.trim()} className="bg-gray-900 text-white text-sm font-semibold px-3 py-1.5 rounded-lg hover:bg-black disabled:opacity-40">{tr('Add')}</button>
+                        <button onClick={() => setNewTask(null)} className="text-sm font-semibold text-gray-500 hover:text-gray-900 px-2">{tr('Cancel')}</button>
                       </div>
                     </td>
                   </tr>
                 )}
                 {group && !list.length && !(newTask && newTask.group === group) && (
-                  <tr><td colSpan={17} className="px-3 py-6 text-center text-gray-500">Sin tareas{assigneeFilter ? ' de este responsable' : ''}.</td></tr>
+                  <tr><td colSpan={17} className="px-3 py-6 text-center text-gray-500">{assigneeFilter ? tr('No tasks for this owner.') : tr('No tasks.')}</td></tr>
                 )}
                 {!group && !shown.length && !groups.length && !loading && !newTask && (
                   <tr><td colSpan={17} className="px-3 py-10 text-center text-gray-500">
-                    No hay tareas de {label(company)} en {year}.
+                    {tr('There are no tasks for {company} in {year}.', { company: label(company), year })}
                     {previousYearTasks > 0 && !assigneeFilter && (
-                      <button onClick={copyPrevious} className="ml-3 inline-flex items-center gap-1 font-semibold text-gray-900 hover:underline"><Copy size={14} /> Copiar las {previousYearTasks} tareas de {year - 1}</button>
+                      <button onClick={copyPrevious} className="ml-3 inline-flex items-center gap-1 font-semibold text-gray-900 hover:underline"><Copy size={14} /> {tr('Copy the {n} tasks from {year}', { n: previousYearTasks, year: year - 1 })}</button>
                     )}
                   </td></tr>
                 )}
@@ -314,7 +317,7 @@ export default function CierreMensualPage() {
               {list.length > 0 && (
                 <tfoot className="bg-gray-50 text-xs text-gray-500 border-t border-gray-200">
                   <tr>
-                    <td colSpan={3} className="px-2 py-2 font-semibold uppercase tracking-wider">Hechas</td>
+                    <td colSpan={3} className="px-2 py-2 font-semibold uppercase tracking-wider">{tr('Done tasks')}</td>
                     {stats.map((s, i) => (
                       <td key={i} className={`px-1 py-2 text-center font-semibold ${s.total && s.done === s.total ? 'text-green-700' : ''} ${i + 1 === currentMonth ? 'bg-amber-100 text-amber-900' : ''}`}>
                         {s.total ? `${s.done}/${s.total}` : ''}
@@ -334,16 +337,16 @@ export default function CierreMensualPage() {
       {commentCell && (
         <div onClick={e => e.stopPropagation()} style={{ left: Math.min(commentCell.x, window.innerWidth - 340), top: Math.min(commentCell.y + 8, window.innerHeight - 220) }}
           className="fixed z-30 w-80 bg-white border border-gray-200 rounded-xl shadow-xl p-3 space-y-2">
-          <p className="text-xs font-semibold text-gray-500 flex items-center gap-1.5"><MessageSquare size={13} /> {commentCell.task.number}. {commentCell.task.description} · {MONTHS[commentCell.month - 1]} {year}</p>
+          <p className="text-xs font-semibold text-gray-500 flex items-center gap-1.5"><MessageSquare size={13} /> {commentCell.task.number}. {commentCell.task.description} · {tr(MONTHS[commentCell.month - 1])} {year}</p>
           <textarea autoFocus rows={4} value={commentCell.text} onChange={e => setCommentCell({ ...commentCell, text: e.target.value })}
-            className={`${input} w-full resize-none`} placeholder="Comentario" />
+            className={`${input} w-full resize-none`} placeholder={tr('Comment')} />
           <div className="flex gap-2 justify-end">
             {cellOf(commentCell.task, commentCell.month)?.comment && (
-              <button onClick={() => { saveCell(commentCell.task, commentCell.month, { comment: '' }); setCommentCell(null); }} className="text-sm font-semibold text-red-600 hover:text-red-800 mr-auto">Borrar</button>
+              <button onClick={() => { saveCell(commentCell.task, commentCell.month, { comment: '' }); setCommentCell(null); }} className="text-sm font-semibold text-red-600 hover:text-red-800 mr-auto">{tr('Delete')}</button>
             )}
-            <button onClick={() => setCommentCell(null)} className="text-sm font-semibold text-gray-500 hover:text-gray-900 px-2">Cancelar</button>
+            <button onClick={() => setCommentCell(null)} className="text-sm font-semibold text-gray-500 hover:text-gray-900 px-2">{tr('Cancel')}</button>
             <button onClick={() => { saveCell(commentCell.task, commentCell.month, { comment: commentCell.text }); setCommentCell(null); }}
-              className="bg-gray-900 text-white text-sm font-semibold px-3 py-1.5 rounded-lg hover:bg-black">Guardar</button>
+              className="bg-gray-900 text-white text-sm font-semibold px-3 py-1.5 rounded-lg hover:bg-black">{tr('Save')}</button>
           </div>
         </div>
       )}

@@ -13,7 +13,7 @@ export async function POST(req: Request) {
     const { attachments } = await req.json();
 
     if (!attachments || !Array.isArray(attachments) || attachments.length === 0) {
-      return NextResponse.json({ error: 'No se encontraron archivos válidos.' }, { status: 400 });
+      return NextResponse.json({ error: 'No valid files found.' }, { status: 400 });
     }
 
     const prompt = `
@@ -69,6 +69,6 @@ Si alguna fecha no aparece, intenta deducirla o déjala en blanco.
     return NextResponse.json(parsedData);
   } catch (error: any) {
     console.error('Error extrañendo datos del PDF:', error);
-    return NextResponse.json({ error: error.message || 'Error al procesar el PDF' }, { status: 500 });
+    return NextResponse.json({ error: error.message || 'Error processing the PDF' }, { status: 500 });
   }
 }

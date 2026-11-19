@@ -14,7 +14,7 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const to = searchParams.get('to');
-    if (!isDate(to)) return NextResponse.json({ error: 'Fecha no válida' }, { status: 400 });
+    if (!isDate(to)) return NextResponse.json({ error: 'Invalid date' }, { status: 400 });
     const force = searchParams.get('force') === '1';
     // Una sola lectura desde el inicio del contrato más antiguo, con la provisión por fecha; la página
     // la reparte por contrato y por periodo entre plazos de MG

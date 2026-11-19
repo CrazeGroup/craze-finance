@@ -96,9 +96,9 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
       bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/General_Ledger_Entries_Excel`, {
         $filter: `${dateFilter('Posting_Date')} and Gen_Posting_Type eq 'Purchase'`,
         $select: 'Entry_No,Document_No,Document_Type,Posting_Date,VAT_Reporting_Date,G_L_Account_No,G_L_Account_Name,Gen_Prod_Posting_Group,VAT_Prod_Posting_Group,Amount,Source_No,External_Document_No',
-      }), ctx.token).catch(e => { warnings.push(`Movimientos contables no disponibles: ${e.message}`); return [] as any[]; }),
+      }), ctx.token).catch(e => { warnings.push(`G/L entries not available: ${e.message}`); return [] as any[]; }),
       cm.header
-        ? bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/${cm.header}`, { $filter: dateFilter('Posting_Date') }), ctx.token).catch(e => { warnings.push(`Abonos (${cm.header}): ${e.message}`); return [] as any[]; })
+        ? bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/${cm.header}`, { $filter: dateFilter('Posting_Date') }), ctx.token).catch(e => { warnings.push(`Credit memos (${cm.header}): ${e.message}`); return [] as any[]; })
         // Sin la página 140: cabeceras de Document Capture (fecha del documento y nº de abono del proveedor)
         : bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/CS_PostedPurchaseCrMemos`, { $filter: dateFilter('PostingDate') }), ctx.token).catch(() => [] as any[]),
       bcFetchAll(odataUrl(`${ctx.customApiBase}/customerGroups`, { $select: 'code,description' }), ctx.token).catch(() => [] as any[]),
@@ -108,13 +108,13 @@ export async function purchaseItemsReport(ctx: BcContext, company: string, from:
     let cmLines: any[] = [];
     const glCreditMemos = !cm.header || !cm.lines;
     if (glCreditMemos) {
-      warnings.push('Abonos de compra leídos de G/L Entries (movimientos de compra de cada abono por grupo contable producto): sin cantidad ni coste unitario. Para tener sus líneas, publica en BC la página 140 "Posted Purchase Credit Memo" como servicio web (p. ej. Posted_Purchase_Credit_Memo_Excel).');
+      warnings.push('Purchase credit memos read from G/L Entries (purchase entries of each credit memo by gen. product posting group): no quantity or unit cost. To get their lines, publish page 140 "Posted Purchase Credit Memo" as a web service in BC (e.g. Posted_Purchase_Credit_Memo_Excel).');
     } else if (cmHeaders.length) {
       const docNos = cmHeaders.map(h => str(h.No));
       const chunks = Array.from({ length: Math.ceil(docNos.length / 40) }, (_, i) => docNos.slice(i * 40, i * 40 + 40));
       const parts = await Promise.all(chunks.map(c => bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/${cm.lines}`, {
         $filter: c.map(n => `Document_No eq '${q(n)}'`).join(' or '),
-      }), ctx.token).catch(e => { warnings.push(`Líneas de abono (${cm.lines}): ${e.message}`); return [] as any[]; })));
+      }), ctx.token).catch(e => { warnings.push(`Credit memo lines (${cm.lines}): ${e.message}`); return [] as any[]; })));
       cmLines = parts.flat();
     }
 

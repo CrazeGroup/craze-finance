@@ -58,7 +58,7 @@ export async function POST(req: Request) {
       }
     });
 
-    await logAction('Crear Usuario', `Usuario: ${username}`);
+    await logAction('Create user', `User: ${username}`);
     return NextResponse.json(user);
   } catch (error) {
     console.error('Error creating user:', error);

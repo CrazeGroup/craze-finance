@@ -7,6 +7,7 @@ import type { Fmt } from '../reporting/i18n';
 import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
 import CompanySelect, { CONSOLIDATED, REPORT_COMPANIES, useReportCompany } from './CompanySelect';
 import { ResizeTh, useColumnWidths } from './ResizableColumns';
+import { useT } from '@/contexts/LanguageContext';
 
 // Controlling · Facturación según Order Date: lo facturado cada mes (desglosable por antigüedad del pedido) y el Order
 // Intake del mes = todos los Sales Orders creados ese mes (Order Date): lo ya facturado de esos pedidos (facturas de
@@ -17,7 +18,6 @@ type OpenOrder = { no: string; customerNo: string; customerName: string; orderDa
 type YearData = { year: number; from: string; to: string; currency?: string; eurRate?: number; invoices: Invoice[]; openOrders: OpenOrder[]; intercompanyExcluded?: number; warnings: string[] };
 type YearState = { year: number; data: YearData | null; error: string | null; loading: boolean };
 
-const MONTHS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 const COMPARE_YEARS = 2;
 const ALL_MONTHS = Array.from({ length: 12 }, (_, i) => i + 1);
 const th = 'py-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-gray-500 text-right';
@@ -25,14 +25,14 @@ const td = 'py-2 px-2 whitespace-nowrap tabular-nums text-right overflow-hidden 
 
 // Antigüedad del pedido respecto al mes de la factura (comparable entre años)
 const BUCKETS = [
-  { id: 'same', label: 'Pedido del mismo mes' },
-  { id: 'm1', label: 'Pedido del mes anterior' },
-  { id: 'm2', label: 'Pedido de hace 2 meses' },
-  { id: 'm3', label: 'Pedido de hace 3 meses o más' },
-  { id: 'later', label: 'Order Date posterior a la factura' },
-  { id: 'none', label: 'Factura sin pedido' },
-  { id: 'unknown', label: 'Pedido no encontrado (sin Order Date)' },
-  { id: 'credit', label: 'Abonos (Posted Sales Credit Memos)' },
+  { id: 'same', label: 'Order from the same month' },
+  { id: 'm1', label: 'Order from the previous month' },
+  { id: 'm2', label: 'Order from 2 months earlier' },
+  { id: 'm3', label: 'Order from 3 or more months earlier' },
+  { id: 'later', label: 'Order Date after the invoice' },
+  { id: 'none', label: 'Invoice without order' },
+  { id: 'unknown', label: 'Order not found (no Order Date)' },
+  { id: 'credit', label: 'Credit memos (Posted Sales Credit Memos)' },
 ] as const;
 type Bucket = typeof BUCKETS[number]['id'];
 function bucketOf(i: Invoice): Bucket {
@@ -46,7 +46,11 @@ function bucketOf(i: Invoice): Bucket {
 const month = (date: string) => Number(date.substring(5, 7));
 
 export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: Fmt; company: string }) {
+  const { t, tx } = useT();
   const { num, date } = fmt;
+  // Nombre del mes (Enero / January) y, dentro de una frase, en minúscula en castellano
+  const monthInText = (m: number) => fmt.monthOnly(`2000-${String(m).padStart(2, '0')}`);
+  const monthName = (m: number) => { const s = monthInText(m); return s.charAt(0).toUpperCase() + s.slice(1); };
   const [company, setCompany] = useReportCompany(globalCompany);
   const thisYear = new Date().getFullYear();
   const [year, setYear] = useState(thisYear);
@@ -80,7 +84,7 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
       const load = company === CONSOLIDATED
         ? Promise.allSettled(REPORT_COMPANIES.map(co => one(co, y))).then(settled => {
           const parts = settled.flatMap(r => (r.status === 'fulfilled' ? [r.value] : []));
-          const failed = settled.flatMap(r => (r.status === 'rejected' ? [`No incluida en el consolidado: ${r.reason?.message || r.reason}`] : []));
+          const failed = settled.flatMap(r => (r.status === 'rejected' ? [t('Not included in the consolidation: {msg}', { msg: tx(String(r.reason?.message || r.reason)) })] : []));
           if (!parts.length) throw new Error(failed.join(' · '));
           return {
           year: y, from: `${y}-01-01`, to: `${y}-12-31`, currency: 'EUR',
@@ -154,62 +158,62 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
 
   const exportExcel = () => {
     const summary = months.map(m => {
-      const row: Record<string, string | number> = { Mes: MONTHS[m - 1] };
+      const row: Record<string, string | number> = { [t('Month')]: monthName(m) };
       years.forEach(y => {
         const st = stats(y, m);
-        row[`${y.year} Facturado`] = st.billed;
-        row[`${y.year} Order Intake (pedidos con Order Date del mes)`] = st.same;
+        row[`${y.year} ${t('Invoiced')}`] = st.billed;
+        row[`${y.year} ${t('Order Intake (orders with Order Date in the month)')}`] = st.same;
         const py = prevOf(y);
-        row[`${y.year} % intake vs año anterior`] = py ? (stats(py, m).same ? (st.same - stats(py, m).same) / Math.abs(stats(py, m).same) : '') : '';
-        row[`${y.year} Intake ya facturado`] = st.intakeBilled;
-        row[`${y.year} Abierto RDD en el mes`] = st.openMonth;
-        row[`${y.year} Abierto RDD mes (meses anteriores)`] = st.openPrevMonths;
-        row[`${y.year} Abierto RDD mismo año`] = st.openNextSameYear;
-        row[`${y.year} Abierto RDD próx. año`] = st.openNextYear;
+        row[`${y.year} ${t('% intake vs previous year')}`] = py ? (stats(py, m).same ? (st.same - stats(py, m).same) / Math.abs(stats(py, m).same) : '') : '';
+        row[`${y.year} ${t('Intake already invoiced')}`] = st.intakeBilled;
+        row[`${y.year} ${t('Open RDD in the month')}`] = st.openMonth;
+        row[`${y.year} ${t('Open RDD month (earlier months)')}`] = st.openPrevMonths;
+        row[`${y.year} ${t('Open RDD same year')}`] = st.openNextSameYear;
+        row[`${y.year} ${t('Open RDD next year')}`] = st.openNextYear;
       });
       return row;
     });
     const invoices = years.flatMap(y => (y.data?.invoices || []).filter(i => months.includes(month(i.postingDate))).map(i => ({
-      'Año': y.year, 'Tipo': i.kind === 'credit' ? 'Abono' : 'Factura', 'Posting Date': i.postingDate, 'Documento': i.no, 'Cliente': i.customerNo, 'Nombre': i.customerName,
-      'Importe sin IVA': i.amount, 'Order No.': i.orderNo, 'Order Date': i.orderDate || '',
-      'Antigüedad del pedido': BUCKETS.find(b => b.id === bucketOf(i))!.label,
+      [t('Year')]: y.year, [t('Type')]: i.kind === 'credit' ? t('Credit memo') : t('Invoice'), 'Posting Date': i.postingDate, [t('Document')]: i.no, [t('Customer')]: i.customerNo, [t('Name')]: i.customerName,
+      [t('Amount excl. VAT')]: i.amount, 'Order No.': i.orderNo, 'Order Date': i.orderDate || '',
+      [t('Order age')]: t(BUCKETS.find(b => b.id === bucketOf(i))!.label),
     })));
     const orders = openOrders.map(o => ({
-      'Sales Order': o.no, 'Cliente': o.customerNo, 'Nombre': o.customerName, 'Order Date': o.orderDate,
-      'Requested Delivery Date': o.requestedDeliveryDate, 'Importe sin IVA': o.amount, 'Ya facturado': o.invoiced, 'Pendiente': o.pending,
-      'Divisa del pedido': o.currency || 'local',
-      'Mes de intake': o.orderDate.substring(0, 7),
-      'Columna': o.requestedDeliveryDate <= lastDayOf(o.orderDate.substring(0, 7)) ? 'Abierto RDD en el mes' : 'Abierto próximamente',
+      'Sales Order': o.no, [t('Customer')]: o.customerNo, [t('Name')]: o.customerName, 'Order Date': o.orderDate,
+      'Requested Delivery Date': o.requestedDeliveryDate, [t('Amount excl. VAT')]: o.amount, [t('Already invoiced')]: o.invoiced, [t('Pending')]: o.pending,
+      [t('Order currency')]: o.currency || t('local'),
+      [t('Intake month')]: o.orderDate.substring(0, 7),
+      [t('Column')]: o.requestedDeliveryDate <= lastDayOf(o.orderDate.substring(0, 7)) ? t('Open RDD in the month') : t('Open later'),
     }));
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summary), 'Resumen');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(invoices), 'Facturas');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(orders), 'Sales Orders abiertas');
-    XLSX.writeFile(wb, `Facturacion_Order_Date_${company}_${year}.xlsx`.replace(/\s+/g, '_'));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summary), t('Summary'));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(invoices), t('Invoices'));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(orders), t('Open Sales Orders'));
+    XLSX.writeFile(wb, `${t('Invoicing by Order Date')}_${company}_${year}.xlsx`.replace(/\s+/g, '_'));
   };
 
   const select = 'block mt-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-900 bg-white normal-case tracking-normal';
   const label = 'text-[11px] font-semibold uppercase tracking-wider text-gray-500';
 
   return (
-    <Section title="Facturación según Order Date" source="Posted Sales Invoices (movimientos de cliente, Sales LCY sin IVA) · Order Date del pedido (Sales Orders abiertas o archivadas) · Sales Orders abiertas (Order Date y Requested Delivery Date)">
+    <Section title={t('Invoicing by Order Date')} source={t('Posted Sales Invoices (customer ledger entries, Sales LCY excl. VAT) · Order Date of the order (open or archived Sales Orders) · open Sales Orders (Order Date and Requested Delivery Date)')}>
       <div className="flex flex-wrap items-end gap-4">
         <label className={label}>
-          Año
+          {t('Year')}
           <select value={year} onChange={e => setYear(Number(e.target.value))} className={select}>
             {Array.from({ length: 6 }, (_, i) => thisYear - i).map(y => <option key={y} value={y}>{y}</option>)}
           </select>
         </label>
         <CompanySelect value={company} onChange={setCompany} />
-        <p className="text-xs text-gray-500 pb-2">Comparado con {year - 2} y {year - 1}{company === CONSOLIDATED ? ' · consolidado en EUR' : ''}</p>
+        <p className="text-xs text-gray-500 pb-2">{t('Compared with {a} and {b}', { a: year - 2, b: year - 1 })}{company === CONSOLIDATED ? ` · ${t('consolidated in EUR')}` : ''}</p>
         <div className="ml-auto flex gap-2">
-          <button onClick={resetWidths} title="Volver a los anchos de columna por defecto"
-            className="px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm text-gray-600 hover:text-gray-900">Anchos por defecto</button>
+          <button onClick={resetWidths} title={t('Back to the default column widths')}
+            className="px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm text-gray-600 hover:text-gray-900">{t('Default widths')}</button>
           <button onClick={exportExcel} disabled={loading || !months.length}
             className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
-            <FileDown size={16} /> Exportar Excel
+            <FileDown size={16} /> {t('Export Excel')}
           </button>
-          <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={loading} title="Volver a leer de BC"
+          <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={loading} title={t('Reload from BC')}
             className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
@@ -217,17 +221,17 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
       </div>
 
       {<>
-          {years.filter(y => y.error).map(y => <ErrorBox key={y.year} message={`${y.year}: ${y.error}`} />)}
-          {warnings.map(w => <p key={w} className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{w}</p>)}
-          {loading ? <Loading text={`Leyendo facturas y pedidos de ${years.filter(y => y.loading).map(y => y.year).join(', ')} de Business Central…`} />
+          {years.filter(y => y.error).map(y => <ErrorBox key={y.year} message={`${y.year}: ${tx(y.error || '')}`} />)}
+          {warnings.map(w => <p key={w} className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{tx(w)}</p>)}
+          {loading ? <Loading text={t('Reading invoices and orders of {years} from Business Central…', { years: years.filter(y => y.loading).map(y => y.year).join(', ') })} />
             : (
               <>
                 <Grid cols={4}>
-                  <Kpi label={`Facturado ${year}`} value={num(sum(current, 'billed'), 0)} sub="Enero – diciembre" />
+                  <Kpi label={t('Invoiced {year}', { year })} value={num(sum(current, 'billed'), 0)} sub={t('January – December')} />
                   <Kpi highlight tone="main" label={`Order Intake ${year}`} value={num(sum(current, 'same'), 0)}
-                    sub={`Pedidos creados en ${year} · ${year - 1}: ${num(sum(previous, 'same'), 0)} (${pct(sum(current, 'same') - sum(previous, 'same'), sum(previous, 'same'))})`} />
-                  <Kpi label="Abierto RDD en el mes" value={num(sum(current, 'openMonth'), 0)} sub="Pedidos abiertos que deberían facturarse en su mes de creación" />
-                  <Kpi label="Abierto próximamente" value={num(sum(current, 'openLater'), 0)} sub={`${num(sum(current, 'openNextSameYear'), 0)} este año · ${num(sum(current, 'openNextYear'), 0)} el año siguiente`} />
+                    sub={`${t('Orders created in {year}', { year })} · ${year - 1}: ${num(sum(previous, 'same'), 0)} (${pct(sum(current, 'same') - sum(previous, 'same'), sum(previous, 'same'))})`} />
+                  <Kpi label={t('Open RDD in the month')} value={num(sum(current, 'openMonth'), 0)} sub={t('Open orders that should be invoiced in the month they were created')} />
+                  <Kpi label={t('Open later')} value={num(sum(current, 'openLater'), 0)} sub={t('{a} this year · {b} next year', { a: num(sum(current, 'openNextSameYear'), 0), b: num(sum(current, 'openNextYear'), 0) })} />
                 </Grid>
 
                 <div className="rpt-card bg-white rounded-xl border border-gray-200 table-scroll">
@@ -251,22 +255,22 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                       <tr className="border-b border-gray-200 bg-gray-50">
                         <ResizeTh id="mes" width={widths.mes} onResize={setWidth} className={`${th} text-left`}>
                           <button onClick={() => setOpen(months.every(m => open[m]) ? {} : Object.fromEntries(months.map(m => [m, true])))}
-                            className="flex items-center gap-1 uppercase hover:text-gray-900" title="Desplegar o plegar todos los meses">
-                            {months.length > 0 && months.every(m => open[m]) ? <ChevronDown size={12} /> : <ChevronRight size={12} />} Mes
+                            className="flex items-center gap-1 uppercase hover:text-gray-900" title={t('Expand or collapse all months')}>
+                            {months.length > 0 && months.every(m => open[m]) ? <ChevronDown size={12} /> : <ChevronRight size={12} />} {t('Month')}
                           </button>
                         </ResizeTh>
                         {years.map(y => (
                           <Fragment key={y.year}>
                             {([
-                              ['billed', 'Facturado', ''],
-                              ['intake', 'Order Date del mes', 'Order Intake: todos los Sales Orders con Order Date en este mes (ya facturado + abierto)'],
-                              ['pct', `% vs ${y.year - 1}`, 'Crecimiento del Order Intake frente al mismo mes del año anterior'],
+                              ['billed', t('Invoiced'), ''],
+                              ['intake', t('Order Date in the month'), t('Order Intake: all Sales Orders with Order Date in this month (already invoiced + open)')],
+                              ['pct', `% vs ${y.year - 1}`, t('Order Intake growth vs the same month of the previous year')],
                               ...(y.year === year ? [
-                                ['ya', 'Ya facturado', 'Parte del intake ya facturada (facturas de cualquier fecha)'],
-                                ['rdd', 'Abierto RDD mes', 'Pedidos creados en el mes, abiertos, con Requested Delivery Date dentro del mes'],
-                                ['rddPrev', 'Abierto RDD mes (meses anteriores)', 'Pedidos de meses anteriores, abiertos, con Requested Delivery Date en este mes (no forman parte del intake del mes)'],
-                                ['same', 'Abierto RDD mismo año', 'Pedidos creados en el mes, abiertos, con entrega en meses siguientes del mismo año'],
-                                ['next', 'Abierto RDD próx. año', 'Pedidos creados en el mes, abiertos, con entrega el año siguiente o después'],
+                                ['ya', t('Already invoiced'), t('Part of the intake already invoiced (invoices of any date)')],
+                                ['rdd', t('Open RDD month'), t('Orders created in the month, open, with Requested Delivery Date within the month')],
+                                ['rddPrev', t('Open RDD month (earlier months)'), t('Orders from earlier months, open, with Requested Delivery Date in this month (not part of the intake of the month)')],
+                                ['same', t('Open RDD same year'), t('Orders created in the month, open, with delivery in later months of the same year')],
+                                ['next', t('Open RDD next year'), t('Orders created in the month, open, with delivery next year or later')],
                               ] : []),
                             ] as [string, string, string][]).map(([role, label, title]) => (
                               <ResizeTh key={role} id={`o${year - y.year}:${role}`} width={colW(y.year, role)} onResize={setWidth}
@@ -283,7 +287,7 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                             <td className="py-2 px-2 font-semibold text-gray-900 whitespace-nowrap">
                               <span className="inline-flex items-center gap-1">
                                 {open[m] ? <ChevronDown size={14} className="text-gray-400" /> : <ChevronRight size={14} className="text-gray-400" />}
-                                {MONTHS[m - 1]}
+                                {monthName(m)}
                               </span>
                             </td>
                             {years.map(y => {
@@ -306,7 +310,7 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                           </tr>
                           {open[m] && BUCKETS.map(b => (
                             <tr key={`${m}-${b.id}`} className="border-b border-gray-100 bg-gray-50/60 text-[12px]">
-                              <td className="py-1.5 px-2 pl-9 text-gray-600 whitespace-nowrap overflow-hidden text-ellipsis" title={b.label}>{b.label}</td>
+                              <td className="py-1.5 px-2 pl-9 text-gray-600 whitespace-nowrap overflow-hidden text-ellipsis" title={t(b.label)}>{t(b.label)}</td>
                               {years.map(y => {
                                 const st = stats(y, m);
                                 return (
@@ -323,9 +327,9 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                           {open[m] && stats(current, m).openOrders.length > 0 && (
                             <tr className="border-b border-gray-100 bg-indigo-50/40 text-[12px]">
                               <td colSpan={1 + years.reduce((t, y) => t + (y.year === year ? 8 : 3), 0)} className="py-2 px-2 pl-9 text-gray-600">
-                                <span className="font-semibold text-indigo-800">Sales Orders abiertas creadas en {MONTHS[m - 1].toLowerCase()} {year}:</span>{' '}
+                                <span className="font-semibold text-indigo-800">{t('Open Sales Orders created in {month} {year}:', { month: monthInText(m), year })}</span>{' '}
                                 {stats(current, m).openOrders.sort((a, b) => b.pending - a.pending).map((o, i) => (
-                                  <span key={o.no}>{i ? ' · ' : ''}{o.no} {o.customerName} ({num(o.pending, 2)}{o.invoiced ? `, ya facturado ${num(o.invoiced, 2)}` : ''}, RDD {date(o.requestedDeliveryDate)})</span>
+                                  <span key={o.no}>{i ? ' · ' : ''}{o.no} {o.customerName} ({num(o.pending, 2)}{o.invoiced ? `, ${t('already invoiced {v}', { v: num(o.invoiced, 2) })}` : ''}, RDD {date(o.requestedDeliveryDate)})</span>
                                 ))}
                               </td>
                             </tr>
@@ -333,9 +337,9 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                           {open[m] && stats(current, m).backlog.length > 0 && (
                             <tr className="border-b border-gray-100 bg-amber-50/40 text-[12px]">
                               <td colSpan={1 + years.reduce((t, y) => t + (y.year === year ? 8 : 3), 0)} className="py-2 px-2 pl-9 text-gray-600">
-                                <span className="font-semibold text-amber-800">Pedidos de meses anteriores con entrega en {MONTHS[m - 1].toLowerCase()} {year}:</span>{' '}
+                                <span className="font-semibold text-amber-800">{t('Orders from earlier months with delivery in {month} {year}:', { month: monthInText(m), year })}</span>{' '}
                                 {[...stats(current, m).backlog].sort((a, b) => b.pending - a.pending).map((o, i) => (
-                                  <span key={o.no}>{i ? ' · ' : ''}{o.no} {o.customerName} ({num(o.pending, 2)}, pedido {date(o.orderDate)}, RDD {date(o.requestedDeliveryDate)})</span>
+                                  <span key={o.no}>{i ? ' · ' : ''}{o.no} {o.customerName} ({num(o.pending, 2)}, {t('order {date}', { date: date(o.orderDate) })}, RDD {date(o.requestedDeliveryDate)})</span>
                                 ))}
                               </td>
                             </tr>
@@ -345,7 +349,7 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                     </tbody>
                     <tfoot>
                       <tr className="border-t-2 border-gray-300 bg-gray-50 font-bold">
-                        <td className="py-2 px-2">Total</td>
+                        <td className="py-2 px-2">{t('Total')}</td>
                         {years.map(y => (
                           <Fragment key={y.year}>
                             <td className={`${td} border-l border-gray-200`}>{money(sum(y, 'billed'))}</td>
@@ -363,7 +367,7 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                       </tr>
                       {BUCKETS.filter(b => years.some(y => sumBucket(y, b.id))).map(b => (
                         <tr key={b.id} className="bg-gray-50 text-[12px] text-gray-600">
-                          <td className="py-1 px-2 pl-9">{b.label}</td>
+                          <td className="py-1 px-2 pl-9">{t(b.label)}</td>
                           {years.map(y => (
                             <Fragment key={y.year}>
                               <td className={`${td} border-l border-gray-200`}>{money(sumBucket(y, b.id))}</td>
@@ -378,9 +382,9 @@ export default function OrderIntakeView({ fmt, company: globalCompany }: { fmt: 
                   </table>
                 </div>
                 <p className="text-xs text-gray-500">
-                  Importes sin IVA en la divisa de la empresa (en EUR en el consolidado). Sin intercompañía: clientes con forma de pago INTERGROUP o empresas del grupo (CRAZE …){current?.data?.intercompanyExcluded ? `, ${num(current.data.intercompanyExcluded)} documentos de ${year} excluidos` : ''}. Facturado = Posted Sales Invoices − Posted Sales Credit Memos por Posting Date (solo documentos registrados: los movimientos con * en el nº, sin documento detrás, no cuentan).
-                  &quot;Order Date del mes&quot; = Order Intake: todos los Sales Orders creados ese mes = lo ya facturado de esos pedidos (facturas de {year - 2} a {year}, cualquier mes) + lo que sigue abierto hoy, separado en &quot;Abierto RDD mes&quot; (Requested Delivery Date dentro del mes de creación), &quot;Abierto RDD mismo año&quot; y &quot;Abierto RDD próx. año&quot;. &quot;Abierto RDD mes (meses anteriores)&quot; = pedidos creados en meses anteriores, aún abiertos, que deberían facturarse en este mes (no suman al intake del mes). El % es el crecimiento del Order Intake frente al mismo mes del año anterior (el año más antiguo no tiene comparación). Haz clic en un mes para ver lo facturado por antigüedad del pedido y los pedidos abiertos de ese mes.
-                  {unknownCount > 0 && ` ${unknownCount} facturas de ${year} tienen un pedido que no está abierto ni archivado en BC: salen como "Pedido no encontrado".`}
+                  {t('Amounts excl. VAT in the company currency (in EUR in the consolidation). Without intercompany: customers with payment method INTERGROUP or group companies (CRAZE …)')}{current?.data?.intercompanyExcluded ? `, ${t('{n} documents of {year} excluded', { n: num(current.data.intercompanyExcluded), year })}` : ''}. {t('Invoiced = Posted Sales Invoices − Posted Sales Credit Memos by Posting Date (posted documents only: entries with * in the number, with no document behind them, do not count).')}
+                  {' '}{t('"Order Date in the month" = Order Intake: all Sales Orders created that month = what has already been invoiced of those orders (invoices from {from} to {to}, any month) + what is still open today, split into "Open RDD month" (Requested Delivery Date within the month of creation), "Open RDD same year" and "Open RDD next year". "Open RDD month (earlier months)" = orders created in earlier months, still open, that should be invoiced in this month (they do not add to the intake of the month). The % is the Order Intake growth vs the same month of the previous year (the oldest year has no comparison). Click a month to see what was invoiced by order age and the open orders of that month.', { from: year - 2, to: year })}
+                  {unknownCount > 0 && ` ${t('{n} invoices of {year} have an order that is neither open nor archived in BC: they show as "Order not found".', { n: unknownCount, year })}`}
                 </p>
               </>
             )}

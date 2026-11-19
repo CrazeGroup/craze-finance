@@ -55,7 +55,7 @@ export async function GET(req: Request) {
 
     // Issuer y claves del documento OIDC del tenant (así el tenant puede ser el GUID o el dominio)
     const oidc = await (await fetch(`https://login.microsoftonline.com/${cfg.tenantId}/v2.0/.well-known/openid-configuration`)).json();
-    if (!oidc.issuer || !oidc.jwks_uri) throw new Error(`Tenant no válido: ${oidc.error_description || cfg.tenantId}`);
+    if (!oidc.issuer || !oidc.jwks_uri) throw new Error(`Invalid tenant: ${oidc.error_description || cfg.tenantId}`);
     const jwks = createRemoteJWKSet(new URL(oidc.jwks_uri));
     const { payload } = await jwtVerify(tokens.id_token, jwks, { issuer: oidc.issuer, audience: cfg.clientId });
     if (payload.nonce !== nonce) return fail('sso_state');
@@ -72,7 +72,7 @@ export async function GET(req: Request) {
         target.searchParams.set('mail', 'sin_permiso');
       } else {
         await saveMailToken(session.username, tokens.refresh_token, email);
-        await prisma.actionLog.create({ data: { user: session.username, action: 'Correo conectado', details: `Recordatorios desde ${email} (Microsoft Graph)` } }).catch(() => {});
+        await prisma.actionLog.create({ data: { user: session.username, action: 'Mailbox connected', details: `Reminders from ${email} (Microsoft Graph)` } }).catch(() => {});
         target.searchParams.set('mail', 'conectado');
       }
       const response = NextResponse.redirect(target);
@@ -85,7 +85,7 @@ export async function GET(req: Request) {
     const response = NextResponse.redirect(new URL('/', origin));
     response.cookies.delete({ name: 'sso-state', path: '/api/auth/microsoft' });
     await setSessionCookie(response, user);
-    await prisma.actionLog.create({ data: { user: user.username, action: 'Inicio de sesión', details: 'Microsoft (Entra ID)' } }).catch(() => {});
+    await prisma.actionLog.create({ data: { user: user.username, action: 'Sign-in', details: 'Microsoft (Entra ID)' } }).catch(() => {});
     return response;
   } catch (error) {
     console.error('Error SSO Microsoft:', error);

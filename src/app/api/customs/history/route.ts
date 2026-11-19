@@ -16,7 +16,7 @@ export const maxDuration = 60;
 export async function GET(req: Request) {
   try {
     const company = (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
-    if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
+    if (company === 'ALL') return NextResponse.json({ error: 'Select a specific company.' }, { status: 400 });
     const { searchParams } = new URL(req.url);
     const year = Number(searchParams.get('year')) || new Date().getFullYear();
     const full = searchParams.get('full') === '1';

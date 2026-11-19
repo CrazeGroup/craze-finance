@@ -9,7 +9,7 @@ export async function GET(request: NextRequest) {
     const customMessage = searchParams.get('message') || undefined;
 
     if (!customerIdStr || !invoiceIdsStr) {
-      return new NextResponse('Faltan parámetros customerId o invoices', { status: 400 });
+      return new NextResponse('Missing parameters customerId or invoices', { status: 400 });
     }
 
     const customerId = parseInt(customerIdStr, 10);

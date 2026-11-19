@@ -22,10 +22,10 @@ export async function GET() {
 
 export async function PUT(req: Request) {
   const session = await getSession();
-  if (!session) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try {
     const body = await req.json();
-    if (!Array.isArray(body?.items)) return NextResponse.json({ error: 'Datos no válidos' }, { status: 400 });
+    if (!Array.isArray(body?.items)) return NextResponse.json({ error: 'Invalid data' }, { status: 400 });
     const items = [...new Set(body.items.map(String).filter((h: string) => h.startsWith('/')))].slice(0, 60);
     const key = keyFor(session), config = JSON.stringify({ items });
     await prisma.apiConfig.upsert({ where: { key }, update: { config }, create: { key, url: '', config } });

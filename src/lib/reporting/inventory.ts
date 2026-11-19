@@ -44,7 +44,7 @@ export async function fetchSnapshots(ctx: BcContext, dates: string[]): Promise<R
       item.value += e.Cost_Amount_Actual || 0;
       const qty = e.Item_Ledger_Entry_Quantity || 0;
       item.qty += qty;
-      if (qty) item.loc[e.Location_Code || '(sin almacén)'] = (item.loc[e.Location_Code || '(sin almacén)'] || 0) + qty;
+      if (qty) item.loc[e.Location_Code || '(no warehouse)'] = (item.loc[e.Location_Code || '(no warehouse)'] || 0) + qty;
     }
     const list = Array.from(byItem.values())
       .map(i => ({

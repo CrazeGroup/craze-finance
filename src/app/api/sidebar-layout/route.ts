@@ -22,9 +22,9 @@ export async function GET() {
 export async function PUT(req: Request) {
   try {
     const body = await req.json();
-    if (!Array.isArray(body?.sections)) return NextResponse.json({ error: 'Datos no válidos' }, { status: 400 });
+    if (!Array.isArray(body?.sections)) return NextResponse.json({ error: 'Invalid data' }, { status: 400 });
     const sections = body.sections.slice(0, 30).map((s: any) => ({
-      id: String(s.id).slice(0, 40), name: String(s.name || 'Sección').slice(0, 60),
+      id: String(s.id).slice(0, 40), name: String(s.name || 'Section').slice(0, 60),
       items: Array.isArray(s.items) ? s.items.map(String).slice(0, 60) : [],
     }));
     const config = JSON.stringify({ sections });

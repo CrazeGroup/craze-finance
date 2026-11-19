@@ -96,7 +96,7 @@ async function fetchODataAllPages(startUrl: string, accessToken: string): Promis
     } catch (fetchError: any) {
       clearTimeout(timeoutId);
       if (fetchError.name === 'AbortError') {
-        throw new Error(`Business Central API tardó demasiado en responder (más de 8 segundos). Si es una empresa sin la API personalizada, instala la extensión.`);
+        throw new Error(`The Business Central API took too long to respond (more than 8 seconds). If this company does not have the custom API, install the extension.`);
       }
       throw fetchError;
     }
@@ -107,7 +107,7 @@ async function fetchODataAllPages(startUrl: string, accessToken: string): Promis
 export async function syncBusinessCentral(specificCompany?: string, step: 'customers' | 'invoices' | 'vendors' | 'vendorInvoices' | 'recurring' | 'all' = 'all') {
   const config = await prisma.businessCentralConfig.findUnique({ where: { id: 1 } });
   if (!config || !config.tenantId || !config.clientId || !config.clientSecret) {
-    throw new Error('La configuración de Business Central está incompleta. Por favor, rellena todos los campos en Ajustes.');
+    throw new Error('The Business Central configuration is incomplete. Please fill in all fields in Settings.');
   }
 
   const accessToken = await getAccessToken(config.tenantId, config.clientId, config.clientSecret);

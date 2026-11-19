@@ -75,7 +75,7 @@ async function analyse(ctx: BcContext, inv: { id: string; atc: string }, manual?
       $filter: `parentType eq 'Purchase Invoice' and parentId eq ${inv.id}`, $select: 'id,fileName',
     }))).json()).value || [];
     const pdfs = atts.filter(a => /\.pdf$/i.test(a.fileName || ''));
-    if (!pdfs.length) return { ...base, error: atts.length ? 'El adjunto no es un PDF' : 'Sin PDF adjunto en BC' };
+    if (!pdfs.length) return { ...base, error: atts.length ? 'The attachment is not a PDF' : 'No PDF attached in BC' };
     // Si hay varios PDF, el que trae ese AT/C (o el primero con posiciones)
     let doc: Awaited<ReturnType<typeof parseCustomsPdf>> | null = null;
     const kinds = new Set<string>();
@@ -93,23 +93,23 @@ async function analyse(ctx: BcContext, inv: { id: string; atc: string }, manual?
     if (!doc) {
       // El extracto mensual de la Bundeskasse: registrado como factura propia (S-94875_0126) no es una declaración; adjunto
       // a una factura de un AT/C, falta el Bescheid
-      if (kinds.has('statement') && !/^ATC|^AT\/C/i.test(inv.atc)) return { ...base, statement: true, warnings: ['Extracto mensual de la Bundeskasse (Kontoauszug ZA-120, cuenta de aplazamiento): no es una declaración'] };
-      if (kinds.has('statement')) return { ...base, error: 'El adjunto es el extracto de la Bundeskasse (Kontoauszug ZA-120), no el Einfuhrabgabenbescheid: adjunta el Bescheid en BC' };
-      if (kinds.has('scanned')) return { ...base, error: 'El PDF adjunto es un escaneo sin texto: no se puede leer (adjunta el PDF original de ATLAS)' };
-      return { ...base, error: 'El PDF adjunto no es un Einfuhrabgabenbescheid (sin posiciones)' };
+      if (kinds.has('statement') && !/^ATC|^AT\/C/i.test(inv.atc)) return { ...base, statement: true, warnings: ['Monthly Bundeskasse statement (Kontoauszug ZA-120, deferment account): not a declaration'] };
+      if (kinds.has('statement')) return { ...base, error: 'The attachment is the Bundeskasse statement (Kontoauszug ZA-120), not the Einfuhrabgabenbescheid: attach the Bescheid in BC' };
+      if (kinds.has('scanned')) return { ...base, error: 'The attached PDF is a scan without text: it cannot be read (attach the original ATLAS PDF)' };
+      return { ...base, error: 'The attached PDF is not an Einfuhrabgabenbescheid (no positions)' };
     }
     // Lo indicado a mano manda sobre lo leído del PDF
     const orders = manual?.orders.length ? await resolveOrders(ctx, manual.orders) : doc.orders;
     const transport = manual?.transport.length ? manual.transport : doc.transport;
-    const docWarnings = doc.warnings.filter(w => !(manual?.orders.length && /pedido/i.test(w)) && !(manual?.transport.length && /contenedor/i.test(w)));
+    const docWarnings = doc.warnings.filter(w => !(manual?.orders.length && /Unterlagen N380/.test(w)) && !(manual?.transport.length && /container or AWB/.test(w)));
     // Sin posiciones en el PDF pero con la factura de China: se listan sus artículos (sin posición) con su Tariff No.
     const check = doc.positions.length || (manual?.orders.length && orders.length) ? await checkTariffs(ctx, orders, doc.positions) : null;
     return {
       ...base, file: doc.file, date: doc.date, orders, transport, zoll: doc.zoll, eust: doc.eust, check, dhl: !!doc.dhl,
       warnings: [
-        ...(!sameAtc(doc.atc, inv.atc) && !(doc.nizza && sameAtc(doc.nizza, inv.atc)) ? [`El PDF adjunto es de ${doc.atc || 'otro AT/C'}`] : []),
-        ...(doc.nizza && sameAtc(doc.nizza, inv.atc) && !sameAtc(doc.atc, inv.atc) ? [`Factura Zoll registrada con el Registrierkz. NIZZA; AT/C del PDF: ${doc.atc}`] : []),
-        ...(manual ? [`Pedido / contenedor indicados a mano${manual.by ? ` por ${manual.by}` : ''} (${manual.at.substring(0, 10)})`] : []),
+        ...(!sameAtc(doc.atc, inv.atc) && !(doc.nizza && sameAtc(doc.nizza, inv.atc)) ? [`The attached PDF belongs to ${doc.atc || 'another AT/C'}`] : []),
+        ...(doc.nizza && sameAtc(doc.nizza, inv.atc) && !sameAtc(doc.atc, inv.atc) ? [`Zoll invoice posted with the Registrierkz. NIZZA, AT/C of the PDF: ${doc.atc}`] : []),
+        ...(manual ? [`Order / container entered manually${manual.by ? ` by ${manual.by}` : ''} (${manual.at.substring(0, 10)})`] : []),
         ...docWarnings,
       ],
     };

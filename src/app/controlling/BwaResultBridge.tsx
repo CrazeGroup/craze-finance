@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { Fmt } from '../reporting/i18n';
+import { useT } from '@/contexts/LanguageContext';
 
 // BWA: resumen de por qué cambia el resultado (Net Income) frente al año anterior.
 //   Δ Net Income = efecto volumen (más/menos Sales Revenues con el margen bruto % del año anterior)
@@ -22,6 +23,7 @@ const sign = (v: number, num: Fmt['num']) => `${v > 0 ? '+' : ''}${num(v, 0)} �
 const tone = (v: number) => (v > 0 ? 'text-emerald-700' : v < 0 ? 'text-[#C0392B]' : 'text-gray-500');
 
 export default function BwaResultBridge({ b, fmt, extra }: { b: Bridge; fmt: Fmt; extra?: React.ReactNode }) {
+  const { t } = useT();
   const { num } = fmt;
   const diff = b.cur - b.prev;
   const items = [...b.items].filter(i => Math.abs(i.impact) >= 1).sort((x, y) => Math.abs(y.impact) - Math.abs(x.impact));
@@ -30,14 +32,14 @@ export default function BwaResultBridge({ b, fmt, extra }: { b: Bridge; fmt: Fmt
   return (
     <div className="rpt-card bg-white rounded-xl border border-gray-200 p-5 space-y-4">
       <div>
-        <p className="text-xs font-bold uppercase tracking-widest text-[#C8186C] mb-1">Por qué cambia el resultado · {b.title}</p>
+        <p className="text-xs font-bold uppercase tracking-widest text-[#C8186C] mb-1">{t('Why the result changes · {title}', { title: b.title })}</p>
         <p className="text-sm text-gray-800">
           Net Income {num(b.prev, 0)} € → <b>{num(b.cur, 0)} €</b> (<span className={`font-semibold ${tone(diff)}`}>{sign(diff, num)}</span>).
-          {' '}Ventas {num(b.salesPrev, 0)} € → {num(b.salesCur, 0)} € · margen bruto {pct(b.gmPctPrev)} → {pct(b.gmPctCur)} de las ventas.
+          {' '}{t('Sales {prev} € → {cur} € · gross margin {gmPrev} → {gmCur} of sales.', { prev: num(b.salesPrev, 0), cur: num(b.salesCur, 0), gmPrev: pct(b.gmPctPrev), gmCur: pct(b.gmPctCur) })}
         </p>
         <p className="text-xs text-gray-500 mt-1">
-          Cada partida es lo que suma o resta al resultado frente al año anterior (en verde mejora, en rojo empeora); juntas dan la diferencia del Net Income.
-          Volumen = la variación de ventas con el margen bruto % del año anterior; margen = cuánto pesa ahora cada cuenta de provisiones y COGS sobre la venta frente al año anterior.
+          {t('Each item is what it adds to or subtracts from the result vs the previous year (green improves, red worsens); together they give the Net Income difference.')}
+          {' '}{t('Volume = the change in sales at the previous year\'s gross margin %; margin = how much each provision and COGS account now weighs on sales vs the previous year.')}
         </p>
       </div>
       <div className="space-y-2">
@@ -63,7 +65,7 @@ export default function BwaResultBridge({ b, fmt, extra }: { b: Bridge; fmt: Fmt
           </div>
         ))}
         <div className="grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[260px_minmax(0,1fr)_120px] gap-x-4 border-t-2 border-gray-900 pt-2">
-          <p className="text-sm font-bold text-gray-900">Diferencia Net Income</p>
+          <p className="text-sm font-bold text-gray-900">{t('Net Income difference')}</p>
           <span className="hidden md:block" />
           <p className={`text-sm font-bold tabular-nums text-right ${tone(diff)}`}>{sign(diff, num)}</p>
         </div>
@@ -77,6 +79,7 @@ export default function BwaResultBridge({ b, fmt, extra }: { b: Bridge; fmt: Fmt
 // Customer Groups (CRAZE GmbH, Customer Margin) que más mueven el margen de producto (venta − coste del producto)
 type MarginYear = { groups: Record<string, string>; docs: (string | number)[][] };
 function CustomerMix({ fmt, year, fromM, toM }: { fmt: Fmt; year: number; fromM: number; toM: number }) {
+  const { t, tx } = useT();
   const { num } = fmt;
   const [data, setData] = useState<{ cur: MarginYear; prev: MarginYear | null } | null>(null);
   const [error, setError] = useState('');
@@ -115,32 +118,32 @@ function CustomerMix({ fmt, year, fromM, toM }: { fmt: Fmt; year: number; fromM:
     return { list: list.slice(0, 6), tc, tp, avgPrev };
   }, [data, fromM, toM]);
 
-  if (error) return <p className="text-xs text-gray-500">Customer Margin no disponible: {error}</p>;
-  if (!data) return <p className="text-xs text-gray-500">Cargando el margen por Customer Group (Customer Margin)…</p>;
+  if (error) return <p className="text-xs text-gray-500">{t('Customer Margin not available: {msg}', { msg: tx(error) })}</p>;
+  if (!data) return <p className="text-xs text-gray-500">{t('Loading the margin by Customer Group (Customer Margin)…')}</p>;
   if (!rows) return null;
   const pct = (a: number, b: number) => (b ? `${num((a / b) * 100, 1)} %` : '–');
   return (
     <div className="border-t border-gray-200 pt-4">
-      <p className="text-xs font-bold uppercase tracking-widest text-gray-700 mb-1">Margen de producto por Customer Group · CRAZE GmbH</p>
+      <p className="text-xs font-bold uppercase tracking-widest text-gray-700 mb-1">{t('Product margin by Customer Group · CRAZE GmbH')}</p>
       <p className="text-xs text-gray-500 mb-3">
-        Venta − coste del producto de las facturas y abonos (Customer Margin): {pct(rows.tp.gp, rows.tp.s)} el año anterior → {pct(rows.tc.gp, rows.tc.s)} ahora.
-        Efecto = lo que ese grupo suma o resta frente a haber vendido su variación de venta con el margen medio del año anterior ({pct(rows.avgPrev, 1)}): en rojo, ventas con menos margen.
+        {t('Sales − product cost of invoices and credit memos (Customer Margin): {prev} the previous year → {cur} now.', { prev: pct(rows.tp.gp, rows.tp.s), cur: pct(rows.tc.gp, rows.tc.s) })}
+        {' '}{t('Effect = what that group adds or subtracts compared with having sold its change in sales at the previous year\'s average margin ({avg}): in red, sales with lower margin.', { avg: pct(rows.avgPrev, 1) })}
       </p>
       <table className="w-full text-[12px]">
         <thead className="text-[10px] uppercase tracking-wider text-gray-500">
           <tr>
             <th className="text-left py-1">Customer Group</th>
-            <th className="text-right py-1">Venta año ant.</th>
-            <th className="text-right py-1">Venta</th>
-            <th className="text-right py-1">Margen % año ant.</th>
-            <th className="text-right py-1">Margen %</th>
-            <th className="text-right py-1">Efecto</th>
+            <th className="text-right py-1">{t('Sales prev. year')}</th>
+            <th className="text-right py-1">{t('Sales')}</th>
+            <th className="text-right py-1">{t('Margin % prev. year')}</th>
+            <th className="text-right py-1">{t('Margin %')}</th>
+            <th className="text-right py-1">{t('Effect')}</th>
           </tr>
         </thead>
         <tbody>
           {rows.list.map(x => (
             <tr key={x.k} className="border-t border-gray-100">
-              <td className="py-1"><span className="font-semibold">{x.k || '(sin grupo)'}</span>{x.name && <span className="text-gray-500"> · {x.name}</span>}</td>
+              <td className="py-1"><span className="font-semibold">{x.k || t('(no group)')}</span>{x.name && <span className="text-gray-500"> · {x.name}</span>}</td>
               <td className="py-1 text-right tabular-nums text-gray-500">{num(x.p.s, 0)}</td>
               <td className="py-1 text-right tabular-nums">{num(x.c.s, 0)}</td>
               <td className="py-1 text-right tabular-nums text-gray-500">{pct(x.p.gp, x.p.s)}</td>

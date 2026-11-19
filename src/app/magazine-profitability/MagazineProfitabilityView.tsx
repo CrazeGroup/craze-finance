@@ -4,15 +4,22 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Download, RefreshCw, Search, Wrench } from 'lucide-react';
 import DocPdfLink from '@/components/DocPdfLink';
+import { useT } from '@/contexts/LanguageContext';
 import type { ProvisionSettings, Correction, MagEntry, Magazine, MagazineAnalysis as Analysis, MagLocation, Unassigned, Validation } from '@/lib/magazineAnalysis';
 
 type MagazineAnalysis = Analysis & { validated?: Record<string, Validation>; provisions?: ProvisionSettings };
 
-const nf = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const qf = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 });
-const pct = (v: number | null) => (v == null || !isFinite(v) ? '—' : `${(v * 100).toLocaleString('es-ES', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`);
-const money = (v: number) => (Math.abs(v) < 0.005 ? '—' : nf.format(v));
-const units = (v: number) => (Math.abs(v) < 0.005 ? '—' : qf.format(v));
+// Formatos de número en el idioma de la app (locale de useT)
+const fmts = (locale: string) => {
+  const nf = new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const qf = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 });
+  return {
+    nf, qf,
+    pct: (v: number | null) => (v == null || !isFinite(v) ? '—' : `${(v * 100).toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`),
+    money: (v: number) => (Math.abs(v) < 0.005 ? '—' : nf.format(v)),
+    units: (v: number) => (Math.abs(v) < 0.005 ? '—' : qf.format(v)),
+  };
+};
 const dmy = (d: string) => (d ? d.split('-').reverse().join('/') : '');
 const neg = (v: number) => (v < -0.005 ? 'text-red-600' : '');
 
@@ -21,8 +28,8 @@ const GROUPS = ['001', '002', '003', '004'] as const;
 const GROUP_LABEL: Record<string, string> = { '001': 'SALES', '002': 'DISTRIBUTION COSTS', '003': 'MARKETING COSTS', '004': 'MAGAZINE COSTS' };
 const TASK_SALES = '001.001', TASK_RETURNS = '001.003', TASK_ADS = '001.004';
 const DOC_TYPE: Record<MagEntry['kind'], { label: string; pdf?: 'salesInv' | 'salesCrMemo' | 'purchInv' | 'purchCrMemo' }> = {
-  salesInv: { label: 'Factura venta', pdf: 'salesInv' }, salesCrMemo: { label: 'Abono venta', pdf: 'salesCrMemo' },
-  purchInv: { label: 'Factura compra', pdf: 'purchInv' }, purchCrMemo: { label: 'Abono compra', pdf: 'purchCrMemo' },
+  salesInv: { label: 'Sales invoice', pdf: 'salesInv' }, salesCrMemo: { label: 'Sales credit memo', pdf: 'salesCrMemo' },
+  purchInv: { label: 'Purchase invoice', pdf: 'purchInv' }, purchCrMemo: { label: 'Purchase credit memo', pdf: 'purchCrMemo' },
   assembly: { label: 'Assembly Order' },   // consumo de gadget en el montaje de la revista (sin PDF)
 };
 const COMPANY = 'Craze Entertainment';
@@ -37,8 +44,8 @@ const GADGET_TASK = '004.001';
 const GADGET_REAL = '004.001-R', GADGET_FC = '004.001-P';
 const RECOVER_LOCATIONS = ['Grosso - Ost', 'Grosso - West'];
 const EXTRA_TASK_NAMES: Record<string, string> = {
-  [GADGET_REAL]: 'Gadget recuperado · devoluciones reales Grosso Ost/West',
-  [GADGET_FC]: 'Gadget recuperado · devoluciones previstas',
+  [GADGET_REAL]: 'Recovered gadget · actual returns Grosso Ost/West',
+  [GADGET_FC]: 'Recovered gadget · forecast returns',
 };
 type ProvInfo = {
   pct: number | null; own: boolean; closed: boolean; closedAt: string; provQty: number; provAmount: number; retQty: number; retAmount: number;
@@ -120,6 +127,8 @@ function addLocations(list: Magazine[]) {
 // Magazine Profitability: beneficio de cada revista (ventas y devoluciones de D-FORCE por localización, Magazine Ads y
 // costes por proyecto y tarea)
 export default function MagazineProfitabilityView() {
+  const { t, tx, locale } = useT();
+  const { qf, pct, money, units } = fmts(locale);
   const [data, setData] = useState<MagazineAnalysis | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -160,7 +169,7 @@ export default function MagazineProfitabilityView() {
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       await load();
     } catch (e: any) {
-      alert(`No se ha podido guardar: ${e.message}`);
+      alert(t('Could not save: {error}', { error: tx(e.message) }));
     } finally {
       setSaving(false);
     }
@@ -180,7 +189,7 @@ export default function MagazineProfitabilityView() {
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       setData(d => (d ? { ...d, validated: json.validated } : d));
     } catch (e: any) {
-      alert(`No se ha podido guardar: ${e.message}`);
+      alert(t('Could not save: {error}', { error: tx(e.message) }));
     } finally {
       setSaving(false);
     }
@@ -194,7 +203,7 @@ export default function MagazineProfitabilityView() {
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       setData(d => (d ? { ...d, provisions: json.provisions } : d));
     } catch (e: any) {
-      alert(`No se ha podido guardar: ${e.message}`);
+      alert(t('Could not save: {error}', { error: tx(e.message) }));
     } finally {
       setSaving(false);
     }
@@ -212,7 +221,7 @@ export default function MagazineProfitabilityView() {
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       await load();
     } catch (err: any) {
-      alert(`No se ha podido guardar: ${err.message}`);
+      alert(t('Could not save: {error}', { error: tx(err.message) }));
     } finally {
       setSaving(false);
     }
@@ -249,33 +258,33 @@ export default function MagazineProfitabilityView() {
 
   const exportExcel = () => {
     if (!data) return;
-    const head = ['Revista', 'Descripción', 'Proyecto', 'On Sale', 'Tirada', 'Uds vendidas', 'Venta', 'Uds devueltas', 'Devoluciones', '% devol. uds', 'Uds devol. previstas', 'Devol. previstas',
-      'Venta neta', 'Magazine Ads', 'Otros ingresos', 'Distribución', 'Marketing', 'Costes revista', 'Otros costes', 'Beneficio', 'Margen %'];
+    const head = ['Magazine', 'Description', 'Project', 'On Sale', 'Print run', 'Units sold', 'Sold', 'Units returned', 'Returns', '% returned units', 'Forecast returned units', 'Forecast returns',
+      'Net sales', 'Magazine Ads', 'Other revenue', 'Distribution', 'Marketing', 'Magazine costs', 'Other costs', 'Profit', 'Margin %'].map(h => t(h));
     const summaryRow = (m: { item: string; description: string; project: string; onSaleDate: string; printRun: number } | null, x: Summary) => [
       m?.item || 'TOTAL', m?.description || '', m?.project || '', m?.onSaleDate ? new Date(m.onSaleDate) : '', m?.printRun || '',
       x.soldQty, x.sold, x.retQty, x.returned, x.soldQty ? x.retQty / x.soldQty : '', x.forecastQty, x.forecast, x.netSales, x.ads, x.otherRevenue,
       x.distribution, x.marketing, x.magazine, x.otherCost, x.profit, x.revenue ? x.profit / x.revenue : '',
     ];
     const ws1 = XLSX.utils.aoa_to_sheet([head, ...rows.map(r => summaryRow(r.m, r.s)), summaryRow(null, total)], { cellDates: true });
-    const locHead = ['Revista', 'Proyecto', 'Localización', 'Uds vendidas', 'Venta', 'Uds devueltas', 'Devoluciones', '% devol. uds', 'Uds netas', 'Venta neta'];
+    const locHead = ['Magazine', 'Project', 'Location', 'Units sold', 'Sold', 'Units returned', 'Returns', '% returned units', 'Net units', 'Net sales'].map(h => t(h));
     const locRow = (item: string, project: string, l: MagLocation) => [item, project, l.location, l.soldQty, l.soldAmount, l.retQty, l.retAmount,
       l.soldQty ? l.retQty / l.soldQty : '', l.soldQty - l.retQty, l.soldAmount - l.retAmount];
     const ws2 = XLSX.utils.aoa_to_sheet([locHead, ...rows.flatMap(r => r.m.locations.map(l => locRow(r.m.item, r.m.project, l))),
       ...totalLocations.map(l => locRow('TOTAL', '', l))]);
-    const lineHead = ['Revista', 'Proyecto', 'Tarea', 'Descripción tarea', 'Tipo doc.', 'Nº documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Localización', 'Cantidad', 'Importe (resultado)', 'Excluida del margen'];
+    const lineHead = ['Magazine', 'Project', 'Task', 'Task name', 'Doc. type', 'Document no.', 'Date', 'Customer / vendor', 'No.', 'Description', 'Location', 'Quantity', 'Amount (result)', 'Excluded from margin'].map(h => t(h));
     const ws3 = XLSX.utils.aoa_to_sheet([lineHead, ...rows.flatMap(r => r.m.entries.map(e => [r.m.item, r.m.project, e.task, data.taskNames[e.task] || '',
-      DOC_TYPE[e.kind].label, e.doc, e.date ? new Date(e.date) : '', e.partner, e.no, e.description, e.location, e.qty, e.value, e.excluded || '']))], { cellDates: true });
+      t(DOC_TYPE[e.kind].label), e.doc, e.date ? new Date(e.date) : '', e.partner, e.no, e.description, e.location, e.qty, e.value, e.excluded ? tx(e.excluded) : '']))], { cellDates: true });
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws1, 'Revistas');
-    XLSX.utils.book_append_sheet(wb, ws2, 'Localizaciones');
-    XLSX.utils.book_append_sheet(wb, ws3, 'Líneas');
+    XLSX.utils.book_append_sheet(wb, ws1, t('Magazines'));
+    XLSX.utils.book_append_sheet(wb, ws2, t('Locations'));
+    XLSX.utils.book_append_sheet(wb, ws3, t('Lines'));
     if (pending.length) {
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Motivo', 'Tipo doc.', 'Nº documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Project No.', 'Project Task No.', 'Cantidad', 'Importe'],
-        ...pending.map(u => [u.reason, DOC_TYPE[u.kind].label, u.doc, u.date ? new Date(u.date) : '', u.partner, u.no, u.description, u.project, u.task, u.qty, u.amount])], { cellDates: true }), 'Sin asignar');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Reason', 'Doc. type', 'Document no.', 'Date', 'Customer / vendor', 'No.', 'Description', 'Project No.', 'Project Task No.', 'Quantity', 'Amount'].map(h => t(h)),
+        ...pending.map(u => [tx(u.reason), t(DOC_TYPE[u.kind].label), u.doc, u.date ? new Date(u.date) : '', u.partner, u.no, u.description, u.project, u.task, u.qty, u.amount])], { cellDates: true }), t('Unassigned'));
     }
     if (data.corrections.length) {
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Motivo', 'Tipo doc.', 'Nº documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Localización', 'Project No. en BC', 'Task No. en BC', 'Revista correcta', 'Tarea', 'Cantidad', 'Importe'],
-        ...data.corrections.map(c => [c.reason, DOC_TYPE[c.kind].label, c.doc, c.date ? new Date(c.date) : '', c.partner, c.no, c.description, c.location, c.bcProject, c.bcTask, c.magazine, c.task, c.qty, c.amount])], { cellDates: true }), 'Corregidas en la app');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Reason', 'Doc. type', 'Document no.', 'Date', 'Customer / vendor', 'No.', 'Description', 'Location', 'Project No. in BC', 'Task No. in BC', 'Correct magazine', 'Task', 'Quantity', 'Amount'].map(h => t(h)),
+        ...data.corrections.map(c => [tx(c.reason), t(DOC_TYPE[c.kind].label), c.doc, c.date ? new Date(c.date) : '', c.partner, c.no, c.description, c.location, c.bcProject, c.bcTask, c.magazine, c.task, c.qty, c.amount])], { cellDates: true }), t('Corrected in the app'));
     }
     XLSX.writeFile(wb, `Magazine_Profitability_${new Date().toISOString().substring(0, 10)}.xlsx`);
   };
@@ -288,41 +297,41 @@ export default function MagazineProfitabilityView() {
             <section className="bg-amber-50 border border-amber-200 rounded-xl">
               <button onClick={() => setShowIssues(v => !v)} className="w-full px-4 py-2.5 flex items-center gap-2 text-sm text-amber-900 text-left">
                 <AlertTriangle size={16} />
-                <span className="font-semibold">{pending.length ? `${pending.length} líneas sin revista` : 'Ninguna línea sin revista pendiente'}</span>
+                <span className="font-semibold">{pending.length ? t('{n} lines without magazine', { n: pending.length }) : t('No pending lines without magazine')}</span>
                 <span className="text-amber-800">
-                  · sin Project No. en BC ni revista en el External Document No. o el PDF; no cuentan en ninguna revista
-                  {validatedRows.length > 0 && <> · {validatedRows.length} validadas</>}
+                  · {t('no Project No. in BC and no magazine in the External Document No. or the PDF; they do not count in any magazine')}
+                  {validatedRows.length > 0 && <> · {t('{n} validated', { n: validatedRows.length })}</>}
                 </span>
                 {showIssues ? <ChevronDown size={16} className="ml-auto shrink-0" /> : <ChevronRight size={16} className="ml-auto shrink-0" />}
               </button>
               {showIssues && (
                 <div className="px-4 pb-4 overflow-x-auto">
                   <div className="flex flex-wrap items-center gap-3 mb-1">
-                    <p className="text-xs text-amber-900 mr-auto">Rellena Project No. y Project Task No. en BC, o valida las que no son de ninguna revista para que no se avisen más. Almacenaje y handling sin proyecto no se listan. Importe: en ventas, + = ingreso; en compras, + = coste.</p>
+                    <p className="text-xs text-amber-900 mr-auto">{t('Fill in Project No. and Project Task No. in BC, or validate the ones that do not belong to any magazine so they are no longer flagged. Storage and handling without a project are not listed. Amount: in sales, + = revenue; in purchases, + = cost.')}</p>
                     {pending.length > 0 && (
                       <button onClick={() => validate(pending, true)} disabled={saving}
                         className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-amber-300 bg-white text-xs text-amber-900 hover:bg-amber-100 disabled:opacity-50">
-                        <CheckCircle2 size={13} /> Validar todas ({pending.length})
+                        <CheckCircle2 size={13} /> {t('Validate all ({n})', { n: pending.length })}
                       </button>
                     )}
                     {validatedRows.length > 0 && (
                       <label className="flex items-center gap-1 text-xs text-amber-900">
-                        <input type="checkbox" checked={showValidated} onChange={e => setShowValidated(e.target.checked)} /> Ver validadas ({validatedRows.length})
+                        <input type="checkbox" checked={showValidated} onChange={e => setShowValidated(e.target.checked)} /> {t('Show validated ({n})', { n: validatedRows.length })}
                       </label>
                     )}
                   </div>
                   {(pending.length > 0 || showValidated) && <table className="w-full text-xs bg-white rounded-lg border border-amber-200">
                     <thead className="text-gray-500 bg-gray-50"><tr>
-                      {['Motivo', 'Documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Project No.', 'Task No.', 'Cantidad', 'Importe', 'Asignar a revista', ''].map((h, i) =>
-                        <th key={i} className={`${th} ${['Cantidad', 'Importe'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>)}
+                      {['Reason', 'Document', 'Date', 'Customer / vendor', 'No.', 'Description', 'Project No.', 'Task No.', 'Quantity', 'Amount', 'Assign to magazine', ''].map((h, i) =>
+                        <th key={i} className={`${th} ${['Quantity', 'Amount'].includes(h) ? 'text-right' : 'text-left'}`}>{h && t(h)}</th>)}
                     </tr></thead>
                     <tbody className="divide-y divide-gray-100">
                       {[...pending, ...(showValidated ? validatedRows : [])].map(u => {
                         const v = data.validated?.[u.key];
                         return (
                           <tr key={u.key} className={v ? 'text-gray-400' : ''}>
-                            <td className="px-3 py-1.5">{u.reason}{u.pdf && <p className="text-amber-700">{u.pdf}</p>}</td>
-                            <td className={td}><span className="text-gray-400 mr-1">{DOC_TYPE[u.kind].label}</span>{u.doc} {DOC_TYPE[u.kind].pdf && <DocPdfLink documentNo={u.doc} kind={DOC_TYPE[u.kind].pdf!} company={COMPANY} />}</td>
+                            <td className="px-3 py-1.5">{tx(u.reason)}{u.pdf && <p className="text-amber-700">{tx(u.pdf)}</p>}</td>
+                            <td className={td}><span className="text-gray-400 mr-1">{t(DOC_TYPE[u.kind].label)}</span>{u.doc} {DOC_TYPE[u.kind].pdf && <DocPdfLink documentNo={u.doc} kind={DOC_TYPE[u.kind].pdf!} company={COMPANY} />}</td>
                             <td className={td}>{dmy(u.date)}</td><td className={td}>{u.partner}</td><td className={td}>{u.no}</td>
                             <td className="px-3 py-1.5">{u.description}</td><td className={td}>{u.project}</td><td className={td}>{u.task}</td>
                             <td className={`${td} text-right`}>{units(u.qty)}</td><td className={`${td} text-right`}>{money(u.amount)}</td>
@@ -333,15 +342,15 @@ export default function MagazineProfitabilityView() {
                                 return (
                                   <span className="inline-flex items-center gap-1">
                                     <select value={d.magazine} onChange={e => set({ magazine: e.target.value })} className="border border-gray-300 rounded px-1 py-0.5 text-xs max-w-[9rem]">
-                                      <option value="">Revista…</option>
+                                      <option value="">{t('Magazine…')}</option>
                                       {magOptions.map(o => <option key={o.item} value={o.item}>{o.label} · {o.item}</option>)}
                                     </select>
                                     <select value={d.task} onChange={e => set({ task: e.target.value })} className="border border-gray-300 rounded px-1 py-0.5 text-xs max-w-[9rem]">
-                                      <option value="">Tarea…</option>
+                                      <option value="">{t('Task…')}</option>
                                       {taskOptions.map(([k, name]) => <option key={k} value={k}>{k} {name}</option>)}
                                     </select>
                                     <button onClick={() => assign(u.key, d, u)} disabled={saving || !d.magazine || !d.task}
-                                      className="px-2 py-0.5 rounded bg-gray-900 text-white disabled:opacity-40">Asignar</button>
+                                      className="px-2 py-0.5 rounded bg-gray-900 text-white disabled:opacity-40">{t('Assign')}</button>
                                   </span>
                                 );
                               })()}
@@ -349,13 +358,13 @@ export default function MagazineProfitabilityView() {
                             <td className={`${td} text-right`}>
                               {v ? (
                                 <span className="inline-flex items-center gap-2">
-                                  <span title={`${v.by || ''} ${new Date(v.at).toLocaleString('es-ES')}`} className="text-emerald-700 inline-flex items-center gap-1"><CheckCircle2 size={12} /> Validada</span>
-                                  <button onClick={() => validate([u], false)} disabled={saving} className="underline hover:text-gray-700">Quitar</button>
+                                  <span title={`${v.by || ''} ${new Date(v.at).toLocaleString(locale)}`} className="text-emerald-700 inline-flex items-center gap-1"><CheckCircle2 size={12} /> {t('Validated')}</span>
+                                  <button onClick={() => validate([u], false)} disabled={saving} className="underline hover:text-gray-700">{t('Remove')}</button>
                                 </span>
                               ) : (
-                                <button onClick={() => validate([u], true)} disabled={saving} title="No es de ninguna revista: no volver a avisar"
+                                <button onClick={() => validate([u], true)} disabled={saving} title={t('Not from any magazine: do not flag it again')}
                                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-50">
-                                  <CheckCircle2 size={12} /> Validar
+                                  <CheckCircle2 size={12} /> {t('Validate')}
                                 </button>
                               )}
                             </td>
@@ -375,43 +384,42 @@ export default function MagazineProfitabilityView() {
                 <button onClick={() => setShowFixes(v => !v)} className="flex items-center gap-2 text-left min-w-0 flex-1">
                   <Wrench size={16} className="shrink-0" />
                   <span>
-                    <span className="font-semibold">{data.corrections.length} líneas corregidas en la app</span>
-                    {newFixes > 0 && fixesOk.size > 0 && <span className="ml-1 px-1.5 rounded bg-sky-600 text-white text-xs">{newFixes} nuevas</span>}
+                    <span className="font-semibold">{t('{n} lines corrected in the app', { n: data.corrections.length })}</span>
+                    {newFixes > 0 && fixesOk.size > 0 && <span className="ml-1 px-1.5 rounded bg-sky-600 text-white text-xs">{t('{n} new', { n: newFixes })}</span>}
                     <span className="text-sky-800">
-                      {' '}· {data.corrections.filter(c => c.bcProject).length} con el proyecto de otra revista, {data.corrections.filter(c => !c.bcProject).length} sin proyecto.
-                      Ya cuentan en la revista correcta; conviene corregir el Project No. en BC para que el Project Card coincida
+                      {' '}· {t('{a} with the project of another magazine, {b} without project. They already count in the right magazine; the Project No. should be fixed in BC so the Project Card matches', { a: data.corrections.filter(c => c.bcProject).length, b: data.corrections.filter(c => !c.bcProject).length })}
                     </span>
                   </span>
                   {showFixes ? <ChevronDown size={16} className="ml-auto shrink-0" /> : <ChevronRight size={16} className="ml-auto shrink-0" />}
                 </button>
                 {newFixes > 0 && (
-                  <button onClick={ackFixes} title="Visto: mover al final de la página hasta que haya correcciones nuevas"
+                  <button onClick={ackFixes} title={t('Seen: move to the bottom of the page until there are new corrections')}
                     className="shrink-0 px-3 py-1 rounded-md bg-sky-600 text-white text-xs font-semibold hover:bg-sky-700">OK</button>
                 )}
               </div>
               {showFixes && (
                 <div className="px-4 pb-4 overflow-x-auto">
-                  <p className="text-xs text-sky-900 mb-1">Ventas y devoluciones de D-FORCE: manda el artículo (su descripción dice la misma revista). Magazine Ads: manda la revista del External Document No. o, si no la dice, la fecha On Sale de la revista.</p>
+                  <p className="text-xs text-sky-900 mb-1">{t('D-FORCE sales and returns: the item decides (its description names the same magazine). Magazine Ads: the magazine in the External Document No. decides or, if it does not say, the magazine On Sale date.')}</p>
                   <table className="w-full text-xs bg-white rounded-lg border border-sky-200">
                     <thead className="text-gray-500 bg-gray-50"><tr>
-                      {['Motivo', 'Documento', 'Fecha', 'Nº', 'Descripción', 'Localización', 'Project No. en BC', 'Revista correcta', 'Tarea', 'Cantidad', 'Importe', ''].map((h, i) =>
-                        <th key={i} className={`${th} ${['Cantidad', 'Importe'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>)}
+                      {['Reason', 'Document', 'Date', 'No.', 'Description', 'Location', 'Project No. in BC', 'Correct magazine', 'Task', 'Quantity', 'Amount', ''].map((h, i) =>
+                        <th key={i} className={`${th} ${['Quantity', 'Amount'].includes(h) ? 'text-right' : 'text-left'}`}>{h && t(h)}</th>)}
                     </tr></thead>
                     <tbody className="divide-y divide-gray-100">
                       {data.corrections.map((c, i) => {
                         const right = data.magazines.find(m => m.item === c.magazine);
                         return (
                           <tr key={i}>
-                            <td className="px-3 py-1.5">{c.reason}</td>
-                            <td className={td}><span className="text-gray-400 mr-1">{DOC_TYPE[c.kind].label}</span>{c.doc} {DOC_TYPE[c.kind].pdf && <DocPdfLink documentNo={c.doc} kind={DOC_TYPE[c.kind].pdf!} company={COMPANY} />}</td>
+                            <td className="px-3 py-1.5">{tx(c.reason)}</td>
+                            <td className={td}><span className="text-gray-400 mr-1">{t(DOC_TYPE[c.kind].label)}</span>{c.doc} {DOC_TYPE[c.kind].pdf && <DocPdfLink documentNo={c.doc} kind={DOC_TYPE[c.kind].pdf!} company={COMPANY} />}</td>
                             <td className={td}>{dmy(c.date)}</td><td className={td}>{c.no}</td>
                             <td className="px-3 py-1.5">{c.description}</td><td className={td}>{c.location}</td>
-                            <td className={`${td} text-red-600 line-through`}>{c.bcProject || '(vacío)'}</td>
+                            <td className={`${td} text-red-600 line-through`}>{c.bcProject || t('(empty)')}</td>
                             <td className={`${td} text-emerald-700 font-medium`}>{right?.project || c.magazine} <span className="text-gray-400 font-normal">{c.magazine}</span></td>
                             <td className={td}>{c.task}</td>
                             <td className={`${td} text-right`}>{units(c.qty)}</td><td className={`${td} text-right`}>{money(c.amount)}</td>
                             <td className={`${td} text-right`}>
-                              {c.manual && c.key && <button onClick={() => assign(c.key!, null)} disabled={saving} className="underline text-gray-500 hover:text-gray-800">Quitar</button>}
+                              {c.manual && c.key && <button onClick={() => assign(c.key!, null)} disabled={saving} className="underline text-gray-500 hover:text-gray-800">{t('Remove')}</button>}
                             </td>
                           </tr>
                         );
@@ -428,59 +436,59 @@ export default function MagazineProfitabilityView() {
       <section className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-3">
         <div className="mr-auto">
           <p className="text-xs text-gray-500">
-            Beneficio por revista: ventas y devoluciones a D-FORCE (artículos MAGAZINE -), Magazine Ads y costes por Project No. / Task No.
-            {data && <> · Datos de BC de {new Date(data.generatedAt).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}</>}
+            {t('Profit per magazine: sales and returns to D-FORCE (MAGAZINE - items), Magazine Ads and costs by Project No. / Task No.')}
+            {data && <> · {t('BC data from {date}', { date: new Date(data.generatedAt).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) })}</>}
           </p>
         </div>
         <div className="flex bg-gray-100 rounded-lg p-1 text-sm">
-          {['', ...titles].map(t => (
-            <button key={t || 'all'} onClick={() => setTitle(t)}
-              className={`px-3 py-1 rounded-md font-medium ${title === t ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>{t || 'Todas'}</button>
+          {['', ...titles].map(ti => (
+            <button key={ti || 'all'} onClick={() => setTitle(ti)}
+              className={`px-3 py-1 rounded-md font-medium ${title === ti ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>{ti || t('All magazines')}</button>
           ))}
         </div>
         <select value={year} onChange={e => setYear(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm">
-          <option value="">Todos los años</option>
+          <option value="">{t('All years')}</option>
           {years.map(y => <option key={y} value={y}>{y}</option>)}
         </select>
         <label className="relative">
           <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar revista…" className="border border-gray-300 rounded-lg pl-7 pr-2 py-1.5 text-sm w-48" />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder={t('Search magazine…')} className="border border-gray-300 rounded-lg pl-7 pr-2 py-1.5 text-sm w-48" />
         </label>
-        <label className="flex items-center gap-1.5 text-sm text-gray-700" title="Forecasted Returns: % de la venta que se espera devuelto (para todas las revistas sin % propio)">
-          Provisión devoluciones
+        <label className="flex items-center gap-1.5 text-sm text-gray-700" title={t('Forecasted Returns: % of sales expected back (for every magazine without its own %)')}>
+          {t('Returns provision')}
           <input key={`def-${data?.provisions?.defaultPct ?? ''}`} defaultValue={data?.provisions?.defaultPct ?? ''} placeholder="—" disabled={!data || saving}
             onBlur={e => { const v = parsePct(e.target.value); if (v !== (data?.provisions?.defaultPct ?? null) && (v === null || !isNaN(v))) void saveProvision({ defaultPct: v }); }}
             onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
             className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm w-16 text-right" /> %
         </label>
         <label className="flex items-center gap-1.5 text-sm text-gray-600">
-          <input type="checkbox" checked={onlyActive} onChange={e => setOnlyActive(e.target.checked)} /> Solo con movimientos
+          <input type="checkbox" checked={onlyActive} onChange={e => setOnlyActive(e.target.checked)} /> {t('Only with entries')}
         </label>
         <button onClick={exportExcel} disabled={!data} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 text-sm hover:bg-gray-50 disabled:opacity-50">
           <Download size={14} /> Excel
         </button>
-        <button onClick={() => load(true)} disabled={loading} title="Volver a leer BC"
+        <button onClick={() => load(true)} disabled={loading} title={t('Read BC again')}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-900 text-white text-sm hover:bg-black disabled:opacity-50">
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {loading ? 'Leyendo BC…' : 'Actualizar'}
+          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {loading ? t('Reading BC…') : t('Refresh')}
         </button>
       </section>
 
-      {error && <p className="bg-white border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-center gap-2"><AlertCircle size={16} /> {error}</p>}
-      {!data && loading && <p className="bg-white border border-gray-200 rounded-xl p-6 text-sm text-gray-500">Leyendo ventas, abonos y compras de {COMPANY} en BC…</p>}
+      {error && <p className="bg-white border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-center gap-2"><AlertCircle size={16} /> {tx(error)}</p>}
+      {!data && loading && <p className="bg-white border border-gray-200 rounded-xl p-6 text-sm text-gray-500">{t('Reading sales, credit memos and purchases of {company} from BC…', { company: COMPANY })}</p>}
 
       {data && (
         <>
           <section className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
             {[
-              { label: 'Venta neta', value: money(total.netSales), sub: `${units(total.soldQty - total.retQty - total.forecastQty)} uds netas${total.forecast ? ' (con previstas)' : ''}` },
-              { label: 'Devoluciones', value: money(total.returned + total.forecast), sub: `${money(total.returned)} reales + ${money(total.forecast)} previstas · ${pct(total.soldQty ? (total.retQty + total.forecastQty) / total.soldQty : null)} uds` },
-              { label: 'Magazine Ads', value: money(total.ads), sub: total.otherRevenue ? `+ ${money(total.otherRevenue)} otros ingresos` : 'Facturado a CRAZE GmbH' },
-              { label: 'Distribución', value: money(total.distribution), sub: 'D-FORCE: envíos, KVM, comisiones' },
-              { label: 'Costes revista + marketing', value: money(total.magazine + total.marketing + total.otherCost), sub: 'Gadget, foilbag, diseño, imprenta…' },
-              { label: 'Beneficio', value: money(total.profit), sub: `Margen ${pct(total.revenue ? total.profit / total.revenue : null)}`, strong: true },
+              { label: 'Net sales', value: money(total.netSales), sub: total.forecast ? t('{n} net units (incl. forecast)', { n: units(total.soldQty - total.retQty - total.forecastQty) }) : t('{n} net units', { n: units(total.soldQty - total.retQty - total.forecastQty) }) },
+              { label: 'Returns', value: money(total.returned + total.forecast), sub: t('{actual} actual + {forecast} forecast · {pct} units', { actual: money(total.returned), forecast: money(total.forecast), pct: pct(total.soldQty ? (total.retQty + total.forecastQty) / total.soldQty : null) }) },
+              { label: 'Magazine Ads', value: money(total.ads), sub: total.otherRevenue ? t('+ {amount} other revenue', { amount: money(total.otherRevenue) }) : t('Invoiced to CRAZE GmbH') },
+              { label: 'Distribution', value: money(total.distribution), sub: t('D-FORCE: shipping, KVM, commissions') },
+              { label: 'Magazine + marketing costs', value: money(total.magazine + total.marketing + total.otherCost), sub: t('Gadget, foilbag, design, printing…') },
+              { label: 'Profit', value: money(total.profit), sub: t('Margin {pct}', { pct: pct(total.revenue ? total.profit / total.revenue : null) }), strong: true },
             ].map(k => (
               <div key={k.label} className="bg-white rounded-xl border border-gray-200 px-4 py-3">
-                <p className="text-xs text-gray-500">{k.label}</p>
+                <p className="text-xs text-gray-500">{t(k.label)}</p>
                 <p className={`text-lg font-semibold tabular-nums ${k.strong ? (total.profit < 0 ? 'text-red-600' : 'text-emerald-700') : 'text-gray-900'}`}>{k.value}</p>
                 <p className="text-xs text-gray-400">{k.sub}</p>
               </div>
@@ -495,17 +503,17 @@ export default function MagazineProfitabilityView() {
             <table className="w-full text-[13px]">
               <thead className="bg-gray-50 text-xs text-gray-500 border-b border-gray-200">
                 <tr>
-                  <th className={`${th2} text-left`}>Revista</th>
-                  <th className={`${th2} text-left`}>Proyecto<br /><span className="font-normal">On Sale · Tirada</span></th>
-                  <th className={`${th2} text-right`}>Venta<br /><span className="font-normal">uds</span></th>
-                  <th className={`${th2} text-right`}>Devoluciones<br /><span className="font-normal">uds · %</span></th>
-                  <th className={`${th2} text-right`}>Devol. previstas<br /><span className="font-normal">provisión</span></th>
-                  <th className={`${th2} text-right bg-gray-100`}>Venta neta<br /><span className="font-normal">uds netas</span></th>
+                  <th className={`${th2} text-left`}>{t('Magazine')}</th>
+                  <th className={`${th2} text-left`}>{t('Project')}<br /><span className="font-normal">{t('On Sale · Print run')}</span></th>
+                  <th className={`${th2} text-right`}>{t('Sold')}<br /><span className="font-normal">{t('pcs')}</span></th>
+                  <th className={`${th2} text-right`}>{t('Returns')}<br /><span className="font-normal">{t('units · %')}</span></th>
+                  <th className={`${th2} text-right`}>{t('Forecast returns')}<br /><span className="font-normal">{t('provision')}</span></th>
+                  <th className={`${th2} text-right bg-gray-100`}>{t('Net sales')}<br /><span className="font-normal">{t('net units')}</span></th>
                   <th className={`${th2} text-right`}>Magazine Ads</th>
-                  <th className={`${th2} text-right`}>Distribución</th>
+                  <th className={`${th2} text-right`}>{t('Distribution')}</th>
                   <th className={`${th2} text-right`}>Marketing</th>
-                  <th className={`${th2} text-right`}>Costes revista</th>
-                  <th className={`${th2} text-right bg-gray-100`}>Beneficio<br /><span className="font-normal">margen</span></th>
+                  <th className={`${th2} text-right`}>{t('Magazine costs')}</th>
+                  <th className={`${th2} text-right bg-gray-100`}>{t('Profit')}<br /><span className="font-normal">{t('margin')}</span></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -522,13 +530,13 @@ export default function MagazineProfitabilityView() {
                         </div>
                       </td>
                       <td className="px-2 py-1.5 whitespace-nowrap text-gray-700">
-                        {m.project}{m.projects.length > 1 && <span className="text-xs text-amber-600" title={`También: ${m.projects.filter(p => p !== m.project).join(', ')}`}> +{m.projects.length - 1}</span>}
-                        <p className="text-xs text-gray-400">{[dmy(m.onSaleDate), m.printRun ? `${qf.format(m.printRun)} uds` : ''].filter(Boolean).join(' · ')}</p>
+                        {m.project}{m.projects.length > 1 && <span className="text-xs text-amber-600" title={t('Also: {projects}', { projects: m.projects.filter(p => p !== m.project).join(', ') })}> +{m.projects.length - 1}</span>}
+                        <p className="text-xs text-gray-400">{[dmy(m.onSaleDate), m.printRun ? t('{n} units', { n: qf.format(m.printRun) }) : ''].filter(Boolean).join(' · ')}</p>
                       </td>
                       <Two main={money(s.sold)} sub={units(s.soldQty)} />
                       <Two main={money(s.returned)} sub={`${units(s.retQty)} · ${pct(s.soldQty ? s.retQty / s.soldQty : null)}`} />
-                      <Two main={p.closed ? 'cerrada' : money(s.forecast)} className={p.closed ? 'text-gray-500' : ''}
-                        sub={p.pct == null ? 'sin %' : `${units(s.forecastQty)} · ${qf.format(p.pct)} %${p.own ? '' : ' (gral.)'}`} />
+                      <Two main={p.closed ? t('closed') : money(s.forecast)} className={p.closed ? 'text-gray-500' : ''}
+                        sub={p.pct == null ? t('no %') : `${units(s.forecastQty)} · ${qf.format(p.pct)} %${p.own ? '' : ` ${t('(general)')}`}`} />
                       <Two main={money(s.netSales)} sub={units(s.soldQty - s.retQty - s.forecastQty)} className={`font-medium bg-gray-50 ${neg(s.netSales)}`} />
                       <Two main={money(s.ads + s.otherRevenue)} />
                       <Two main={money(s.distribution)} />
@@ -543,20 +551,20 @@ export default function MagazineProfitabilityView() {
                             <div className="space-y-4 min-[1900px]:col-span-2">
                               <ProvisionPanel m={m} p={p} saving={saving} parsePct={parsePct} save={saveProvision} defaultPct={data.provisions?.defaultPct ?? null} />
                             </div>
-                            <TaskTable m={m} taskNames={{ ...data.taskNames, ...EXTRA_TASK_NAMES }} saving={saving} exclude={(e, x) => exclude(m, e, x)} openTask={openTask} toggle={k => setOpenTask(o => ({ ...o, [k]: !o[k] }))} />
-                            <LocationTable title="Ventas y devoluciones por localización (Description 2)" locations={m.locations} />
+                            <TaskTable m={m} taskNames={{ ...data.taskNames, ...Object.fromEntries(Object.entries(EXTRA_TASK_NAMES).map(([k, v]) => [k, t(v)])) }} saving={saving} exclude={(e, x) => exclude(m, e, x)} openTask={openTask} toggle={k => setOpenTask(o => ({ ...o, [k]: !o[k] }))} />
+                            <LocationTable title={t('Sales and returns by location (Description 2)')} locations={m.locations} />
                           </div>
                         </td>
                       </tr>
                     )}
                   </Fragment>
                 ))}
-                {!rows.length && <tr><td colSpan={11} className="px-3 py-6 text-center text-gray-500">Ninguna revista con estos filtros.</td></tr>}
+                {!rows.length && <tr><td colSpan={11} className="px-3 py-6 text-center text-gray-500">{t('No magazine matches these filters.')}</td></tr>}
               </tbody>
               {rows.length > 0 && (
                 <tfoot className="border-t-2 border-gray-300 font-semibold bg-gray-50">
                   <tr className="align-top">
-                    <td className="px-2 py-2">TOTAL <span className="font-normal text-gray-500">({rows.length} revistas)</span></td>
+                    <td className="px-2 py-2">TOTAL <span className="font-normal text-gray-500">({t('{n} magazines', { n: rows.length })})</span></td>
                     <td />
                     <Two main={money(total.sold)} sub={units(total.soldQty)} />
                     <Two main={money(total.returned)} sub={`${units(total.retQty)} · ${pct(total.soldQty ? total.retQty / total.soldQty : null)}`} />
@@ -574,7 +582,7 @@ export default function MagazineProfitabilityView() {
           </section>
 
           {totalLocations.length > 0 && (
-            <LocationTable title={`Ventas y devoluciones por localización · ${rows.length} revistas`} locations={totalLocations} />
+            <LocationTable title={t('Sales and returns by location · {n} magazines', { n: rows.length })} locations={totalLocations} />
           )}
 
           {newFixes === 0 && fixesBlock}
@@ -599,38 +607,42 @@ function Two({ main, sub, className = '' }: { main: string; sub?: string; classN
 function ProvisionPanel({ m, p, saving, parsePct, save, defaultPct }: {
   m: Magazine; p: ProvInfo; saving: boolean; parsePct: (v: string) => number | null; save: (b: Record<string, unknown>) => Promise<void>; defaultPct: number | null;
 }) {
+  const { t, locale } = useT();
+  const { nf, qf, pct, money, units } = fmts(locale);
   const diffAmount = p.provAmount - p.retAmount, diffQty = p.provQty - p.retQty;
   const fmtDate = (d: string) => (d ? d.substring(0, 10).split('-').reverse().join('/') : '');
   return (
     <section className="bg-white rounded-xl border border-gray-200 px-4 py-3 text-sm">
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-        <p className="font-semibold text-gray-800">Provisión de devoluciones</p>
+        <p className="font-semibold text-gray-800">{t('Returns provision (title)')}</p>
         <label className="flex items-center gap-1.5 text-gray-700">
-          % de la venta
+          {t('% of the sales')}
           <input key={`${m.item}-${p.own ? p.pct : ''}`} defaultValue={p.own && p.pct != null ? String(p.pct) : ''} placeholder={defaultPct != null ? String(defaultPct) : '—'}
             disabled={saving || p.closed}
             onBlur={e => { const v = parsePct(e.target.value); if ((v ?? null) !== (p.own ? p.pct : null) && (v === null || !isNaN(v))) void save({ item: m.item, pct: v }); }}
             onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
             className="border border-gray-300 rounded px-2 py-1 w-16 text-right disabled:bg-gray-50" /> %
-          <span className="text-xs text-gray-400">{p.own ? 'propio' : defaultPct != null ? `general (${qf.format(defaultPct)} %)` : 'sin % general'}</span>
+          <span className="text-xs text-gray-400">{p.own ? t('own') : defaultPct != null ? t('general ({pct} %)', { pct: qf.format(defaultPct) }) : t('no general %')}</span>
         </label>
-        <span className="text-gray-600">Provisionado: <b className="tabular-nums">{money(p.provAmount)}</b> <span className="text-xs text-gray-400">{units(p.provQty)} uds</span></span>
-        <span className="text-gray-600">Devuelto real: <b className="tabular-nums">{money(p.retAmount)}</b> <span className="text-xs text-gray-400">{units(p.retQty)} uds</span></span>
+        <span className="text-gray-600">{t('Provisioned:')} <b className="tabular-nums">{money(p.provAmount)}</b> <span className="text-xs text-gray-400">{t('{n} units', { n: units(p.provQty) })}</span></span>
+        <span className="text-gray-600">{t('Actually returned:')} <b className="tabular-nums">{money(p.retAmount)}</b> <span className="text-xs text-gray-400">{t('{n} units', { n: units(p.retQty) })}</span></span>
         {p.closed ? (
           <span className={diffAmount >= 0 ? 'text-amber-700' : 'text-red-600'}>
-            Cerrada el {fmtDate(p.closedAt)}: {diffAmount >= 0 ? 'provisionado de más' : 'provisionado de menos'} <b className="tabular-nums">{money(Math.abs(diffAmount))}</b> ({units(Math.abs(diffQty))} uds)
+            {t('Closed on {date}:', { date: fmtDate(p.closedAt) })} {diffAmount >= 0 ? t('over-provisioned') : t('under-provisioned')} <b className="tabular-nums">{money(Math.abs(diffAmount))}</b> ({t('{n} units', { n: units(Math.abs(diffQty)) })})
           </span>
         ) : (
-          <span className="text-gray-600">Previsto pendiente: <b className="tabular-nums">{money(p.fcAmount)}</b> <span className="text-xs text-gray-400">{units(p.fcQty)} uds</span></span>
+          <span className="text-gray-600">{t('Forecast pending:')} <b className="tabular-nums">{money(p.fcAmount)}</b> <span className="text-xs text-gray-400">{t('{n} units', { n: units(p.fcQty) })}</span></span>
         )}
         <button onClick={() => save({ item: m.item, closed: !p.closed })} disabled={saving || (!p.closed && p.pct == null)}
           className={`ml-auto px-3 py-1 rounded-md text-xs font-semibold disabled:opacity-40 ${p.closed ? 'border border-gray-300 hover:bg-gray-50' : 'bg-gray-900 text-white hover:bg-black'}`}>
-          {p.closed ? 'Reabrir provisión' : 'Cerrar provisión'}
+          {p.closed ? t('Reopen provision') : t('Close provision')}
         </button>
       </div>
       <p className="text-xs text-gray-500 mt-1.5">
-        Gadget a {nf.format(p.unitGadget)} €/ud: devoluciones reales en Grosso Ost/West {units(p.recQty)} uds; de las previstas se recupera el {pct(p.share)} ({units(p.fcRecQty)} uds),
-        la proporción de Ost+West en {p.byReturns ? 'las devoluciones reales' : 'las ventas (hasta que las devoluciones reales lleguen a la mitad de lo provisionado)'}. El resto de devoluciones no vuelve al almacén.
+        {t('Gadget at {unit} €/unit: actual returns in Grosso Ost/West {rec} units; {share} of the forecast ones is recovered ({fc} units), the Ost+West share of {basis}. The rest of the returns do not go back to the warehouse.', {
+          unit: nf.format(p.unitGadget), rec: units(p.recQty), share: pct(p.share), fc: units(p.fcRecQty),
+          basis: p.byReturns ? t('the actual returns') : t('the sales (until the actual returns reach half of the provision)'),
+        })}
       </p>
     </section>
   );
@@ -640,6 +652,8 @@ function ProvisionPanel({ m, p, saving, parsePct, save, defaultPct }: {
 function TaskTable({ m, taskNames, openTask, toggle, saving, exclude }: {
   m: Magazine; taskNames: Record<string, string>; saving: boolean; exclude: (e: MagEntry, excluded: boolean) => void; openTask: Record<string, boolean>; toggle: (k: string) => void;
 }) {
+  const { t, tx, locale } = useT();
+  const { pct, money, units } = fmts(locale);
   const th = 'px-3 py-2 font-semibold whitespace-nowrap';
   const td = 'px-3 py-1.5 whitespace-nowrap tabular-nums';
   // Tareas con movimientos más las del proyecto (para ver la estructura completa)
@@ -649,12 +663,12 @@ function TaskTable({ m, taskNames, openTask, toggle, saving, exclude }: {
   const soldQty = m.tasks[TASK_SALES]?.qty || 0;
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
-      <p className="px-3 py-2 text-xs font-semibold text-gray-600 border-b border-gray-100">Project Card · {m.project || m.item}{m.projects.length > 1 && <span className="font-normal text-amber-700"> (también {m.projects.filter(p => p !== m.project).join(', ')})</span>}</p>
+      <p className="px-3 py-2 text-xs font-semibold text-gray-600 border-b border-gray-100">Project Card · {m.project || m.item}{m.projects.length > 1 && <span className="font-normal text-amber-700"> ({t('also {projects}', { projects: m.projects.filter(p => p !== m.project).join(', ') })})</span>}</p>
       <table className="w-full text-sm">
         <thead className="text-xs text-gray-500 bg-gray-50">
           <tr>
-            <th className={`${th} text-left`}>Task No.</th><th className={`${th} text-left`}>Descripción</th>
-            <th className={`${th} text-right`}>Cantidad</th><th className={`${th} text-right`}>Ingreso / Coste</th>
+            <th className={`${th} text-left`}>Task No.</th><th className={`${th} text-left`}>{t('Description')}</th>
+            <th className={`${th} text-right`}>{t('Quantity')}</th><th className={`${th} text-right`}>{t('Revenue / Cost')}</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -666,7 +680,7 @@ function TaskTable({ m, taskNames, openTask, toggle, saving, exclude }: {
               <Fragment key={g}>
                 <tr className="bg-gray-50/80 font-semibold text-gray-800"><td className={td}>{g}</td><td className="px-3 py-1.5" colSpan={3}>{taskNames[g] || GROUP_LABEL[g] || g}</td></tr>
                 {inGroup.map(k => {
-                  const t = m.tasks[k];
+                  const tk = m.tasks[k];
                   const entries = m.entries.filter(e => e.task === k);
                   const ok = `${m.item}|${k}`;
                   return (
@@ -677,31 +691,31 @@ function TaskTable({ m, taskNames, openTask, toggle, saving, exclude }: {
                           <span className="inline-flex items-center gap-1">
                             {entries.length > 0 && (openTask[ok] ? <ChevronDown size={12} className="text-gray-400" /> : <ChevronRight size={12} className="text-gray-400" />)}
                             {taskNames[k] || k}{entries.length > 0 && <span className="text-xs text-gray-400">({entries.length})</span>}
-                            {k === TASK_RETURNS && t && soldQty > 0 && <span className="text-xs text-gray-500">· {pct(-t.qty / soldQty)} de la venta</span>}
+                            {k === TASK_RETURNS && tk && soldQty > 0 && <span className="text-xs text-gray-500">· {t('{pct} of the sales', { pct: pct(-tk.qty / soldQty) })}</span>}
                           </span>
                         </td>
-                        <td className={`${td} text-right`}>{t ? units(t.qty) : '—'}</td>
-                        <td className={`${td} text-right ${neg(t?.value || 0)}`}>{t ? money(t.value) : '—'}</td>
+                        <td className={`${td} text-right`}>{tk ? units(tk.qty) : '—'}</td>
+                        <td className={`${td} text-right ${neg(tk?.value || 0)}`}>{tk ? money(tk.value) : '—'}</td>
                       </tr>
                       {openTask[ok] && (
                         <tr><td colSpan={4} className="px-3 py-2 bg-gray-50">
                           <table className="w-full text-xs">
                             <thead className="text-gray-500"><tr>
-                              {['Documento', 'Fecha', 'Cliente / proveedor', 'Nº', 'Descripción', 'Localización', 'Cantidad', 'Importe', ''].map(h =>
-                                <th key={h} className={`px-2 py-1 font-semibold ${['Cantidad', 'Importe'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>)}
+                              {['Document', 'Date', 'Customer / vendor', 'No.', 'Description', 'Location', 'Quantity', 'Amount', ''].map(h =>
+                                <th key={h} className={`px-2 py-1 font-semibold ${['Quantity', 'Amount'].includes(h) ? 'text-right' : 'text-left'}`}>{h && t(h)}</th>)}
                             </tr></thead>
                             <tbody className="divide-y divide-gray-100">
                               {entries.map((e, i) => (
                                 <tr key={i} className={e.excluded ? 'text-gray-400 [&>td:not(:last-child)]:line-through' : ''}>
-                                  <td className="px-2 py-1 whitespace-nowrap"><span className="text-gray-400 mr-1">{DOC_TYPE[e.kind].label}</span>{e.doc} {DOC_TYPE[e.kind].pdf && <DocPdfLink documentNo={e.doc} kind={DOC_TYPE[e.kind].pdf!} company={COMPANY} />}</td>
+                                  <td className="px-2 py-1 whitespace-nowrap"><span className="text-gray-400 mr-1">{t(DOC_TYPE[e.kind].label)}</span>{e.doc} {DOC_TYPE[e.kind].pdf && <DocPdfLink documentNo={e.doc} kind={DOC_TYPE[e.kind].pdf!} company={COMPANY} />}</td>
                                   <td className="px-2 py-1 whitespace-nowrap">{dmy(e.date)}</td>
                                   <td className="px-2 py-1">{e.partner}</td><td className="px-2 py-1 whitespace-nowrap">{e.no}</td>
-                                  <td className="px-2 py-1">{e.description}{e.fixed && <p className="text-sky-700 flex items-center gap-1"><Wrench size={11} /> {e.fixed}</p>}{e.excluded && <p className="text-amber-700">{e.excluded}</p>}</td><td className="px-2 py-1 whitespace-nowrap">{e.location}</td>
+                                  <td className="px-2 py-1">{e.description}{e.fixed && <p className="text-sky-700 flex items-center gap-1"><Wrench size={11} /> {tx(e.fixed)}</p>}{e.excluded && <p className="text-amber-700">{tx(e.excluded)}</p>}</td><td className="px-2 py-1 whitespace-nowrap">{e.location}</td>
                                   <td className="px-2 py-1 text-right tabular-nums">{units(e.qty)}</td>
                                   <td className={`px-2 py-1 text-right tabular-nums ${e.excluded ? '' : neg(e.value)}`}>{money(e.value)}</td>
                                   <td className="px-2 py-1 text-right whitespace-nowrap">
-                                    {e.key && <button onClick={() => exclude(e, !e.excluded)} disabled={saving} title={e.excluded ? 'Volver a contar en el margen' : 'No contar en el margen (p. ej. una provisión que se factura y abona)'}
-                                      className="underline text-gray-500 hover:text-gray-800 disabled:opacity-40">{e.excluded ? 'Incluir' : 'Excluir'}</button>}
+                                    {e.key && <button onClick={() => exclude(e, !e.excluded)} disabled={saving} title={e.excluded ? t('Count in the margin again') : t('Do not count in the margin (e.g. a provision that is invoiced and credited)')}
+                                      className="underline text-gray-500 hover:text-gray-800 disabled:opacity-40">{e.excluded ? t('Include') : t('Exclude')}</button>}
                                   </td>
                                 </tr>
                               ))}
@@ -721,7 +735,7 @@ function TaskTable({ m, taskNames, openTask, toggle, saving, exclude }: {
             );
           })}
           <tr className="border-t-2 border-gray-300 font-bold">
-            <td className={td} /><td className="px-3 py-2">BENEFICIO</td><td />
+            <td className={td} /><td className="px-3 py-2">{t('PROFIT')}</td><td />
             <td className={`${td} text-right ${profit < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{money(profit)}</td>
           </tr>
         </tbody>
@@ -731,9 +745,11 @@ function TaskTable({ m, taskNames, openTask, toggle, saving, exclude }: {
 }
 
 function LocationTable({ title, locations }: { title: string; locations: MagLocation[] }) {
+  const { t, locale } = useT();
+  const { pct, money, units } = fmts(locale);
   const th = 'px-3 py-2 font-semibold whitespace-nowrap';
   const td = 'px-3 py-1.5 whitespace-nowrap tabular-nums';
-  const t = locations.reduce((a, l) => ({ soldQty: a.soldQty + l.soldQty, soldAmount: a.soldAmount + l.soldAmount, retQty: a.retQty + l.retQty, retAmount: a.retAmount + l.retAmount }),
+  const tot = locations.reduce((a, l) => ({ soldQty: a.soldQty + l.soldQty, soldAmount: a.soldAmount + l.soldAmount, retQty: a.retQty + l.retQty, retAmount: a.retAmount + l.retAmount }),
     { soldQty: 0, soldAmount: 0, retQty: 0, retAmount: 0 });
   const row = (l: Omit<MagLocation, 'location'>) => (
     <>
@@ -753,18 +769,18 @@ function LocationTable({ title, locations }: { title: string; locations: MagLoca
         <table className="w-full text-sm">
           <thead className="text-xs text-gray-500 bg-gray-50">
             <tr>
-              <th className={`${th} text-left`}>Localización</th>
-              <th className={`${th} text-right`}>Uds vendidas</th><th className={`${th} text-right`}>Venta</th>
-              <th className={`${th} text-right`}>Uds devueltas</th><th className={`${th} text-right`}>Devoluciones</th>
-              <th className={`${th} text-right`}>% devol.</th><th className={`${th} text-right`}>Uds netas</th><th className={`${th} text-right`}>Venta neta</th>
+              <th className={`${th} text-left`}>{t('Location')}</th>
+              <th className={`${th} text-right`}>{t('Units sold')}</th><th className={`${th} text-right`}>{t('Sold')}</th>
+              <th className={`${th} text-right`}>{t('Units returned')}</th><th className={`${th} text-right`}>{t('Returns')}</th>
+              <th className={`${th} text-right`}>{t('% returned')}</th><th className={`${th} text-right`}>{t('Net units')}</th><th className={`${th} text-right`}>{t('Net sales')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {locations.map(l => <tr key={l.location}><td className="px-3 py-1.5">{l.location}</td>{row(l)}</tr>)}
           </tbody>
-          <tfoot className="border-t-2 border-gray-300 font-semibold"><tr><td className="px-3 py-2">Total</td>{row(t)}</tr></tfoot>
+          <tfoot className="border-t-2 border-gray-300 font-semibold"><tr><td className="px-3 py-2">Total</td>{row(tot)}</tr></tfoot>
         </table>
-      ) : <p className="px-3 py-4 text-sm text-gray-500">Sin ventas ni devoluciones de D-FORCE.</p>}
+      ) : <p className="px-3 py-4 text-sm text-gray-500">{t('No D-FORCE sales or returns.')}</p>}
     </section>
   );
 }

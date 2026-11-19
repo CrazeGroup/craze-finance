@@ -10,10 +10,10 @@ export const maxDuration = 300;
 export async function GET(req: Request) {
   try {
     const company = (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
-    if (company !== 'CRAZE') return NextResponse.json({ error: 'Logistic Cost solo está disponible para CRAZE GmbH.' }, { status: 400 });
+    if (company !== 'CRAZE') return NextResponse.json({ error: 'Logistic Cost is only available for CRAZE GmbH.' }, { status: 400 });
     const { searchParams } = new URL(req.url);
     const year = Number(searchParams.get('year')) || new Date().getFullYear();
-    if (year < FIRST_YEAR || year > new Date().getFullYear()) return NextResponse.json({ error: `Año no válido (desde ${FIRST_YEAR})` }, { status: 400 });
+    if (year < FIRST_YEAR || year > new Date().getFullYear()) return NextResponse.json({ error: `Invalid year (from ${FIRST_YEAR})` }, { status: 400 });
     const ctx = await getBcContext(company);
     const force = searchParams.get('force') === '1';
     const [cur, prev] = await Promise.all([

@@ -8,6 +8,7 @@ import { ErrorBox, Loading, Section } from '../reporting/ui';
 import BwaAccountDrill, { type DrillSpec } from './BwaAccountDrill';
 import BwaResultBridge, { type Bridge, type BridgeItem } from './BwaResultBridge';
 import { parseDatev, type DatevFile } from './datevParse';
+import { useT } from '@/contexts/LanguageContext';
 
 // Controlling · BWA (Power BI): las páginas del Power BI "BWA" (Annual, Monthly, Annual - Detail, Exchg_Cur) leídas de
 // BC en vivo. Filas = líneas BWA, desplegables por nivel (cuenta de mapeo); columnas según la página.
@@ -23,7 +24,6 @@ const INTERCO = 'CRAZE Intercompany';
 const CONSOL = 'CRAZE Consolidated';
 const SALES = 'SALES REVENUES';
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const MONTHS_ES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 const PAGES = [
   { id: 'annual', label: 'Annual' },
   { id: 'datev', label: 'Annual vs DATEV' },
@@ -59,7 +59,11 @@ const td = 'py-1.5 px-2 whitespace-nowrap tabular-nums text-right';
 const ym = (y: number, m: number) => `${y}-${String(m).padStart(2, '0')}`;
 
 export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
+  const { t, tx, locale } = useT();
   const { num, date } = fmt;
+  // Nombre del mes dentro de una frase ("marzo" / "March") y con mayúscula inicial
+  const monthIn = (m: number) => fmt.monthOnly(`2000-${String(m).padStart(2, '0')}`);
+  const monthCap = (m: number) => { const s = monthIn(m); return s.charAt(0).toUpperCase() + s.slice(1); };
   const now = new Date();
   const [page, setPage] = useState<Page>('annual');
   const [year, setYear] = useState(now.getFullYear());
@@ -104,7 +108,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
     if (!f) return;
     try {
       const file = await parseDatev(f);
-      if (file.year !== year - 1) throw new Error(`El Excel es de ${file.year}; para comparar con ${year} hace falta el de ${year - 1}.`);
+      if (file.year !== year - 1) throw new Error(t('The Excel is for {fileYear}; to compare with {year} you need the one for {prevYear}.', { fileYear: file.year, year, prevYear: year - 1 }));
       const r = await fetch('/api/controlling/bwa-pbi/datev', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company: datevCompany, file }) });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
       setDatevN(n => n + 1);
@@ -137,7 +141,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
       const sibling = d.accounts.find(x => x.account.substring(0, 4) === bc.substring(0, 4));
       const bwa = sibling?.bwa || lineFor(a.section);
       if (sibling) stats.prefix++; else stats.section++;
-      if (bwa) extra.push({ account: bc, bwa, level: 'zz', description: `${a.name || 'Cuenta DATEV'} · DATEV (${sibling ? `como ${sibling.account}` : `apartado ${a.section}`})` });
+      if (bwa) extra.push({ account: bc, bwa, level: 'zz', description: `${a.name || t('DATEV account')} · DATEV (${sibling ? t('as {account}', { account: sibling.account }) : t('section {section}', { section: a.section })})` });
     }
     return { values, extra, stats };
   }, [d, datev.file]);
@@ -226,18 +230,18 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
     if (page === 'monthly') {
       return [
         ...MONTHS.map((m, i) => ({ key: m, label: m, kind: 'money' as const, value: (accs: Account[]) => sum(company, accs, [ym(year, i + 1)]), drill: { scope: company, months: [ym(year, i + 1)], label: `${m} ${year}` } })),
-        { key: 'total', label: 'Total', sub: `${year}`, kind: 'money', value: accs => sum(company, accs, MONTHS.map((_, i) => ym(year, i + 1))), drill: { scope: company, months: MONTHS.map((_, i) => ym(year, i + 1)), label: `Año ${year}` } },
+        { key: 'total', label: 'Total', sub: `${year}`, kind: 'money', value: accs => sum(company, accs, MONTHS.map((_, i) => ym(year, i + 1))), drill: { scope: company, months: MONTHS.map((_, i) => ym(year, i + 1)), label: t('Year {year}', { year }) } },
       ];
     }
     // Annual - Detail: una columna por sociedad + Consolidated y su % sobre Sales Revenues
     const cur = ytd(year);
     return [
-      ...d.companies.map(c => ({ key: c, label: c, kind: 'money' as const, value: (accs: Account[]) => sum(c, accs, cur), drill: { scope: c, months: cur, label: `${year} hasta ${MONTHS_ES[toMonth - 1].toLowerCase()}` } })),
-      { key: 'consol', label: 'Consolidated', kind: 'money', value: accs => sum(CONSOL, accs, cur), drill: { scope: CONSOL, months: cur, label: `${year} hasta ${MONTHS_ES[toMonth - 1].toLowerCase()}` } },
+      ...d.companies.map(c => ({ key: c, label: c, kind: 'money' as const, value: (accs: Account[]) => sum(c, accs, cur), drill: { scope: c, months: cur, label: t('{year} up to {month}', { year, month: monthIn(toMonth) }) } })),
+      { key: 'consol', label: 'Consolidated', kind: 'money', value: accs => sum(CONSOL, accs, cur), drill: { scope: CONSOL, months: cur, label: t('{year} up to {month}', { year, month: monthIn(toMonth) }) } },
       { key: 'pconsol', label: '%', sub: 's/ Sales Rev.', kind: 'pct', value: (accs, l) => (l?.description === SALES ? null : div(sum(CONSOL, accs, cur), salesOf(CONSOL, cur))) },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d, page, year, toMonth, company, index, datevMap]);
+  }, [d, page, year, toMonth, company, index, datevMap, t]);
 
   // Desglose abierto por cuenta (clic en el nombre = columna principal de la página; clic en un importe = ese importe)
   const [drills, setDrills] = useState<Record<string, DrillSpec>>({});
@@ -307,7 +311,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
     }
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), PAGES.find(p => p.id === page)!.label.substring(0, 31));
-    XLSX.writeFile(wb, `BWA_${page}_${page === 'detail' ? 'empresas' : company}_${year}${page === 'monthly' ? '' : `_hasta_${toMonth}`}.xlsx`.replace(/\s+/g, '_'));
+    XLSX.writeFile(wb, `BWA_${page}_${page === 'detail' ? t('companies') : company}_${year}${page === 'monthly' ? '' : `_${t('to')}_${toMonth}`}.xlsx`.replace(/\s+/g, '_'));
   };
 
   // Annual y Annual - Detail: principales desviaciones frente al año anterior (líneas BWA con más diferencia, sus cuentas
@@ -357,8 +361,8 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
     const accLabel = (a: Account) => `${a.account} ${a.description}`;
     // Volumen: la variación de ventas con el margen bruto % del año anterior
     if (gmPctPrev != null) items.push({
-      key: 'volume', label: 'Volumen de ventas', impact: (sCur - sPrev) * gmPctPrev,
-      detail: `Ventas ${sCur - sPrev >= 0 ? '+' : ''}${num(sCur - sPrev, 0)} € (${sPrev ? `${sCur - sPrev >= 0 ? '+' : ''}${num(((sCur - sPrev) / Math.abs(sPrev)) * 100, 1)} %` : 'nuevo'}) con el margen bruto de ${num(gmPctPrev * 100, 1)} % del año anterior`,
+      key: 'volume', label: t('Sales volume'), impact: (sCur - sPrev) * gmPctPrev,
+      detail: t('Sales {change} € ({pct}) at the previous year\'s gross margin of {gm} %', { change: `${sCur - sPrev >= 0 ? '+' : ''}${num(sCur - sPrev, 0)}`, pct: sPrev ? `${sCur - sPrev >= 0 ? '+' : ''}${num(((sCur - sPrev) / Math.abs(sPrev)) * 100, 1)} %` : t('new'), gm: num(gmPctPrev * 100, 1) }),
     });
     // Margen: cada cuenta de las líneas del margen bruto (salvo ventas) por lo que pesa ahora sobre la venta
     const gmCodes = (gmLine.formula || []).filter(c => c !== salesLine.code);
@@ -366,9 +370,9 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
     const marginAccs = gmCodes.flatMap(c => accountsOf.get(c) || []).map(a => ({ a, impact: vCur([a]) - vPrev([a]) * ratio }))
       .filter(x => Math.abs(x.impact) >= 1).sort((x, y) => Math.abs(y.impact) - Math.abs(x.impact));
     items.push({
-      key: 'margin', label: gmPctCur != null && gmPctPrev != null && gmPctCur < gmPctPrev ? 'Menos margen bruto sobre la venta' : 'Margen bruto sobre la venta',
+      key: 'margin', label: gmPctCur != null && gmPctPrev != null && gmPctCur < gmPctPrev ? t('Lower gross margin on sales') : t('Gross margin on sales'),
       impact: marginAccs.reduce((t, x) => t + x.impact, 0),
-      detail: gmPctCur != null && gmPctPrev != null ? `Margen bruto ${num(gmPctPrev * 100, 1)} % → ${num(gmPctCur * 100, 1)} % (${gmPctCur - gmPctPrev >= 0 ? '+' : ''}${num((gmPctCur - gmPctPrev) * 100, 1)} p.p.) sobre ${num(sCur, 0)} € de ventas` : undefined,
+      detail: gmPctCur != null && gmPctPrev != null ? t('Gross margin {prev} % → {cur} % ({pp} p.p.) on {sales} € of sales', { prev: num(gmPctPrev * 100, 1), cur: num(gmPctCur * 100, 1), pp: `${gmPctCur - gmPctPrev >= 0 ? '+' : ''}${num((gmPctCur - gmPctPrev) * 100, 1)}`, sales: num(sCur, 0) }) : undefined,
       accounts: marginAccs.slice(0, 5).map(x => ({ label: accLabel(x.a), impact: x.impact })),
     });
     // Resto de partidas del resultado
@@ -380,19 +384,19 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
       const accDiffs = accs.map(a => ({ a, impact: vCur([a]) - vPrev([a]) })).filter(x => Math.abs(x.impact) >= 1).sort((x, y) => Math.abs(y.impact) - Math.abs(x.impact));
       items.push({
         key: code, label: lineName(l), impact: c - p,
-        detail: `${num(p, 0)} → ${num(c, 0)} €${sCur && sPrev ? ` · ${num((-p / sPrev) * 100, 1)} % → ${num((-c / sCur) * 100, 1)} % de las ventas` : ''}`,
+        detail: `${num(p, 0)} → ${num(c, 0)} €${sCur && sPrev ? ` · ${t('{prev} % → {cur} % of sales', { prev: num((-p / sPrev) * 100, 1), cur: num((-c / sCur) * 100, 1) })}` : ''}`,
         accounts: accDiffs.slice(0, 3).map(x => ({ label: accLabel(x.a), impact: x.impact })),
       });
     }
-    const monthsTxt = page === 'monthly' ? `${MONTHS_ES[bridgeMonth - 1].toLowerCase()} ${year} vs ${MONTHS_ES[bridgeMonth - 1].toLowerCase()} ${year - 1}`
-      : `enero–${MONTHS_ES[toMonth - 1].toLowerCase()} ${year} vs ${page === 'datev' ? 'DATEV ' : ''}${year - 1}`;
+    const monthsTxt = page === 'monthly' ? `${monthIn(bridgeMonth)} ${year} vs ${monthIn(bridgeMonth)} ${year - 1}`
+      : `${monthIn(1)}–${monthIn(toMonth)} ${year} vs ${page === 'datev' ? 'DATEV ' : ''}${year - 1}`;
     return {
       title: `${monthsTxt} · ${scope}`, cur: vCur(lineAccounts(niLine)), prev: vPrev(lineAccounts(niLine)), items,
       salesCur: sCur, salesPrev: sPrev, gmPctCur, gmPctPrev,
       margin: scope === 'CRAZE' || scope === CONSOL ? { year, fromM: page === 'monthly' ? bridgeMonth : 1, toM: page === 'monthly' ? bridgeMonth : toMonth } : undefined,
     };
   })();
-  const pctChange = (cur: number, prev: number) => (prev ? `${cur - prev >= 0 ? '+' : ''}${num(((cur - prev) / Math.abs(prev)) * 100, 1)} %` : 'nuevo');
+  const pctChange = (cur: number, prev: number) => (prev ? `${cur - prev >= 0 ? '+' : ''}${num(((cur - prev) / Math.abs(prev)) * 100, 1)} %` : t('new'));
   const tone = (diff: number) => (diff > 0 ? 'text-emerald-700' : diff < 0 ? 'text-[#C0392B]' : 'text-gray-500');
 
   const select = 'block mt-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-900 bg-white normal-case tracking-normal';
@@ -405,7 +409,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
   const allOpen = expandable.length > 0 && expandable.every(l => open[l.code]);
 
   return (
-    <Section title="BWA (Power BI)" source="glEntriesUnion + mappingAccounts + bwas (API custom de BC) · GBP/CHF a EUR con Currencies_Excel · igual que el Power BI BWA">
+    <Section title="BWA (Power BI)" source={t('glEntriesUnion + mappingAccounts + bwas (BC custom API) · GBP/CHF to EUR with Currencies_Excel · same as the BWA Power BI')}>
       <div className="flex flex-wrap items-end gap-4">
         <div className="flex bg-gray-100 rounded-lg p-1">
           {PAGES.map(p => (
@@ -416,22 +420,22 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
           ))}
         </div>
         <label className={label}>
-          Año
+          {t('Year')}
           <select value={year} onChange={e => setYear(Number(e.target.value))} className={select}>
             {Array.from({ length: 5 }, (_, i) => now.getFullYear() - i).map(y => <option key={y} value={y}>{y}</option>)}
           </select>
         </label>
         {(page === 'annual' || page === 'datev' || page === 'detail') && (
           <label className={label}>
-            Hasta mes
+            {t('Up to month')}
             <select value={toMonth} onChange={e => setToMonth(Number(e.target.value))} className={select}>
-              {MONTHS_ES.map((m, i) => <option key={m} value={i + 1}>{String(i + 1).padStart(2, '0')}/{String(year).slice(2)}</option>)}
+              {MONTHS.map((m, i) => <option key={m} value={i + 1}>{String(i + 1).padStart(2, '0')}/{String(year).slice(2)}</option>)}
             </select>
           </label>
         )}
         {(page === 'annual' || page === 'datev' || page === 'monthly') && (
           <label className={label}>
-            CRAZE Company
+            {t('CRAZE Company')}
             <select value={company} onChange={e => setCompany(e.target.value)} className={select}>
               {columnsCompanies.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
@@ -439,7 +443,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
         )}
         {page === 'monthly' && (
           <label className={label}>
-            % sobre
+            {t('% of')}
             <select value={pctBase} onChange={e => setPctBase(e.target.value)} className={select}>
               {PCT_BASES.map(b => <option key={b.code} value={b.code}>{b.label}</option>)}
             </select>
@@ -449,18 +453,18 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
           {page !== 'fx' && (
             <button onClick={exportExcel} disabled={state.loading || !d}
               className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
-              <FileDown size={16} /> Exportar Excel
+              <FileDown size={16} /> {t('Export Excel')}
             </button>
           )}
-          <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={state.loading} title="Volver a leer de BC"
+          <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={state.loading} title={t('Reload from BC')}
             className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">
             <RefreshCw size={16} className={state.loading ? 'animate-spin' : ''} />
           </button>
         </div>
       </div>
 
-      {state.error ? <ErrorBox message={state.error} />
-        : state.loading || !d ? <Loading text={`Leyendo los movimientos contables de ${year - 1} y ${year} de Business Central…`} />
+      {state.error ? <ErrorBox message={tx(state.error)} />
+        : state.loading || !d ? <Loading text={t('Reading the G/L entries of {prev} and {year} from Business Central…', { prev: year - 1, year })} />
         : page === 'fx' ? (
           <div className="rpt-card bg-white rounded-xl border border-gray-200 overflow-x-auto max-w-xl">
             <p className="px-4 pt-4 font-bold text-gray-900">Currency Exchange Rates</p>
@@ -477,27 +481,27 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
                 ))}
               </tbody>
             </table>
-            <p className="px-4 py-3 text-xs text-gray-500">Importes de UK (GBP) y Group AG (CHF) × este tipo = EUR, como en el Power BI.</p>
+            <p className="px-4 py-3 text-xs text-gray-500">{t('Amounts of UK (GBP) and Group AG (CHF) × this rate = EUR, as in the Power BI.')}</p>
           </div>
         ) : (
           <>
             {page === 'datev' && (
               <div className="rpt-card bg-white rounded-xl border border-gray-200 p-4 flex flex-wrap items-center gap-4 text-sm">
                 <div className="flex-1 min-w-[300px]">
-                  <p className="font-bold text-gray-900">Year -1 desde la Jahresübersicht de DATEV · {datevCompany} {year - 1}</p>
-                  {datev.loading ? <p className="text-gray-500">Cargando…</p>
+                  <p className="font-bold text-gray-900">{t('Year -1 from the DATEV Jahresübersicht · {company} {year}', { company: datevCompany, year: year - 1 })}</p>
+                  {datev.loading ? <p className="text-gray-500">{t('Loading…')}</p>
                     : datev.file ? (
                       <p className="text-gray-600">
-                        {datev.file.name} · enero–{MONTHS_ES[datev.file.months - 1].toLowerCase()} {datev.file.year}
-                        {datev.updatedAt && ` · subido ${new Date(datev.updatedAt).toLocaleDateString('es-ES')}`}
-                        {' · '}{datevMap.stats.exact} cuentas con el mapeo de BC, {datevMap.stats.manual} agrupadas en otra cuenta de BC, {datevMap.stats.prefix} aproximadas por cuenta parecida y {datevMap.stats.section} por apartado DATEV
+                        {datev.file.name} · {monthIn(1)}–{monthIn(datev.file.months)} {datev.file.year}
+                        {datev.updatedAt && ` · ${t('uploaded {date}', { date: new Date(datev.updatedAt).toLocaleDateString(locale) })}`}
+                        {' · '}{t('{exact} accounts with the BC mapping, {manual} grouped into another BC account, {prefix} approximated by a similar account and {section} by DATEV section', datevMap.stats)}
                       </p>
-                    ) : <p className="text-amber-800">Sube la Jahresübersicht de DATEV de {year - 1} para comparar.</p>}
-                  {datev.file && toMonth > datev.file.months && <p className="text-amber-800">El Excel llega hasta {MONTHS_ES[datev.file.months - 1].toLowerCase()}: Year -1 DATEV solo suma esos meses; elige "Hasta mes" {MONTHS_ES[datev.file.months - 1]} para comparar el mismo periodo.</p>}
-                  {datev.error && <p className="text-red-700">{datev.error}</p>}
+                    ) : <p className="text-amber-800">{t('Upload the DATEV Jahresübersicht of {year} to compare.', { year: year - 1 })}</p>}
+                  {datev.file && toMonth > datev.file.months && <p className="text-amber-800">{t('The Excel goes up to {month}: Year -1 DATEV only adds those months; choose "Up to month" {monthCap} to compare the same period.', { month: monthIn(datev.file.months), monthCap: monthCap(datev.file.months) })}</p>}
+                  {datev.error && <p className="text-red-700">{tx(datev.error)}</p>}
                 </div>
                 <label className="cursor-pointer inline-flex items-center gap-2 bg-gray-900 text-white font-semibold px-3 py-2 rounded-lg hover:bg-black">
-                  {datev.file ? 'Sustituir Excel DATEV' : 'Cargar Excel DATEV'}
+                  {datev.file ? t('Replace DATEV Excel') : t('Load DATEV Excel')}
                   <input type="file" accept=".xlsx,.xls" className="hidden" onChange={e => { uploadDatev(e.target.files?.[0]); e.target.value = ''; }} />
                 </label>
               </div>
@@ -508,7 +512,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
                   <tr ref={headRef} className="bg-gray-50 text-gray-500">
                     <th className={`${th} text-left bg-gray-50 border-b border-gray-200`}>
                       <button onClick={() => setOpen(allOpen ? {} : Object.fromEntries(expandable.map(l => [l.code, true])))}
-                        className="flex items-center gap-1 uppercase hover:text-gray-900" title="Desplegar o plegar todos los niveles">
+                        className="flex items-center gap-1 uppercase hover:text-gray-900" title={t('Expand or collapse all levels')}>
                         {allOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />} BWA Group → No.
                       </button>
                     </th>
@@ -552,13 +556,13 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
                         {open[l.code] && subs.map(a => (
                           <Fragment key={a.account}>
                             <tr className={`border-b border-gray-100 text-[12px] text-gray-600 ${drills[a.account] ? 'bg-[#FDF2F7]' : ''}`}>
-                              <td className="py-1 px-2 pl-9 whitespace-nowrap cursor-pointer hover:text-[#C8186C]" title={`BWA level ${a.level} · clic para ver el desglose`}
+                              <td className="py-1 px-2 pl-9 whitespace-nowrap cursor-pointer hover:text-[#C8186C]" title={t('BWA level {level} · click to see the breakdown', { level: a.level })}
                                 onClick={() => openDrill(a, columns.find(c => c.key === mainDrillCol))}>
                                 <span className="inline-block w-16 tabular-nums">{a.account}</span>{a.description}
                               </td>
                               {columns.map(c => (
                                 <td key={c.key} onClick={c.drill ? () => openDrill(a, c) : undefined}
-                                  title={c.drill ? `Desglose de ${c.drill.label}` : undefined}
+                                  title={c.drill ? t('Breakdown of {label}', { label: c.drill.label }) : undefined}
                                   className={`${td} py-1 ${c.kind === 'pct' ? 'text-[#2B408E]' : ''} ${c.drill ? 'cursor-pointer hover:underline hover:text-[#C8186C]' : ''}`}>{cell(c, [a], null)}</td>
                               ))}
                             </tr>
@@ -576,18 +580,18 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
               </table>
             </div>
             <p className="text-xs text-gray-500">
-              {page === 'datev' && `Year -1 = Jahresübersicht de DATEV (cuentas DATEV 602000 = BC 6020 00, con el mapeo BWA de BC; las cuentas sin mapeo se asignan como la cuenta de BC con las mismas 4 cifras o por su apartado DATEV y aparecen marcadas "DATEV"). Gastos con el signo invertido, como el BWA. "Year -1 BC" y "DATEV − BC" muestran lo que registra BC para el mismo periodo. `}
-              {page === 'annual' && `Acumulado de enero a ${MONTHS_ES[toMonth - 1].toLowerCase()} de ${year} frente al mismo periodo de ${year - 1}, ${company}. % = sobre Sales Revenues; el último % es la diferencia en puntos (en rojo si baja).`}
-              {page === 'monthly' && `Importe de cada mes de ${year}, ${company}. Bajo Gross Margin, EBITDA, EBIT y Net Income, su % sobre ${PCT_BASES.find(b => b.code === pctBase)!.label} de cada mes.`}
-              {page === 'detail' && `Acumulado de enero a ${MONTHS_ES[toMonth - 1].toLowerCase()} de ${year} por sociedad (cada una con sus movimientos de eliminación) y consolidado (sin eliminaciones).`}
-              {' '}Importes en EUR con el signo invertido (ingresos en positivo). Haz clic en una línea para ver sus niveles.
+              {page === 'datev' && `${t('Year -1 = DATEV Jahresübersicht (DATEV accounts 602000 = BC 6020 00, with the BC BWA mapping; unmapped accounts are assigned like the BC account with the same 4 digits or by their DATEV section and are marked "DATEV"). Expenses with the sign inverted, as in the BWA. "Year -1 BC" and "DATEV − BC" show what BC posts for the same period.')} `}
+              {page === 'annual' && t('Cumulative from {from} to {to} {year} vs the same period of {prevYear}, {company}. % = of Sales Revenues; the last % is the difference in points (red if it drops).', { from: monthIn(1), to: monthIn(toMonth), year, prevYear: year - 1, company })}
+              {page === 'monthly' && t('Amount of each month of {year}, {company}. Below Gross Margin, EBITDA, EBIT and Net Income, their % of {base} for each month.', { year, company, base: PCT_BASES.find(b => b.code === pctBase)!.label })}
+              {page === 'detail' && t('Cumulative from {from} to {to} {year} by company (each with its elimination entries) and consolidated (without eliminations).', { from: monthIn(1), to: monthIn(toMonth), year })}
+              {' '}{t('Amounts in EUR with the sign inverted (income positive). Click a line to see its levels.')}
             </p>
             {deviations && deviations.length > 0 && (
               <div className="rpt-card bg-white rounded-xl border border-gray-200 p-5">
-                <p className="text-xs font-bold uppercase tracking-widest text-[#C8186C] mb-1">Principales desviaciones · {year} vs {year - 1}</p>
+                <p className="text-xs font-bold uppercase tracking-widest text-[#C8186C] mb-1">{t('Main deviations · {year} vs {prevYear}', { year, prevYear: year - 1 })}</p>
                 <p className="text-xs text-gray-500 mb-4">
-                  Enero a {MONTHS_ES[toMonth - 1].toLowerCase()}, {devScope}. Las 6 partidas con más diferencia en euros, las cuentas que más la explican{page === 'detail' ? ' y la variación de cada sociedad (cada una con sus eliminaciones, como sus columnas; consolidado = suma de sociedades − Intercompany)' : ''}.
-                  En verde mejora el resultado (más ingreso o menos gasto), en rojo lo empeora. Haz clic en una cuenta para ver su desglose en la tabla.
+                  {t('{from} to {to}, {scope}.', { from: monthCap(1), to: monthIn(toMonth), scope: devScope })} {page === 'detail' ? t('The 6 items with the largest difference in euros, the accounts that explain it most and the change of each company (each with its eliminations, like its columns; consolidated = sum of companies − Intercompany).') : t('The 6 items with the largest difference in euros and the accounts that explain it most.')}
+                  {' '}{t('Green improves the result (more income or less expense), red worsens it. Click an account to see its breakdown in the table.')}
                 </p>
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                   {deviations.map(x => (
@@ -605,7 +609,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
                           {x.accounts.map(c => (
                             <tr key={c.a.account} className="border-t border-gray-200/70 cursor-pointer hover:bg-white"
                               onClick={() => { setOpen(o => ({ ...o, [x.l.code]: true })); openDrill(c.a, columns.find(col => col.key === devDrillCol)); }}
-                              title="Ver el desglose de esta cuenta en la tabla">
+                              title={t('See the breakdown of this account in the table')}>
                               <td className="py-1 pr-2 text-gray-700"><span className="tabular-nums text-gray-500 mr-1.5">{c.a.account}</span>{c.a.description}</td>
                               <td className={`py-1 text-right tabular-nums whitespace-nowrap font-semibold ${tone(c.diff)}`}>{c.diff > 0 ? '+' : ''}{num(c.diff, 0)}</td>
                               <td className="py-1 pl-2 text-right tabular-nums whitespace-nowrap text-gray-500">{pctChange(c.cur, c.prev)}</td>
@@ -615,7 +619,7 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
                       </table>
                       {x.byCompany.length > 0 && (
                         <div className="mt-2 pt-2 border-t border-gray-200/70">
-                          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">Por sociedad</p>
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">{t('By company')}</p>
                           <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12px]">
                             {x.byCompany.map(b => (
                               <span key={b.c} className="whitespace-nowrap">
@@ -635,9 +639,9 @@ export default function BwaPbiView({ fmt }: { fmt: Fmt }) {
               <BwaResultBridge key={`${page}-${year}-${company}`} b={bridge} fmt={fmt}
                 extra={page === 'monthly' ? (
                   <label className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 flex items-center gap-2">
-                    Mes a comparar
+                    {t('Month to compare')}
                     <select value={bridgeMonth} onChange={e => setBridgeMonth(Number(e.target.value))} className="border border-gray-300 rounded-lg px-2 py-1 text-sm font-semibold bg-white normal-case tracking-normal text-gray-900">
-                      {MONTHS_ES.map((m, i) => <option key={m} value={i + 1}>{fmt.monthCode(ym(year, i + 1))}</option>)}
+                      {MONTHS.map((m, i) => <option key={m} value={i + 1}>{fmt.monthCode(ym(year, i + 1))}</option>)}
                     </select>
                   </label>
                 ) : undefined} />

@@ -14,7 +14,7 @@ export async function GET(req: Request) {
     const scope = searchParams.get('scope') || '';
     const from = searchParams.get('from');
     const to = searchParams.get('to');
-    if (!account || !scope || !isDate(from) || !isDate(to) || from > to) return NextResponse.json({ error: 'Parámetros no válidos' }, { status: 400 });
+    if (!account || !scope || !isDate(from) || !isDate(to) || from > to) return NextResponse.json({ error: 'Invalid parameters' }, { status: 400 });
     return NextResponse.json(await bwaAccountDetail(account, scope, from, to, searchParams.get('force') === '1'));
   } catch (error: any) {
     console.error('Error in BWA detail:', error);

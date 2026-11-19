@@ -11,7 +11,7 @@ export const maxDuration = 60;
 export async function POST(req: Request) {
   try {
     const company = (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
-    if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
+    if (company === 'ALL') return NextResponse.json({ error: 'Select a specific company.' }, { status: 400 });
     const { orders, positions } = await req.json() as { orders: string[]; positions: CustomsPosition[] };
     const ctx = await getBcContext(company);
     return NextResponse.json(await checkTariffs(ctx, orders || [], positions || []));

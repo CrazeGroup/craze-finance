@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Eye, EyeOff, FileText, Landmark, RefreshCw, Upload, X } from 'lucide-react';
 import DocPdfLink from '@/components/DocPdfLink';
 import { companyLabel, useCompany } from '@/contexts/CompanyContext';
+import { useT } from '@/contexts/LanguageContext';
 import TariffCheck, { Position } from './TariffCheck';
 import HistoryView from './HistoryView';
 
@@ -23,12 +24,13 @@ const toNum = (s: string) => parseFloat(s.replace(/\./g, '').replace(',', '.')) 
 const fmt = (v: number) => nf.format(v);
 const input = 'border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white';
 
-const TABS = [{ id: 'importer', label: 'Importador' }, { id: 'history', label: 'Histórico' }] as const;
+const TABS = [{ id: 'importer', label: 'Importer' }, { id: 'history', label: 'History' }] as const;
 
 // Aduanas: Importador (del Einfuhrabgabenbescheid en PDF a las dos facturas de compra de BC, Zoll y EUSt) e Histórico
 // (los códigos arancelarios declarados en las facturas Zoll del año frente al Tariff No. de los artículos)
 export default function AduanasPage() {
   const { selectedCompany } = useCompany();
+  const { t, tx, locale } = useT();
   const [tab, setTab] = useState<typeof TABS[number]['id']>('importer');
   const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
@@ -60,7 +62,7 @@ export default function AduanasPage() {
       list.forEach(f => form.append('files', f));
       const res = await fetch('/api/customs/parse', { method: 'POST', body: form });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Error al leer los PDFs');
+      if (!res.ok) throw new Error(json.error || t('Error reading the PDFs'));
       setDocs(json.docs); setConfig(json.config); setStatus({});
       setSelected(new Set((json.docs as Doc[]).filter(d => !d.error).map(d => d.file)));
       setForms(Object.fromEntries((json.docs as Doc[]).filter(d => !d.error).map(d => [d.file, {
@@ -79,10 +81,10 @@ export default function AduanasPage() {
 
   const create = async (d: Doc, confirmed = false) => {
     const f = forms[d.file];
-    if (!f.atc || !f.date || !f.description.trim()) { setStatus(s => ({ ...s, [d.file]: { error: 'Rellena el nº AT/C, la fecha y la descripción.' } })); return; }
+    if (!f.atc || !f.date || !f.description.trim()) { setStatus(s => ({ ...s, [d.file]: { error: t('Fill in the AT/C no., the date and the description.') } })); return; }
     // Si ya existen en BC, se pueden crear de nuevo tras confirmarlo (no las creadas ya en esta sesión)
     const force = !pending(d);
-    if (force && !confirmed && !confirm(`Las facturas de ${f.atc} ya existen en BC (${d.existing.map(e => e.no).join(', ')}). ¿Crearlas de nuevo?`)) return;
+    if (force && !confirmed && !confirm(t('The invoices for {atc} already exist in BC ({existing}). Create them again?', { atc: f.atc, existing: d.existing.map(e => e.no).join(', ') }))) return;
     setStatus(s => ({ ...s, [d.file]: { ...s[d.file], saving: true, error: null } }));
     try {
       const made = (k: 'zoll' | 'eust') => !!status[d.file]?.created?.some(c => c.kind === k);
@@ -107,7 +109,7 @@ export default function AduanasPage() {
   const toSend = docs.filter(sendable);
   const createSelected = async () => {
     const again = toSend.filter(d => !pending(d));
-    if (again.length && !confirm(`${again.length} de las ${toSend.length} declaraciones ya tienen sus facturas en BC (${again.map(d => forms[d.file]?.atc).join(', ')}). ¿Crearlas de nuevo también?`)) return;
+    if (again.length && !confirm(t('{n} of the {total} declarations already have their invoices in BC ({list}). Create them again too?', { n: again.length, total: toSend.length, list: again.map(d => forms[d.file]?.atc).join(', ') }))) return;
     for (const d of toSend) await create(d, true);
   };
   const toggle = (file: string) => setSelected(prev => { const n = new Set(prev); if (n.has(file)) n.delete(file); else n.add(file); return n; });
@@ -128,103 +130,103 @@ export default function AduanasPage() {
       <main className="w-full px-4 md:px-8 pt-6 space-y-4">
         <header className="flex flex-wrap items-end justify-between gap-4">
           <div className="flex-1 min-w-[280px]">
-            <h1 className="text-3xl font-black text-black tracking-tight flex items-center gap-2"><Landmark /> Aduanas</h1>
+            <h1 className="text-3xl font-black text-black tracking-tight flex items-center gap-2"><Landmark /> {t('Customs')}</h1>
             <p className="text-gray-500 mt-1 text-sm">
               {tab === 'history'
-                ? `Facturas Zoll (${config?.zollVendor || '7300184'}) de ${companyLabel(selectedCompany)} del año: el PDF adjunto de cada AT/C se lee una sola vez y sus códigos arancelarios se comparan con el Tariff No. de los artículos importados. Los resultados quedan guardados; solo se procesan los AT/C nuevos.`
-                : <>Sube los Einfuhrabgabenbescheide (PDF de ATLAS): cada declaración crea en BC ({companyLabel(selectedCompany)}) dos Purchase Invoices, Zoll y EUSt, sin registrar: revísalas y regístralas (Post) en BC. También compara el código arancelario de cada posición con el Tariff No. de los artículos de la factura de China.</>}
+                ? t('Zoll invoices ({vendor}) of {company} for the year: the attached PDF of each AT/C is read only once and its tariff codes are compared with the Tariff No. of the imported items. The results are stored; only new AT/Cs are processed.', { vendor: config?.zollVendor || '7300184', company: companyLabel(selectedCompany) })
+                : t('Upload the Einfuhrabgabenbescheide (ATLAS PDF): each declaration creates two unposted Purchase Invoices in BC ({company}), Zoll and EUSt: review them and post them in BC. It also compares the tariff code of each position with the Tariff No. of the items on the China invoice.', { company: companyLabel(selectedCompany) })}
             </p>
           </div>
           <div className="flex bg-gray-200/70 rounded-lg p-1">
-            {TABS.map(t => (
-              <button key={t.id} onClick={() => setTab(t.id)}
-                className={`px-4 py-1.5 rounded-md text-sm font-semibold ${tab === t.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
-                {t.label}
+            {TABS.map(tb => (
+              <button key={tb.id} onClick={() => setTab(tb.id)}
+                className={`px-4 py-1.5 rounded-md text-sm font-semibold ${tab === tb.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
+                {t(tb.label)}
               </button>
             ))}
           </div>
         </header>
 
         {tab === 'history' && (selectedCompany === 'ALL'
-          ? <div className="bg-white border rounded-lg p-4 text-sm text-gray-600">Selecciona una empresa en el menú.</div>
+          ? <div className="bg-white border rounded-lg p-4 text-sm text-gray-600">{t('Select a company in the menu.')}</div>
           : <HistoryView key={selectedCompany} />)}
         {tab === 'importer' && <>
 
         {selectedCompany === 'ALL' ? (
-          <div className="bg-white border rounded-lg p-4 text-sm text-gray-600">Selecciona una empresa en el menú.</div>
+          <div className="bg-white border rounded-lg p-4 text-sm text-gray-600">{t('Select a company in the menu.')}</div>
         ) : (
           <div className="bg-white border border-gray-200 rounded-xl p-4 flex flex-wrap items-center gap-3"
             onDragOver={e => e.preventDefault()}
             onDrop={e => { e.preventDefault(); const l = Array.from(e.dataTransfer.files).filter(f => /\.pdf$/i.test(f.name)); setFiles(l); read(l); }}>
             <label className="cursor-pointer inline-flex items-center gap-2 bg-black text-white text-sm font-semibold px-4 py-2.5 rounded-lg hover:bg-gray-800">
-              <Upload size={16} /> Subir PDFs de aduanas
+              <Upload size={16} /> {t('Upload customs PDFs')}
               <input type="file" accept=".pdf" multiple className="hidden" onChange={e => { const l = Array.from(e.target.files || []); setFiles(l); read(l); e.target.value = ''; }} />
             </label>
-            <span className="text-sm text-gray-500">{files.length ? `${files.length} PDF: ${files.map(f => f.name).join(', ')}` : 'o arrástralos aquí (varios a la vez)'}</span>
-            {loading && <span className="text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Leyendo y comprobando en BC…</span>}
+            <span className="text-sm text-gray-500">{files.length ? `${files.length} PDF: ${files.map(f => f.name).join(', ')}` : t('or drag them here (several at once)')}</span>
+            {loading && <span className="text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> {t('Reading and checking in BC…')}</span>}
             {valid.length > 1 && (
               <div className="ml-auto flex items-center gap-3">
                 <label className="flex items-center gap-2 text-sm text-gray-700">
                   <input type="checkbox" checked={allSelected} onChange={() => setSelected(allSelected ? new Set() : new Set(valid.map(d => d.file)))} />
-                  Marcar todas
+                  {t('Select all')}
                 </label>
                 <button onClick={createSelected} disabled={!toSend.length || Object.values(status).some(s => s.saving)}
                   className="inline-flex items-center gap-2 bg-indigo-600 text-white text-sm font-semibold px-4 py-2.5 rounded-lg hover:bg-indigo-700 disabled:opacity-40">
-                  Enviar seleccionadas a BC ({toSend.length})
+                  {t('Send selected to BC ({n})', { n: toSend.length })}
                 </button>
               </div>
             )}
           </div>
         )}
 
-        {error && <div className="rounded-lg border px-4 py-3 text-sm bg-red-50 border-red-200 text-red-800">{error}</div>}
+        {error && <div className="rounded-lg border px-4 py-3 text-sm bg-red-50 border-red-200 text-red-800">{tx(error)}</div>}
 
         {docs.map(d => {
-          if (d.error) return <div key={d.file} className="rounded-lg border px-4 py-3 text-sm bg-red-50 border-red-200 text-red-800"><b>{d.file}</b>: {d.error}</div>;
+          if (d.error) return <div key={d.file} className="rounded-lg border px-4 py-3 text-sm bg-red-50 border-red-200 text-red-800"><b>{d.file}</b>: {tx(d.error)}</div>;
           const f = forms[d.file];
           const st = status[d.file] || {};
           if (!f || !config) return null;
           const rows = [
-            { kind: 'zoll' as const, label: 'Zoll', vendor: `${config.zollVendor} ZOLL Aufschubkonto`, item: `${config.zollItem} · Custom Duties`, lines: `1 línea · ${config.zollVat}`, amount: 'zoll' as const, due: 'zollDue' as const },
+            { kind: 'zoll' as const, label: 'Zoll', vendor: `${config.zollVendor} ZOLL Aufschubkonto`, item: `${config.zollItem} · Custom Duties`, lines: t('1 line · {vat}', { vat: config.zollVat }), amount: 'zoll' as const, due: 'zollDue' as const },
             { kind: 'eust' as const, label: 'EUSt', vendor: `${config.eustVendor} EUST Aufschubkonto`, item: `${config.eustItem} · Import Tax`, lines: `+1 ${config.eustVat} / −1 ${config.noVat}`, amount: 'eust' as const, due: 'eustDue' as const },
           ];
           return (
             <section key={d.file} className="bg-white border border-gray-200 rounded-xl shadow-sm">
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 border-b border-gray-200">
-                <input type="checkbox" checked={selected.has(d.file)} onChange={() => toggle(d.file)} title="Marcar para enviar junto con las demás" />
+                <input type="checkbox" checked={selected.has(d.file)} onChange={() => toggle(d.file)} title={t('Select to send together with the others')} />
                 <FileText size={16} className="text-gray-400" />
-                <span className="font-bold text-gray-900">{d.atc || 'Sin nº AT/C'}</span>
+                <span className="font-bold text-gray-900">{d.atc || t('No AT/C no.')}</span>
                 <span className="text-xs text-gray-500">Registriernr. {d.registration || '—'} · LRN {d.lrn || '—'} · {d.file}</span>
-                <span className="ml-auto text-sm text-gray-600">Total Abgaben: <b>{d.total != null ? fmt(d.total) : '—'} €</b></span>
+                <span className="ml-auto text-sm text-gray-600">Total Abgaben: <b>{d.total != null ? d.total.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'} €</b></span>
                 {files.some(x => x.name === d.file) && (
                   <button onClick={() => togglePreview(d.file)} className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg border ${previews[d.file] ? 'border-indigo-300 bg-indigo-50 text-indigo-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}>
-                    {previews[d.file] ? <EyeOff size={14} /> : <Eye size={14} />} {previews[d.file] ? 'Ocultar PDF' : 'Ver PDF'}
+                    {previews[d.file] ? <EyeOff size={14} /> : <Eye size={14} />} {previews[d.file] ? t('Hide PDF') : t('View PDF')}
                   </button>
                 )}
-                <button onClick={() => remove(d.file)} title="Quitar de la lista (no se envía a BC)" className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"><X size={16} /></button>
+                <button onClick={() => remove(d.file)} title={t('Remove from the list (not sent to BC)')} className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"><X size={16} /></button>
               </div>
               {previews[d.file] && (
                 <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
                   <iframe src={previews[d.file]} title={d.file} className="w-full max-w-3xl h-[480px] border border-gray-300 rounded-lg bg-white" />
-                  <a href={previews[d.file]} target="_blank" rel="noreferrer" className="inline-block mt-1 text-xs text-indigo-700 hover:underline">Abrir en otra pestaña</a>
+                  <a href={previews[d.file]} target="_blank" rel="noreferrer" className="inline-block mt-1 text-xs text-indigo-700 hover:underline">{t('Open in a new tab')}</a>
                 </div>
               )}
               <div className="p-4 space-y-3">
                 <div className="flex flex-wrap gap-3 items-end">
-                  <label className="text-xs font-semibold text-gray-500">Nº AT/C (Vendor Invoice No.)
+                  <label className="text-xs font-semibold text-gray-500">{t('AT/C no. (Vendor Invoice No.)')}
                     <input value={f.atc} onChange={e => setField(d.file, 'atc', e.target.value)} className={`${input} block mt-1 w-72 font-mono`} />
                   </label>
-                  <label className="text-xs font-semibold text-gray-500">Fecha registro / documento
+                  <label className="text-xs font-semibold text-gray-500">{t('Posting / document date')}
                     <input type="date" value={f.date} onChange={e => setField(d.file, 'date', e.target.value)} className={`${input} block mt-1`} />
                   </label>
-                  <label className="text-xs font-semibold text-gray-500 flex-1 min-w-[280px]">Posting Description / Description 2 (pedido / contenedor)
+                  <label className="text-xs font-semibold text-gray-500 flex-1 min-w-[280px]">{t('Posting Description / Description 2 (order / container)')}
                     <input value={f.description} maxLength={100} onChange={e => setField(d.file, 'description', e.target.value)} className={`${input} block mt-1 w-full`} />
                   </label>
                 </div>
                 <table className="w-full text-sm">
                   <thead className="text-xs uppercase tracking-wider text-gray-500 bg-gray-50">
-                    <tr><th className="p-2 text-left">Factura</th><th className="p-2 text-left">Proveedor</th><th className="p-2 text-left">Artículo</th><th className="p-2 text-left">Líneas</th>
-                      <th className="p-2 text-right">Importe EUR</th><th className="p-2 text-left">Vencimiento</th><th className="p-2 text-left">En BC</th></tr>
+                    <tr><th className="p-2 text-left">{t('Invoice')}</th><th className="p-2 text-left">{t('Vendor')}</th><th className="p-2 text-left">{t('Item')}</th><th className="p-2 text-left">{t('Lines')}</th>
+                      <th className="p-2 text-right">{t('Amount EUR')}</th><th className="p-2 text-left">{t('Due date')}</th><th className="p-2 text-left">{t('In BC')}</th></tr>
                   </thead>
                   <tbody>
                     {rows.map(r => {
@@ -240,8 +242,8 @@ export default function AduanasPage() {
                           <td className="p-2"><input type="date" value={f[r.due]} onChange={e => setField(d.file, r.due, e.target.value)} className={input} /></td>
                           <td className="p-2">
                             {made.map(c => <span key={c.no} className="inline-flex items-center gap-1 text-emerald-700 font-semibold"><CheckCircle2 size={14} /> Purchase Invoice {c.no}<DocPdfLink documentNo={c.no} /></span>)}
-                            {ex.map(e => <span key={e.no} className="inline-block text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-0.5 text-xs">Ya existe {e.no}{e.posted ? ' (registrada)' : ' (pendiente)'}<DocPdfLink documentNo={e.no} /></span>)}
-                            {!made.length && !ex.length && (toNum(f[r.amount]) > 0 ? <span className="text-gray-400">Pendiente</span> : <span className="text-gray-400">Sin importe: no se crea</span>)}
+                            {ex.map(e => <span key={e.no} className="inline-block text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-0.5 text-xs">{e.posted ? t('Already exists {no} (posted)', { no: e.no }) : t('Already exists {no} (pending)', { no: e.no })}<DocPdfLink documentNo={e.no} /></span>)}
+                            {!made.length && !ex.length && (toNum(f[r.amount]) > 0 ? <span className="text-gray-400">{t('Pending')}</span> : <span className="text-gray-400">{t('No amount: not created')}</span>)}
                           </td>
                         </tr>
                       );
@@ -249,18 +251,18 @@ export default function AduanasPage() {
                   </tbody>
                 </table>
                 <TariffCheck orders={d.orders || []} positions={d.positions || []} />
-                {d.warnings.map(w => <p key={w} className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {w}</p>)}
-                {st.warnings?.map(w => <p key={w} className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {w}</p>)}
-                {st.error && <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{st.error}</p>}
+                {d.warnings.map(w => <p key={w} className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {tx(w)}</p>)}
+                {st.warnings?.map(w => <p key={w} className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {tx(w)}</p>)}
+                {st.error && <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{tx(st.error)}</p>}
                 {/* Siempre visible; desactivado cuando ya no queda nada por crear (las dos facturas existen en BC) */}
                 <div className="flex items-center gap-3">
                   <button onClick={() => create(d)} disabled={st.saving || (!pending(d) && !!st.created?.length)}
-                    title={pending(d) ? 'Crea las Purchase Invoices en BC, sin registrar' : 'Ya existen en BC: pide confirmación y las crea de nuevo'}
+                    title={pending(d) ? t('Creates the unposted Purchase Invoices in BC') : t('Already in BC: asks for confirmation and creates them again')}
                     className="inline-flex items-center gap-2 bg-indigo-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed">
-                    {st.saving && <RefreshCw size={14} className="animate-spin" />} Enviar a BC
-                    {pending(d) ? ` (${rows.filter(r => !has(d, r.kind) && toNum(f[r.amount]) > 0).map(r => r.label).join(' + ')})` : !st.created?.length ? ' de nuevo' : ''}
+                    {st.saving && <RefreshCw size={14} className="animate-spin" />} {t('Send to BC')}
+                    {pending(d) ? ` (${rows.filter(r => !has(d, r.kind) && toNum(f[r.amount]) > 0).map(r => r.label).join(' + ')})` : !st.created?.length ? ` ${t('again')}` : ''}
                   </button>
-                  {!pending(d) && !st.created?.length && <span className="text-xs text-gray-500">Ya están en BC: se crearán otra vez si lo confirmas.</span>}
+                  {!pending(d) && !st.created?.length && <span className="text-xs text-gray-500">{t('Already in BC: they will be created again if you confirm.')}</span>}
                 </div>
               </div>
             </section>

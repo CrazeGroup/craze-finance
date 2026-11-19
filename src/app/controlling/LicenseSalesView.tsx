@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
 import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
 import CompanySelect, { CONSOLIDATED, REPORT_COMPANIES, useReportCompany } from './CompanySelect';
+import { useT } from '@/contexts/LanguageContext';
 
 // Controlling · Ventas por licencia: venta (Turnover de la LM, como Royalties) por Royalty Code de la empresa activa,
 // del 1 de enero a la fecha elegida, comparada con el mismo periodo de años anteriores.
@@ -27,17 +28,21 @@ function sameDayIn(year: number, to: string) {
 }
 // Qué se compara: importes de la LM, provisión de royalties (calculada como en Royalties) o unidades
 const MEASURES = [
-  { id: 'amount', label: 'Venta (Amount)' },
-  { id: 'turnover', label: 'Venta (Turnover Net of Provision Sales)' },
+  { id: 'amount', label: 'Sales (Amount)' },
+  { id: 'turnover', label: 'Sales (Turnover Net of Provision Sales)' },
   { id: 'provision', label: 'Provision Royalties' },
-  { id: 'qty', label: 'Unidades' },
+  { id: 'qty', label: 'Units' },
 ] as const;
 type MeasureKey = typeof MEASURES[number]['id'];
 const measureLabel = (k: MeasureKey) => MEASURES.find(m => m.id === k)!.label;
 const th = 'py-2 px-3 text-[10px] font-semibold uppercase tracking-wider text-gray-500 whitespace-nowrap';
 const td = 'py-2 px-3 whitespace-nowrap tabular-nums';
+// Texto traducido con trozos JSX: '{name}' del texto se sustituye por parts[name]
+const rich = (s: string, parts: Record<string, React.ReactNode>) =>
+  s.split(/(\{\w+\})/).map((p, i) => { const m = p.match(/^\{(\w+)\}$/); return m && m[1] in parts ? <Fragment key={i}>{parts[m[1]]}</Fragment> : p; });
 
 export default function LicenseSalesView({ fmt, company: globalCompany }: { fmt: Fmt; company: string }) {
+  const { t, tx } = useT();
   const [company, setCompany] = useReportCompany(globalCompany);
   const { num, date } = fmt;
   const [to, setTo] = useState(defaultTo);
@@ -90,8 +95,8 @@ export default function LicenseSalesView({ fmt, company: globalCompany }: { fmt:
             const r = d.eurRate || 1;
             merge(byCode, scale(d.byCode, r));
             for (const [code, b] of Object.entries(d.breakdown || {}) as [string, any][]) {
-              const t = (breakdown[code] ||= { ship: {}, group: {} });
-              merge(t.ship, scale(b.ship, r)); merge(t.group, scale(b.group, r));
+              const bk = (breakdown[code] ||= { ship: {}, group: {} });
+              merge(bk.ship, scale(b.ship, r)); merge(bk.group, scale(b.group, r));
             }
             Object.assign(groupNames, d.groupNames || {});
           }
@@ -123,8 +128,8 @@ export default function LicenseSalesView({ fmt, company: globalCompany }: { fmt:
   };
   const groupNames = Object.assign({}, ...years.map(y => y.data?.groupNames || {})) as Record<string, string>;
   const subLabel = (k: string) => level === 'group'
-    ? (k ? `${k}${groupNames[k] ? ` · ${groupNames[k]}` : ''}` : '(sin Customer Group)')
-    : (k || '(sin país)');
+    ? (k ? `${k}${groupNames[k] ? ` · ${groupNames[k]}` : ''}` : t('(no Customer Group)'))
+    : (k || t('(no country)'));
   const shipFromBill = level === 'ship' && years.some(y => y.data && !y.data.shipCountryField);
   const allOpen = (list: string[]) => list.length > 0 && list.every(c => open[c]);
   const noAmount = key === 'amount' && years.some(y => y.data && !y.data.amountField);
@@ -156,29 +161,29 @@ export default function LicenseSalesView({ fmt, company: globalCompany }: { fmt:
     return (
       <>
         <td className={`${td} text-right ${cls}`}>{d ? `${d > 0 ? '+' : ''}${num(d, measure === 'turnover' ? 2 : 0)}` : '—'}</td>
-        <td className={`${td} text-right ${cls}`}>{pct == null ? (cur ? 'nuevo' : '—') : `${pct > 0 ? '+' : ''}${num(pct * 100, 1)} %`}</td>
+        <td className={`${td} text-right ${cls}`}>{pct == null ? (cur ? t('new') : '—') : `${pct > 0 ? '+' : ''}${num(pct * 100, 1)} %`}</td>
       </>
     );
   };
 
   // ---------- Puntos clave (calculados de la tabla, sin IA) ----------
-  const unitLabel = measure === 'turnover' ? currency : 'uds.';
+  const unitLabel = measure === 'turnover' ? currency : t('pcs.');
   const amt = (v: number) => `${num(v, 0)} ${unitLabel}`;
   const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${num(Math.abs(v), 0)} ${unitLabel}`;
-  const pctTxt = (cur: number, prev: number) => (prev ? `${cur >= prev ? '+' : '−'}${num(Math.abs((cur - prev) / prev) * 100, 1)} %` : 'nueva');
+  const pctTxt = (cur: number, prev: number) => (prev ? `${cur >= prev ? '+' : '−'}${num(Math.abs((cur - prev) / prev) * 100, 1)} %` : t('newly added'));
   const B = ({ children }: { children: React.ReactNode }) => <span className="font-semibold text-gray-900">{children}</span>;
   const Tone = ({ v, children }: { v: number; children: React.ReactNode }) => <span className={`font-semibold ${v > 0 ? 'text-emerald-700' : v < 0 ? 'text-[#C0392B]' : 'text-gray-500'}`}>{children}</span>;
 
   const keyPoints = (): React.ReactNode[] => {
     if (!current?.data || !previous?.data) return [];
-    const levelName = level === 'ship' ? 'país' : 'Customer Group';
+    const levelName = level === 'ship' ? t('country') : 'Customer Group';
     const licences = codes.filter(c => c !== 'NON-ROYALTY');
     const cur = (c: string) => value(current, c);
     const prev = (c: string) => value(previous, c);
     const tCur = total(current), tPrev = total(previous);
     const points: React.ReactNode[] = [];
 
-    points.push(<>Total {current.year}: <B>{amt(tCur)}</B> frente a {amt(tPrev)} en {previous.year} (<Tone v={tCur - tPrev}>{signed(tCur - tPrev)}, {pctTxt(tCur, tPrev)}</Tone>).</>);
+    points.push(<>{rich(t('Total {year}: {cur} versus {prev} in {prevYear} ({change}).'), { year: current.year, cur: <B>{amt(tCur)}</B>, prev: amt(tPrev), prevYear: previous.year, change: <Tone v={tCur - tPrev}>{signed(tCur - tPrev)}, {pctTxt(tCur, tPrev)}</Tone> })}</>);
 
     // Licencias principales: las que suman el 80 % de la venta del año (entre 3 y 6)
     const top: string[] = [];
@@ -192,12 +197,12 @@ export default function LicenseSalesView({ fmt, company: globalCompany }: { fmt:
       const subs = subKeys(c).map(k => ({ k, d: subValue(current, c, k) - subValue(previous, c, k) }));
       const ups = subs.filter(x => x.d > 0).sort((a, b) => b.d - a.d).slice(0, 2);
       const downs = subs.filter(x => x.d < 0).sort((a, b) => a.d - b.d).slice(0, 2);
-      const list = (xs: typeof subs) => xs.map((x, i) => <span key={x.k}>{i ? ' y ' : ''}{subLabel(x.k)} (<Tone v={x.d}>{signed(x.d)}</Tone>)</span>);
+      const list = (xs: typeof subs) => xs.map((x, i) => <span key={x.k}>{i ? ` ${t('and')} ` : ''}{subLabel(x.k)} (<Tone v={x.d}>{signed(x.d)}</Tone>)</span>);
       points.push(
         <>
-          <B>{c}</B>: {amt(cur(c))} ({tCur ? num((cur(c) / tCur) * 100, 1) : 0} % del total), <Tone v={d}>{signed(d)} ({pctTxt(cur(c), prev(c))})</Tone> vs {previous.year}.
-          {ups.length > 0 && <> Sube sobre todo en {list(ups)}.</>}
-          {downs.length > 0 && <> Baja en {list(downs)}.</>}
+          {rich(t('{code}: {amount} ({share} % of total), {change} vs {prevYear}.'), { code: <B>{c}</B>, amount: amt(cur(c)), share: tCur ? num((cur(c) / tCur) * 100, 1) : 0, change: <Tone v={d}>{signed(d)} ({pctTxt(cur(c), prev(c))})</Tone>, prevYear: previous.year })}
+          {ups.length > 0 && <> {rich(t('Up mainly in {list}.'), { list: list(ups) })}</>}
+          {downs.length > 0 && <> {rich(t('Down in {list}.'), { list: list(downs) })}</>}
         </>
       );
     }
@@ -207,8 +212,8 @@ export default function LicenseSalesView({ fmt, company: globalCompany }: { fmt:
     const up = moves.filter(m => m.d > 0).sort((a, b) => b.d - a.d)[0];
     const down = moves.filter(m => m.d < 0).sort((a, b) => a.d - b.d)[0];
     if (up || down) points.push(<>
-      {up && <>Mayor subida: <B>{up.c}</B> (<Tone v={up.d}>{signed(up.d)}</Tone>). </>}
-      {down && <>Mayor caída: <B>{down.c}</B> (<Tone v={down.d}>{signed(down.d)}</Tone>).</>}
+      {up && <>{rich(t('Biggest increase: {code} ({change}).'), { code: <B>{up.c}</B>, change: <Tone v={up.d}>{signed(up.d)}</Tone> })} </>}
+      {down && <>{rich(t('Biggest decrease: {code} ({change}).'), { code: <B>{down.c}</B>, change: <Tone v={down.d}>{signed(down.d)}</Tone> })}</>}
     </>);
 
     // Mayores movimientos por país / Customer Group sumando todas las licencias
@@ -218,23 +223,23 @@ export default function LicenseSalesView({ fmt, company: globalCompany }: { fmt:
     const subUp = subMoves.filter(([, d]) => d > 0).sort((a, b) => b[1] - a[1]).slice(0, 3);
     const subDown = subMoves.filter(([, d]) => d < 0).sort((a, b) => a[1] - b[1]).slice(0, 3);
     if (subUp.length || subDown.length) points.push(<>
-      Por {levelName}, todas las licencias:
-      {subUp.length > 0 && <> crecen {subUp.map(([k, d], i) => <span key={k}>{i ? ', ' : ''}<B>{subLabel(k)}</B> (<Tone v={d}>{signed(d)}</Tone>)</span>)}.</>}
-      {subDown.length > 0 && <> Caen {subDown.map(([k, d], i) => <span key={k}>{i ? ', ' : ''}<B>{subLabel(k)}</B> (<Tone v={d}>{signed(d)}</Tone>)</span>)}.</>}
+      {t('By {level}, all licences:', { level: levelName })}
+      {subUp.length > 0 && <> {rich(t('growing: {list}.'), { list: subUp.map(([k, d], i) => <span key={k}>{i ? ', ' : ''}<B>{subLabel(k)}</B> (<Tone v={d}>{signed(d)}</Tone>)</span>) })}</>}
+      {subDown.length > 0 && <> {rich(t('Falling: {list}.'), { list: subDown.map(([k, d], i) => <span key={k}>{i ? ', ' : ''}<B>{subLabel(k)}</B> (<Tone v={d}>{signed(d)}</Tone>)</span>) })}</>}
     </>);
 
     // Licencias nuevas o sin venta este año
     const fresh = licences.filter(c => cur(c) > 0 && !prev(c));
     const lost = licences.filter(c => prev(c) > 0 && !cur(c));
-    if (fresh.length) points.push(<>Licencias nuevas en {current.year} (sin venta en el mismo periodo de {previous.year}): {fresh.map((c, i) => <span key={c}>{i ? ', ' : ''}<B>{c}</B> ({amt(cur(c))})</span>)}.</>);
-    if (lost.length) points.push(<>Sin venta en {current.year} (sí en {previous.year}): {lost.map((c, i) => <span key={c}>{i ? ', ' : ''}<B>{c}</B> ({amt(prev(c))})</span>)}.</>);
+    if (fresh.length) points.push(<>{rich(t('New licences in {year} (no sales in the same period of {prevYear}): {list}.'), { year: current.year, prevYear: previous.year, list: fresh.map((c, i) => <span key={c}>{i ? ', ' : ''}<B>{c}</B> ({amt(cur(c))})</span>) })}</>);
+    if (lost.length) points.push(<>{rich(t('No sales in {year} (but in {prevYear}): {list}.'), { year: current.year, prevYear: previous.year, list: lost.map((c, i) => <span key={c}>{i ? ', ' : ''}<B>{c}</B> ({amt(prev(c))})</span>) })}</>);
     return points;
   };
 
   const exportExcel = () => {
-    const unit = measure === 'turnover' ? `${measureLabel(key)} ${currency}` : 'Unidades';
+    const unit = measure === 'turnover' ? `${t(measureLabel(key))} ${currency}` : t('Units');
     const rows = [...codes, 'Total'].map(code => {
-      const row: Record<string, string | number | null> = { 'Royalty Code': code };
+      const row: Record<string, string | number | null> = { 'Royalty Code': code === 'Total' ? t('Total') : code };
       years.forEach(y => { row[`${unit} ${y.year}`] = code === 'Total' ? total(y) : value(y, code); });
       if (current && previous) {
         const cur = code === 'Total' ? total(current) : value(current, code);
@@ -245,7 +250,7 @@ export default function LicenseSalesView({ fmt, company: globalCompany }: { fmt:
       }
       return row;
     });
-    const subName = level === 'ship' ? 'País' : 'Customer Group';
+    const subName = level === 'ship' ? t('Country') : 'Customer Group';
     const subRows = codes.flatMap(code => subKeys(code).map(k => {
       const row: Record<string, string | number | null> = { 'Royalty Code': code, [subName]: subLabel(k) };
       years.forEach(y => { row[`${unit} ${y.year}`] = subValue(y, code, k); });
@@ -257,41 +262,41 @@ export default function LicenseSalesView({ fmt, company: globalCompany }: { fmt:
       return row;
     }));
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Ventas por licencia');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(subRows), `Por ${subName}`.substring(0, 31));
-    XLSX.writeFile(wb, `Ventas_por_licencia_${company}_${to}.xlsx`.replace(/\s+/g, '_'));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), t('Sales by license'));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(subRows), t('By {name}', { name: subName }).substring(0, 31));
+    XLSX.writeFile(wb, `${t('Sales by license')}_${company}_${to}.xlsx`.replace(/\s+/g, '_'));
   };
 
   return (
-    <Section title="Ventas por licencia" source="AIT Documents LM Components (60000) · Royalty Code de la ficha de artículo en CRAZE GmbH · sin Main Item ni ventas intercompañía (igual que Royalties)">
+    <Section title={t('Sales by license')} source={t('AIT Documents LM Components (60000) · Royalty Code from the item card in CRAZE GmbH · without Main Item or intercompany sales (same as Royalties)')}>
       <div className="flex flex-wrap items-end gap-4">
         <CompanySelect value={company} onChange={setCompany} />
         <label className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
-          Del 1 de enero hasta
+          {t('From 1 January to')}
           <input type="date" value={to} onChange={e => e.target.value && setTo(e.target.value)}
             className="block mt-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-900 bg-white normal-case tracking-normal" />
         </label>
         <label className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
-          Comparar con
+          {t('Compare with')}
           <select value={yearsBack} onChange={e => setYearsBack(Number(e.target.value))}
             className="block mt-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-900 bg-white normal-case tracking-normal">
-            {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n === 1 ? 'el año anterior' : `los ${n} años anteriores`}</option>)}
+            {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n === 1 ? t('the previous year') : t('the {n} previous years', { n })}</option>)}
           </select>
         </label>
         <label className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
-          Comparar
+          {t('Compare')}
           <select value={key} onChange={e => setKey(e.target.value as MeasureKey)}
             className="block mt-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-900 bg-white normal-case tracking-normal">
-            {MEASURES.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+            {MEASURES.map(m => <option key={m.id} value={m.id}>{t(m.label)}</option>)}
           </select>
         </label>
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Desglose</span>
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">{t('Breakdown')}</span>
           <div className="flex bg-gray-100 rounded-lg p-1">
-            {([['ship', 'País (Ship-to)'], ['group', 'Customer Group']] as const).map(([id, label]) => (
+            {([['ship', 'Country (Ship-to)'], ['group', 'Customer Group']] as const).map(([id, label]) => (
               <button key={id} onClick={() => setLevel(id)}
                 className={`px-3 py-1 rounded-md text-sm font-semibold ${level === id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
-                {label}
+                {t(label)}
               </button>
             ))}
           </div>
@@ -299,28 +304,28 @@ export default function LicenseSalesView({ fmt, company: globalCompany }: { fmt:
         <div className="ml-auto flex gap-2">
           <button onClick={exportExcel} disabled={loading || !codes.length}
             className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
-            <FileDown size={16} /> Exportar Excel
+            <FileDown size={16} /> {t('Export Excel')}
           </button>
-          <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={loading} title="Volver a leer de BC"
+          <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={loading} title={t('Reload from BC')}
             className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
         </div>
       </div>
 
-      {noAmount && <ErrorBox message="El servicio de la LM en BC no publica el campo Amount: no se puede comparar por Amount. Publica el campo en la página 60000 o usa Turnover Net of Provision Sales." />}
-      {key === 'provision' && years.some(y => y.data?.ratesSource === 'lm') && <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">No se ha podido leer RoyaltiesCRZ de BC: la provisión es la que trae la LM.</p>}
-      {shipFromBill && <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">El servicio de la LM en BC no publica el país de envío (Ship-to Country/Region Code): el desglose por país usa el país de facturación.</p>}
-      {errors.map(y => <ErrorBox key={y.year} message={`${y.year}: ${y.error}`} />)}
-      {loading ? <Loading text={`Leyendo las ventas de ${years.filter(y => y.loading).map(y => y.year).join(', ')} de Business Central…`} />
-        : !codes.length ? <p className="text-sm text-gray-600">No hay ventas en estos periodos.</p>
+      {noAmount && <ErrorBox message={t('The LM service in BC does not publish the Amount field: cannot compare by Amount. Publish the field on page 60000 or use Turnover Net of Provision Sales.')} />}
+      {key === 'provision' && years.some(y => y.data?.ratesSource === 'lm') && <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{t('RoyaltiesCRZ could not be read from BC: the provision is the one in the LM.')}</p>}
+      {shipFromBill && <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{t('The LM service in BC does not publish the ship-to country (Ship-to Country/Region Code): the breakdown by country uses the bill-to country.')}</p>}
+      {errors.map(y => <ErrorBox key={y.year} message={`${y.year}: ${tx(y.error || '')}`} />)}
+      {loading ? <Loading text={t('Reading the sales of {years} from Business Central…', { years: years.filter(y => y.loading).map(y => y.year).join(', ') })} />
+        : !codes.length ? <p className="text-sm text-gray-600">{t('There are no sales in these periods.')}</p>
         : (
           <>
             {current && previous && (
               <Grid cols={3}>
-                <Kpi label={`${current.year} (${date(current.from)} – ${date(current.to)})`} value={num(total(current), 0)} sub={measure === 'turnover' ? currency : 'unidades'} />
-                <Kpi label={`${previous.year} (mismo periodo)`} value={num(total(previous), 0)} sub={measure === 'turnover' ? currency : 'unidades'} />
-                <Kpi highlight tone={total(current) >= total(previous) ? 'main' : 'neutral'} label={`Variación ${current.year} vs ${previous.year}`}
+                <Kpi label={`${current.year} (${date(current.from)} – ${date(current.to)})`} value={num(total(current), 0)} sub={measure === 'turnover' ? currency : t('units')} />
+                <Kpi label={t('{year} (same period)', { year: previous.year })} value={num(total(previous), 0)} sub={measure === 'turnover' ? currency : t('units')} />
+                <Kpi highlight tone={total(current) >= total(previous) ? 'main' : 'neutral'} label={t('Change {year} vs {prevYear}', { year: current.year, prevYear: previous.year })}
                   value={`${total(current) - total(previous) >= 0 ? '+' : ''}${num(total(current) - total(previous), 0)}`}
                   sub={total(previous) ? `${num(((total(current) - total(previous)) / Math.abs(total(previous))) * 100, 1)} %` : undefined} />
               </Grid>
@@ -331,9 +336,9 @@ export default function LicenseSalesView({ fmt, company: globalCompany }: { fmt:
                 <thead>
                   <tr className="border-b border-gray-200 bg-gray-50">
                     <th className={`${th} text-left`}>
-                      <button onClick={() => setOpen(allOpen(codes) ? {} : Object.fromEntries(codes.map(c => [c, true])))} className="flex items-center gap-1 uppercase hover:text-gray-900" title="Desplegar o plegar todos">
+                      <button onClick={() => setOpen(allOpen(codes) ? {} : Object.fromEntries(codes.map(c => [c, true])))} className="flex items-center gap-1 uppercase hover:text-gray-900" title={t('Expand or collapse all')}>
                         {allOpen(codes) ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                        Royalty Code <span className="normal-case tracking-normal font-normal">→ {level === 'ship' ? 'país' : 'Customer Group'}</span>
+                        Royalty Code <span className="normal-case tracking-normal font-normal">→ {level === 'ship' ? t('country') : 'Customer Group'}</span>
                       </button>
                     </th>
                     {years.map(y => (
@@ -373,7 +378,7 @@ export default function LicenseSalesView({ fmt, company: globalCompany }: { fmt:
                 </tbody>
                 <tfoot>
                   <tr className="border-t-2 border-gray-300 bg-gray-50 font-bold">
-                    <td className={td}>Total</td>
+                    <td className={td}>{t('Total')}</td>
                     {years.map(y => <td key={y.year} className={`${td} text-right`}>{fmtV(total(y))}</td>)}
                     {current && previous && <Delta cur={total(current)} prev={total(previous)} />}
                   </tr>
@@ -383,17 +388,17 @@ export default function LicenseSalesView({ fmt, company: globalCompany }: { fmt:
             {current && previous && (
               <div className="rpt-card bg-white rounded-xl border border-gray-200 p-5">
                 <p className="text-xs font-bold uppercase tracking-widest text-[#C8186C] mb-3">
-                  Puntos clave · {current.year} vs {previous.year} · por {level === 'ship' ? 'país' : 'Customer Group'}
+                  {t('Key points · {year} vs {prevYear} · by {level}', { year: current.year, prevYear: previous.year, level: level === 'ship' ? t('country') : 'Customer Group' })}
                 </p>
                 <ul className="space-y-2 text-sm text-gray-700 list-disc pl-5">
                   {keyPoints().map((p, i) => <li key={i}>{p}</li>)}
                 </ul>
-                <p className="mt-3 text-xs text-gray-400">Calculado con las cifras de la tabla ({measureLabel(key)}). Cambia el desglose para verlo por {level === 'ship' ? 'Customer Group' : 'país'}.</p>
+                <p className="mt-3 text-xs text-gray-400">{t('Calculated from the figures in the table ({measure}). Change the breakdown to see it by {other}.', { measure: t(measureLabel(key)), other: level === 'ship' ? 'Customer Group' : t('country') })}</p>
               </div>
             )}
             <p className="text-xs text-gray-500">
-              Importes en la divisa de la empresa ({currency}), {key === 'provision' ? 'Provision Royalties (Turnover × % de la licencia en RoyaltiesCRZ, como en Royalties)' : `${measureLabel(key)} de la LM de BC`}. Cada año se compara del 1 de enero a la misma fecha.
-              Las licencias se asignan con el Royalty Code actual de la ficha del artículo, también en los años anteriores.
+              {t('Amounts in the company currency ({currency}), {what}. Each year is compared from 1 January to the same date.', { currency, what: key === 'provision' ? t('Provision Royalties (Turnover × % of the licence in RoyaltiesCRZ, as in Royalties)') : t('{measure} from the BC LM', { measure: t(measureLabel(key)) }) })}
+              {' '}{t('Licences are assigned with the current Royalty Code of the item card, also in previous years.')}
             </p>
           </>
         )}

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, FileSpreadsheet, RefreshCw, Send } from 'lucide-react';
+import { useT } from '@/contexts/LanguageContext';
 
 // MAGAZINES › MAILFINISH: informe de Mailfinish (gadgets recuperados de revistas) → Assembly Orders sugeridas
 // (output = gadget en MAILFINISH / DESTR MAIL, input = revista en stock a la fecha del fichero) y su creación en BC.
@@ -19,13 +20,14 @@ type Result = {
 type Row = Suggestion & { include: boolean; status?: { saving?: boolean; no?: string; error?: string } };
 
 const LOC_GOOD = 'MAILFINISH';
-const qf = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 });
 const dmy = (d: string) => (d ? d.split('-').reverse().join('/') : '');
 const fileDate = (name: string) => { const m = name.match(/(20\d{2})(\d{2})(\d{2})/); return m ? `${m[1]}-${m[2]}-${m[3]}` : ''; };
 const th = 'px-3 py-2 whitespace-nowrap';
 const td = 'px-3 py-1.5 whitespace-nowrap';
 
 export default function MailfinishView() {
+  const { t, tx, locale } = useT();
+  const qf = useMemo(() => new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }), [locale]);
   const [file, setFile] = useState<File | null>(null);
   const [date, setDate] = useState('');
   const [loading, setLoading] = useState(false);
@@ -52,7 +54,7 @@ export default function MailfinishView() {
       form.append('outputs', JSON.stringify(outputs));
       const res = await fetch('/api/mailfinish/process', { method: 'POST', body: form });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error || `Error al procesar (${res.status})`);
+      if (!res.ok) throw new Error(json.error || t('Error processing ({status})', { status: res.status }));
       setData(json);
       setDate(json.date);
       setRows(json.suggestions.map((s: Suggestion) => ({ ...s, include: !!s.input })));
@@ -85,10 +87,10 @@ export default function MailfinishView() {
     const over = toSend.filter(r => restOf(`${r.input}|${r.inputLocation}`) < 0);
     const dup = toSend.filter(r => openFor(r).length);
     const notes = [
-      over.length && `${over.length} con más cantidad que el stock de la revista a ${dmy(date)}`,
-      dup.length && `${dup.length} de gadgets que ya tienen Assembly Orders abiertas en esa location (${Array.from(new Set(dup.flatMap(r => openFor(r).map(o => o.no)))).join(', ')})`,
+      over.length && t('{n} with more quantity than the magazine stock on {date}', { n: over.length, date: dmy(date) }),
+      dup.length && t('{n} for gadgets that already have open Assembly Orders in that location ({orders})', { n: dup.length, orders: Array.from(new Set(dup.flatMap(r => openFor(r).map(o => o.no)))).join(', ') }),
     ].filter(Boolean);
-    if (!confirm(`¿Crear ${toSend.length} Assembly Orders en BC (sin registrar, fecha ${dmy(date)})?${notes.length ? `\n\nOjo: ${notes.join('; ')}.` : ''}`)) return;
+    if (!confirm(t('Create {n} Assembly Orders in BC (unposted, date {date})?', { n: toSend.length, date: dmy(date) }) + (notes.length ? `\n\n${t('Careful: {notes}.', { notes: notes.join('; ') })}` : ''))) return;
     for (const r of toSend) {
       update(r.key, { status: { saving: true } });
       try {
@@ -115,59 +117,58 @@ export default function MailfinishView() {
         <div className="mr-auto">
           <p className="font-bold text-gray-900 leading-tight">MAILFINISH</p>
           <p className="text-xs text-gray-500">
-            Gadgets recuperados de revistas (informe de Mailfinish) → Assembly Orders sin registrar: I. Wahl en {LOC_GOOD}, II. Wahl (dañado) en DESTR MAIL,
-            con la revista de las últimas recuperaciones que hay en stock a la fecha del fichero
+            {t('Gadgets recovered from magazines (Mailfinish report) → unposted Assembly Orders: I. Wahl in {good}, II. Wahl (damaged) in DESTR MAIL, with the magazine of the latest recoveries in stock on the file date', { good: LOC_GOOD })}
           </p>
         </div>
         <button onClick={sendAll} disabled={!toSend.length || sending || !date}
           className="flex items-center gap-2 bg-indigo-600 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-40">
-          <Send size={16} className={sending ? 'animate-pulse' : ''} /> {sending ? 'Creando en BC…' : `Crear ${toSend.length} Assembly Orders en BC`}
+          <Send size={16} className={sending ? 'animate-pulse' : ''} /> {sending ? t('Creating in BC…') : t('Create {n} Assembly Orders in BC', { n: toSend.length })}
         </button>
       </div>
 
       <section className="bg-white rounded-xl border border-gray-200 p-4 flex flex-wrap items-end gap-4">
         <label className="text-xs text-gray-500 flex flex-col gap-1 cursor-pointer">
-          Excel de Mailfinish
+          {t('Mailfinish Excel')}
           <span className="flex items-center gap-2 border border-dashed border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-800 bg-gray-50 hover:bg-gray-100 min-w-[260px]">
-            <FileSpreadsheet size={16} /> {file ? file.name : 'Elegir fichero…'}
+            <FileSpreadsheet size={16} /> {file ? file.name : t('Choose file…')}
           </span>
           <input type="file" accept=".xlsx,.xls" className="hidden" onChange={e => pick(e.target.files?.[0] || null)} />
         </label>
-        <label className="text-xs text-gray-500 flex flex-col gap-1" title="Fecha del stock de revistas y de registro de las Assembly Orders (la del nombre del fichero)">
-          Fecha (stock y registro)
+        <label className="text-xs text-gray-500 flex flex-col gap-1" title={t('Date of the magazine stock and posting date of the Assembly Orders (the one in the file name)')}>
+          {t('Date (stock and posting)')}
           <input type="date" value={date} onChange={e => setDate(e.target.value)}
             className={`border rounded-lg px-2 py-1.5 text-sm font-semibold text-gray-900 ${file && !date ? 'border-amber-400 bg-amber-50' : 'border-gray-300'}`} />
         </label>
         <button onClick={process} disabled={!file || !date || loading}
           className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-black disabled:opacity-40">
-          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> {loading ? 'Procesando…' : 'Procesar sugerencia'}
+          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> {loading ? t('Processing…') : t('Process suggestion')}
         </button>
       </section>
 
-      {error && <p className="bg-white border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-center gap-2"><AlertCircle size={16} /> {error}</p>}
+      {error && <p className="bg-white border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-center gap-2"><AlertCircle size={16} /> {tx(error)}</p>}
 
       {data && (
         <>
           <section className="grid grid-cols-2 lg:grid-cols-5 gap-4">
             <Kpi label="Gadgets" value={qf.format(data.gadgets.length)} sub={data.file} />
-            <Kpi label={`I. Wahl → ${LOC_GOOD}`} value={qf.format(total(LOC_GOOD))} sub="unidades" />
-            <Kpi label="II. Wahl → DESTR MAIL" value={qf.format(total('DESTR MAIL'))} sub="unidades" />
-            <Kpi label="Assembly Orders" value={qf.format(rows.length)} sub={created ? `${created} creadas en BC` : `stock a ${dmy(data.date)}`} />
+            <Kpi label={`I. Wahl → ${LOC_GOOD}`} value={qf.format(total(LOC_GOOD))} sub={t('total units')} />
+            <Kpi label="II. Wahl → DESTR MAIL" value={qf.format(total('DESTR MAIL'))} sub={t('total units')} />
+            <Kpi label="Assembly Orders" value={qf.format(rows.length)} sub={created ? t('{n} created in BC', { n: created }) : t('stock on {date}', { date: dmy(data.date) })} />
             <div className={`rounded-xl border p-4 flex items-center gap-2 text-sm ${shortRows.length ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-green-50 border-green-200 text-green-800'}`}>
               {shortRows.length ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}
-              <p className="font-semibold">{shortRows.length ? `${shortRows.length} órdenes sin stock suficiente` : 'Hay stock de revistas para todas'}</p>
+              <p className="font-semibold">{shortRows.length ? t('{n} orders without enough stock', { n: shortRows.length }) : t('There is magazine stock for all of them')}</p>
             </div>
           </section>
           {data.warnings.length > 0 && (
             <ul className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900 list-disc list-inside space-y-0.5">
-              {data.warnings.map((w, i) => <li key={i}>{w}</li>)}
+              {data.warnings.map((w, i) => <li key={i}>{tx(w)}</li>)}
             </ul>
           )}
 
           <section className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-200">
-              <h2 className="text-sm font-bold text-gray-900">Assembly Orders sugeridas</h2>
-              <p className="text-xs text-gray-500">Una orden por gadget, location y revista (Quantity per 1). Puedes cambiar la cantidad y la revista; ★ = usada en recuperaciones anteriores de ese gadget.</p>
+              <h2 className="text-sm font-bold text-gray-900">{t('Suggested Assembly Orders')}</h2>
+              <p className="text-xs text-gray-500">{t('One order per gadget, location and magazine (Quantity per 1). You can change the quantity and the magazine; ★ = used in earlier recoveries of that gadget.')}</p>
             </div>
             <div className="table-scroll">
               <table className="w-full text-sm">
@@ -178,11 +179,11 @@ export default function MailfinishView() {
                         onChange={e => setRows(rs => rs.map(r => (r.status?.no ? r : { ...r, include: e.target.checked && !!r.input })))} />
                     </th>
                     <th className={`${th} text-left`}>Output (gadget)</th><th className={`${th} text-left`}>Location</th>
-                    <th className={`${th} text-right`}>Cantidad</th><th className={`${th} text-left`}>Input (revista)</th>
+                    <th className={`${th} text-right`}>{t('Quantity')}</th><th className={`${th} text-left`}>{t('Input (magazine)')}</th>
                     <th className={`${th} text-right`}>Stock {dmy(data.date)}</th>
-                    <th className={`${th} text-right`} title="Stock de la revista menos la cantidad de esta línea">Queda</th>
-                    <th className={`${th} text-right`} title="Stock de la revista menos todas las líneas marcadas que la usan">Queda (todas)</th>
-                    <th className={`${th} text-left`}>Última recuperación</th><th className={`${th} text-left`}>BC</th>
+                    <th className={`${th} text-right`} title={t('Magazine stock minus the quantity of this line')}>{t('Left')}</th>
+                    <th className={`${th} text-right`} title={t('Magazine stock minus all the selected lines that use it')}>{t('Left (all)')}</th>
+                    <th className={`${th} text-left`}>{t('Last recovery')}</th><th className={`${th} text-left`}>BC</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -200,11 +201,11 @@ export default function MailfinishView() {
                           <input type="checkbox" checked={r.include} disabled={!!r.status?.no} onChange={e => update(r.key, { include: e.target.checked })} />
                         </td>
                         <td className={td}>
-                          <input value={outputs[r.gadget] ?? r.output} disabled={!!r.status?.no} title="Artículo de BC que se da de alta (se recuerda para los próximos informes)"
+                          <input value={outputs[r.gadget] ?? r.output} disabled={!!r.status?.no} title={t('BC item that is put into stock (remembered for the next reports)')}
                             onChange={e => setOutputs(o => ({ ...o, [r.gadget]: e.target.value.trim().toUpperCase() }))}
                             className={`w-24 border rounded px-1.5 py-0.5 font-mono text-xs font-semibold ${outputs[r.gadget] && outputs[r.gadget] !== r.output ? 'border-amber-400 bg-amber-50' : 'border-gray-300'}`} />
                           {r.output !== r.gadget && <span className="ml-1 text-[10px] text-gray-500">(Excel {r.gadget})</span>}
-                          {outputs[r.gadget] && outputs[r.gadget] !== r.output && <span className="ml-1 text-[10px] text-amber-700">pulsa Procesar para recalcular</span>}
+                          {outputs[r.gadget] && outputs[r.gadget] !== r.output && <span className="ml-1 text-[10px] text-amber-700">{t('press Process to recalculate')}</span>}
                           <div className="text-xs text-gray-500 max-w-[360px] truncate" title={r.outputDescription}>{r.outputDescription}</div>
                         </td>
                         <td className={td}>
@@ -219,13 +220,13 @@ export default function MailfinishView() {
                           <select value={r.input ? k : ''} disabled={!!r.status?.no}
                             onChange={e => { const [input, inputLocation] = e.target.value.split('|'); update(r.key, { input, inputLocation, include: !!input }); }}
                             className={`border rounded px-1.5 py-0.5 text-xs max-w-[380px] ${r.input ? 'border-gray-300' : 'border-amber-400 bg-amber-50'}`}>
-                            {!r.input && <option value="">— elige revista —</option>}
+                            {!r.input && <option value="">{t('— choose magazine —')}</option>}
                             {r.candidates.map(c => (
                               <option key={`${c.item}|${c.location}`} value={`${c.item}|${c.location}`}>
                                 ★ {c.item} · {c.location} · stock {qf.format(stockOf.get(`${c.item}|${c.location}`)?.qty || 0)}
                               </option>
                             ))}
-                            {others.length > 0 && <optgroup label="Otras revistas con stock">
+                            {others.length > 0 && <optgroup label={t('Other magazines with stock')}>
                               {others.map(s => <option key={`${s.item}|${s.location}`} value={`${s.item}|${s.location}`}>{s.item} · {s.location} · stock {qf.format(s.qty)} · {s.description.replace(/^MAGAZINE - /, '')}</option>)}
                             </optgroup>}
                           </select>
@@ -237,16 +238,16 @@ export default function MailfinishView() {
                         </td>
                         <td className={`${td} text-right tabular-nums font-semibold ${r.input && rest < 0 ? 'text-red-700' : 'text-gray-900'}`}>
                           {r.input ? qf.format(rest) : ''}{r.input && rest < 0 && <AlertCircle size={12} className="inline ml-1 -mt-0.5" />}
-                          {r.input && sharing > 1 && <div className="text-[10px] font-normal text-gray-500">{sharing} líneas</div>}
+                          {r.input && sharing > 1 && <div className="text-[10px] font-normal text-gray-500">{t('{n} lines', { n: sharing })}</div>}
                         </td>
                         <td className={`${td} text-xs text-gray-600`}>
-                          {cand?.lastOrder ? <>{cand.lastOrder} · {dmy(cand.lastDate)}</> : r.source === 'description' ? 'revista de la descripción' : r.input ? 'elegida a mano' : '—'}
+                          {cand?.lastOrder ? <>{cand.lastOrder} · {dmy(cand.lastDate)}</> : r.source === 'description' ? t('magazine from the description') : r.input ? t('chosen by hand') : '—'}
                         </td>
                         <td className={`${td} text-xs`}>
                           {r.status?.no ? <span className="text-green-700 font-semibold flex items-center gap-1"><CheckCircle2 size={13} /> {r.status.no}</span>
-                            : r.status?.saving ? <span className="text-gray-500">Creando…</span>
-                            : r.status?.error ? <span className="text-red-700" title={r.status.error}>Error: {r.status.error.substring(0, 80)}</span>
-                            : open.length ? <span className="text-amber-700" title={open.map(o => `${o.no}: ${o.quantity} uds, ${dmy(o.postingDate)}`).join('\n')}>Ya abierta: {open.map(o => o.no).join(', ')}</span>
+                            : r.status?.saving ? <span className="text-gray-500">{t('Creating…')}</span>
+                            : r.status?.error ? <span className="text-red-700" title={tx(r.status.error)}>Error: {tx(r.status.error).substring(0, 80)}</span>
+                            : open.length ? <span className="text-amber-700" title={open.map(o => t('{no}: {qty} units, {date}', { no: o.no, qty: o.quantity, date: dmy(o.postingDate) })).join('\n')}>{t('Already open: {orders}', { orders: open.map(o => o.no).join(', ') })}</span>
                             : ''}
                         </td>
                       </tr>
@@ -258,12 +259,12 @@ export default function MailfinishView() {
           </section>
 
           <details className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <summary className="px-4 py-3 cursor-pointer text-sm font-bold text-gray-900">Stock de revistas a {dmy(data.date)} ({data.stock.length} revista × location)</summary>
+            <summary className="px-4 py-3 cursor-pointer text-sm font-bold text-gray-900">{t('Magazine stock on {date} ({n} magazine × location)', { date: dmy(data.date), n: data.stock.length })}</summary>
             <div className="table-scroll">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-500">
-                  <tr><th className={`${th} text-left`}>Revista</th><th className={`${th} text-left`}>Descripción</th><th className={`${th} text-left`}>Location</th>
-                    <th className={`${th} text-right`}>Stock</th><th className={`${th} text-right`}>En las órdenes</th><th className={`${th} text-right`}>Queda</th></tr>
+                  <tr><th className={`${th} text-left`}>{t('Magazine')}</th><th className={`${th} text-left`}>{t('Description')}</th><th className={`${th} text-left`}>Location</th>
+                    <th className={`${th} text-right`}>Stock</th><th className={`${th} text-right`}>{t('In the orders')}</th><th className={`${th} text-right`}>{t('Left')}</th></tr>
                 </thead>
                 <tbody>
                   {data.stock.map(s => {

@@ -7,7 +7,7 @@ export async function syncFromBc(company: string | undefined, onProgress?: (mess
   const errors: string[] = [];
   for (const comp of companies) {
     for (const step of SYNC_STEPS) {
-      onProgress?.(`Sincronizando ${comp} · ${step.label}…`);
+      onProgress?.(`Syncing ${comp} · ${step.label}…`);
       try {
         const res = await fetch('/api/sync-bc', {
           method: 'POST',

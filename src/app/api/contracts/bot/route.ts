@@ -29,7 +29,7 @@ export async function POST(req: Request) {
 
     if (policies.length === 0) {
       return NextResponse.json({ 
-        reply: "No tienes ninguna contrato de contrato registrada para esta empresa, por lo que no puedo consultar incidencias." 
+        reply: "You have no contract registered for this company, so I cannot look up anything." 
       });
     }
 
@@ -116,6 +116,6 @@ Archivos adjuntos: ${attachmentsList.length > 0 ? attachmentsList.join(', ') : '
 
   } catch (error: any) {
     console.error('Error in Contract Bot:', error);
-    return NextResponse.json({ error: error.message || 'Error interno del bot de contratos' }, { status: 500 });
+    return NextResponse.json({ error: error.message || 'Internal error of the contracts bot' }, { status: 500 });
   }
 }

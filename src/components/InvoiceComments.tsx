@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { MessageSquare, Trash2, X } from 'lucide-react';
+import { useT } from '@/contexts/LanguageContext';
 
 // Comentarios de factura compartidos entre Cashflow y Recobros: misma tabla (CashflowComment, clave "invoice:<id>")
 // y misma API (/api/cashflow/comments), así el seguimiento de una factura es el mismo en las dos pantallas.
@@ -26,6 +27,7 @@ export function matchComments<T extends { targetKey: string }>(comments: T[], ke
 }
 
 export function useComments(company: string) {
+  const { t } = useT();
   const [comments, setComments] = useState<Comment[]>([]);
   useEffect(() => {
     fetch('/api/cashflow/comments', { cache: 'no-store' }).then(r => r.json()).then(d => setComments(Array.isArray(d) ? d : [])).catch(() => setComments([]));
@@ -42,7 +44,7 @@ export function useComments(company: string) {
   };
   const remove = async (id: number) => {
     const res = await fetch(`/api/cashflow/comments?id=${id}`, { method: 'DELETE' });
-    if (!res.ok) throw new Error('No se pudo borrar el comentario');
+    if (!res.ok) throw new Error(t('Could not delete the comment'));
     setComments(prev => prev.filter(c => c.id !== id));
   };
   return { comments, commentsFor, add, remove };
@@ -63,42 +65,43 @@ export function CommentBadge({ items, onClick }: { items: Comment[]; onClick: (e
 export function CommentsDialog({ label, items, onAdd, onDelete, onClose }: {
   label: string; items: Comment[]; onAdd: (text: string) => Promise<void>; onDelete: (id: number) => Promise<void>; onClose: () => void;
 }) {
+  const { t, tx, locale } = useT();
   const [draft, setDraft] = useState('');
   const add = async () => {
     if (!draft.trim()) return;
-    try { await onAdd(draft.trim()); setDraft(''); } catch (e: any) { alert(`No se pudo guardar el comentario: ${e.message || e}`); }
+    try { await onAdd(draft.trim()); setDraft(''); } catch (e: any) { alert(t('Could not save the comment: {error}', { error: tx(String(e.message || e)) })); }
   };
   const del = async (id: number) => {
-    if (!confirm('¿Borrar este comentario?')) return;
-    try { await onDelete(id); } catch (e: any) { alert(e.message || e); }
+    if (!confirm(t('Delete this comment?'))) return;
+    try { await onDelete(id); } catch (e: any) { alert(tx(String(e.message || e))); }
   };
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex justify-center items-center p-4" onClick={onClose}>
       <div className="bg-white border border-gray-200 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center p-5 border-b border-gray-200 bg-gray-50">
           <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2 min-w-0">
-            <MessageSquare size={18} className="shrink-0" /> <span className="truncate">Comentarios · {label}</span>
+            <MessageSquare size={18} className="shrink-0" /> <span className="truncate">{t('Comments')} · {label}</span>
           </h3>
           <button onClick={onClose} className="text-gray-900 hover:text-gray-600"><X size={20} /></button>
         </div>
         <div className="p-5 space-y-3 max-h-80 overflow-y-auto">
-          {items.length === 0 ? <p className="text-sm text-gray-500">Sin comentarios todavía.</p> : items.map(c => (
+          {items.length === 0 ? <p className="text-sm text-gray-500">{t('No comments yet.')}</p> : items.map(c => (
             <div key={c.id} className="group/comment bg-gray-50 border border-gray-200 rounded-lg p-3">
               <div className="flex justify-between items-start gap-2">
                 <p className="text-sm text-gray-900 whitespace-pre-wrap break-words">{c.text}</p>
-                <button onClick={() => del(c.id)} className="opacity-0 group-hover/comment:opacity-100 p-1 text-gray-500 hover:text-red-600 rounded transition-opacity" title="Borrar comentario"><Trash2 size={12} /></button>
+                <button onClick={() => del(c.id)} className="opacity-0 group-hover/comment:opacity-100 p-1 text-gray-500 hover:text-red-600 rounded transition-opacity" title={t('Delete comment')}><Trash2 size={12} /></button>
               </div>
-              <div className="text-[11px] text-gray-500 mt-1">{c.author ? `${c.author} · ` : ''}{new Date(c.createdAt).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}</div>
+              <div className="text-[11px] text-gray-500 mt-1">{c.author ? `${c.author} · ` : ''}{new Date(c.createdAt).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' })}</div>
             </div>
           ))}
         </div>
         <div className="p-5 border-t border-gray-200 space-y-3">
           <textarea autoFocus rows={3} value={draft} onChange={e => setDraft(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) add(); }}
-            placeholder="Escribe un comentario… (se ve también en Cashflow y Recobros)"
+            placeholder={t('Write a comment… (also shown in Cashflow and Collections)')}
             className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500" />
           <div className="flex justify-end">
-            <button onClick={add} disabled={!draft.trim()} className="px-4 py-2 rounded-lg bg-teal-600 text-white text-sm font-bold hover:bg-teal-700 disabled:opacity-50">Añadir comentario</button>
+            <button onClick={add} disabled={!draft.trim()} className="px-4 py-2 rounded-lg bg-teal-600 text-white text-sm font-bold hover:bg-teal-700 disabled:opacity-50">{t('Add comment')}</button>
           </div>
         </div>
       </div>

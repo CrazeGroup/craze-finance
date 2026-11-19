@@ -46,7 +46,7 @@ async function fetchNotes(ctx: BcContext): Promise<PurchaseNote[]> {
     rows = await bcFetchAll(odataUrl(`${ctx.customApiBase}/${entity}`, {}), ctx.token);
   } catch (e: any) {
     if (/404|not found|BadRequest_ResourceNotFound|No HTTP resource/i.test(e.message || '')) {
-      throw new NotesNotPublished(`La API custom de BC no publica la entidad "${entity}" (Record Links / Notes).`);
+      throw new NotesNotPublished(`The BC custom API does not publish the entity "${entity}" (Record Links / Notes).`);
     }
     throw e;
   }

@@ -13,7 +13,7 @@ export const maxDuration = 120;
 
 async function company() {
   const c = (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
-  if (c === 'ALL') throw new Error('Selecciona una empresa concreta.');
+  if (c === 'ALL') throw new Error('Select a specific company.');
   return c;
 }
 
@@ -55,15 +55,15 @@ export async function POST(req: Request) {
     const file = form.get('file');
     const bankNo = String(form.get('bankNo') || '');
     const journalCode = String(form.get('journalCode') || '');
-    if (!(file instanceof File)) return NextResponse.json({ error: 'Sube el extracto del banco (CSV o Excel).' }, { status: 400 });
-    if (!bankNo) return NextResponse.json({ error: 'Elige la cuenta de banco.' }, { status: 400 });
+    if (!(file instanceof File)) return NextResponse.json({ error: 'Upload the bank statement (CSV or Excel).' }, { status: 400 });
+    if (!bankNo) return NextResponse.json({ error: 'Choose the bank account.' }, { status: 400 });
 
     const all = parseBankFile(new Uint8Array(await file.arrayBuffer()), file.name);
     // Movimientos vorgemerkt / pendientes (retenidos, aún no cargados en la cuenta): no se cuadran ni se sugieren
     const held = all.filter(m => m.pending);
     const parsed = all.filter(m => !m.pending);
-    if (!all.length) return NextResponse.json({ error: 'El fichero no tiene movimientos.' }, { status: 400 });
-    if (!parsed.length) return NextResponse.json({ error: `El fichero solo tiene movimientos vorgemerkt (${held.length}, retenidos y aún no cargados en la cuenta): no hay nada que registrar.` }, { status: 400 });
+    if (!all.length) return NextResponse.json({ error: 'The file has no transactions.' }, { status: 400 });
+    if (!parsed.length) return NextResponse.json({ error: `The file only has vorgemerkt transactions (${held.length}, held and not yet charged to the account): there is nothing to post.` }, { status: 400 });
 
     const ctx = await getBcContext(companyId);
     const from = new Date(Date.parse(parsed.reduce((a, m) => (m.date < a ? m.date : a), parsed[0].date)) - 10 * 86400000).toISOString().slice(0, 10);
@@ -106,7 +106,7 @@ export async function POST(req: Request) {
       const accounts = new Set(s?.lines.map(l => l.accountNo).filter(Boolean));
       const near = freeEntries.filter(e => accounts.has(e.balNo) && Math.abs(Date.parse(e.date) - Date.parse(m.date)) <= 7 * 86400000);
       if (s && near.length) {
-        s.note = [s.note, `¿Ya registrado? ${near.map(e => `${e.docNo} ${e.date.split('-').reverse().join('.')} ${e.amount.toFixed(2)}`).join(', ')} sin cuadrar con esta cuenta`].filter(Boolean).join(' · ');
+        s.note = [s.note, `Already posted? ${near.map(e => `${e.docNo} ${e.date.split('-').reverse().join('.')} ${e.amount.toFixed(2)}`).join(', ')} unmatched on this account`].filter(Boolean).join(' · ');
       }
       return { ...m, status: 'new', matched: [], suggestion: s, doubtful: near.length > 0 };
     });
@@ -114,7 +114,7 @@ export async function POST(req: Request) {
     const bank = await bcFetchAll(odataUrl(`${ctx.apiBase}/bankAccounts`, { $filter: `number eq '${bankNo.replace(/'/g, "''")}'`, $select: 'iban' }), ctx.token).catch(() => []);
     const bankIban = String(bank[0]?.iban || '').replace(/\s/g, '').toUpperCase();
     const fileAccount = movements[0].account;
-    const warning = bankIban && fileAccount && bankIban !== fileAccount ? `El extracto es de la cuenta ${fileAccount} y la cuenta ${bankNo} de BC tiene el IBAN ${bankIban}.` : '';
+    const warning = bankIban && fileAccount && bankIban !== fileAccount ? `The statement is for account ${fileAccount}, but BC account ${bankNo} has IBAN ${bankIban}.` : '';
 
     return NextResponse.json({
       bankNo, journalCode: journal?.code || '', from, warning, cutoff, entries: entries.length, movements: results,

@@ -7,18 +7,20 @@ import { lineKey, matchComments } from '@/components/InvoiceComments';
 import * as XLSX from 'xlsx';
 import { useCompany } from '@/contexts/CompanyContext';
 import { syncFromBc } from '@/lib/syncClient';
+import { useT } from '@/contexts/LanguageContext';
 
 // Periodicidad de los pagos recurrentes (RecurringPayment.frequency)
 const FREQUENCIES = [
-  { value: 'weekly', label: 'Semanal' },
-  { value: 'monthly', label: 'Mensual' },
-  { value: 'quarterly', label: 'Trimestral' },
-  { value: 'semiannual', label: 'Semestral' },
-  { value: 'annual', label: 'Anual' },
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'monthly', label: 'Monthly' },
+  { value: 'quarterly', label: 'Quarterly' },
+  { value: 'semiannual', label: 'Semiannual' },
+  { value: 'annual', label: 'Annual' },
 ];
 
 export default function CashflowPage() {
   const { selectedCompany } = useCompany();
+  const { t, tx, locale } = useT();
   const availableCurrencies = selectedCompany === 'Craze UK' ? ['EUR', 'USD', 'GBP'] : ['EUR', 'USD', 'CHF'];
 
   const [entries, setEntries] = useState<any[]>([]);
@@ -182,14 +184,14 @@ export default function CashflowPage() {
       setComments(prev => [...prev, data]);
       setCommentDraft('');
     } catch (err: any) {
-      alert(`No se pudo guardar el comentario: ${err.message || err}`);
+      alert(t('Could not save the comment: {error}', { error: tx(String(err.message || err)) }));
     }
   };
   const deleteComment = async (id: number) => {
-    if (!confirm('¿Borrar este comentario?')) return;
+    if (!confirm(t('Delete this comment?'))) return;
     const res = await fetch(`/api/cashflow/comments?id=${id}`, { method: 'DELETE' });
     if (res.ok) setComments(prev => prev.filter(c => c.id !== id));
-    else alert('No se pudo borrar el comentario');
+    else alert(t('Could not delete the comment'));
   };
   const openComments = (e: React.MouseEvent, key: string, label: string) => {
     e.stopPropagation();
@@ -199,13 +201,13 @@ export default function CashflowPage() {
 
   const saveMinBalance = async () => {
     const amount = minDraft.trim() === '' ? null : parseFloat(minDraft.replace(/\./g, '').replace(',', '.'));
-    if (amount !== null && !isFinite(amount)) { alert('Importe no válido'); return; }
+    if (amount !== null && !isFinite(amount)) { alert(t('Invalid amount')); return; }
     const res = await fetch('/api/cashflow/min-balance', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ amount, currency: consolidatedCurrency }),
     });
     const d = await res.json();
-    if (!res.ok) { alert(d.error || 'No se pudo guardar el mínimo'); return; }
+    if (!res.ok) { alert(d.error ? tx(d.error) : t('Could not save the minimum')); return; }
     setMinBalance(d);
     setEditingMin(false);
   };
@@ -272,7 +274,7 @@ export default function CashflowPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('¿Estás seguro de eliminar esta línea manual?')) return;
+    if (!confirm(t('Are you sure you want to delete this manual line?'))) return;
     try {
       await fetch(`/api/cashflow?id=${id}`, { method: 'DELETE' });
       setSelectedEntries(prev => prev.filter(e => e.dbId !== parseInt(id)));
@@ -285,7 +287,7 @@ export default function CashflowPage() {
   const handleBulkDelete = async () => {
     const manualIds = selectedEntries.filter(e => e.isManual).map(e => e.dbId);
     if (manualIds.length === 0) {
-      if (confirm('No has seleccionado ninguna línea manual. ¿Quieres borrar TODAS las líneas manuales?')) {
+      if (confirm(t('You have not selected any manual line. Do you want to delete ALL manual lines?'))) {
         try {
           await fetch(`/api/cashflow?clearAll=true`, { method: 'DELETE' });
           setSelectedEntries(prev => prev.filter(e => !e.isManual));
@@ -297,7 +299,7 @@ export default function CashflowPage() {
       return;
     }
     
-    if (!confirm(`¿Borrar las ${manualIds.length} líneas manuales seleccionadas?`)) return;
+    if (!confirm(t('Delete the {n} selected manual lines?', { n: manualIds.length }))) return;
     try {
       await fetch(`/api/cashflow?ids=${manualIds.join(',')}`, {
         method: 'DELETE'
@@ -312,7 +314,7 @@ export default function CashflowPage() {
   const handleBulkArchive = async () => {
     if (selectedEntries.length === 0) return;
     const isArchiving = !selectedEntries[0].isArchived; 
-    if (!confirm(`¿${isArchiving ? 'Archivar' : 'Restaurar'} las ${selectedEntries.length} líneas seleccionadas?`)) return;
+    if (!confirm(isArchiving ? t('Archive the {n} selected lines?', { n: selectedEntries.length }) : t('Restore the {n} selected lines?', { n: selectedEntries.length }))) return;
     
     const manualIds = selectedEntries.filter(e => e.isManual).map(e => e.dbId);
     const invoiceIds = selectedEntries.filter(e => !e.isManual).flatMap(e => e.invoices ? e.invoices.map((i:any)=>i.id) : [e.id]);
@@ -336,7 +338,7 @@ export default function CashflowPage() {
   };
 
   const handleArchive = async (entry: any) => {
-    if (!confirm(entry.isArchived ? '¿Restaurar esta línea al Cashflow activo?' : '¿Estás seguro de que quieres archivar esta línea y sacarla del Cashflow?')) return;
+    if (!confirm(entry.isArchived ? t('Restore this line to the active Cashflow?') : t('Are you sure you want to archive this line and remove it from the Cashflow?'))) return;
     try {
       await fetch(`/api/cashflow`, {
         method: 'PUT',
@@ -365,7 +367,7 @@ export default function CashflowPage() {
     e.preventDefault();
     if (!draggedItem || draggedItem.id === targetEntry.id) return;
     
-    const confirmMsg = `¿Mover "${draggedItem.description}" a la fecha de "${targetEntry.description}" (${new Date(targetEntry.date).toLocaleDateString('es-ES')})?`;
+    const confirmMsg = t('Move "{from}" to the date of "{to}" ({date})?', { from: tx(draggedItem.description), to: tx(targetEntry.description), date: new Date(targetEntry.date).toLocaleDateString(locale) });
     if (!confirm(confirmMsg)) return;
 
     try {
@@ -433,25 +435,25 @@ export default function CashflowPage() {
     };
 
     const ws = sheet([
-      ['Fecha', 'Descripción', 'Importe', 'Saldo'],
-      [initialDate, 'Saldo Inicial', null, initialBalance],
+      [t('Date'), t('Description'), t('Amount'), t('Balance')],
+      [initialDate, t('Opening Balance'), null, initialBalance],
       ...visible.map(e => [new Date(e.date), e.description, e.amount, e.balance]),
     ], [0], [2, 3], [12, 50, 16, 16]);
 
     const commentText = (key: string) => commentsFor(key)
-      .map((c: any) => `${c.text} (${[c.author, new Date(c.createdAt).toLocaleDateString('es-ES')].filter(Boolean).join(', ')})`).join(' | ');
-    const claimText = (inv: any) => { const n = claimCountOf(inv); return n > 1 ? `${n}ª reclamación` : n ? 'Reclamada' : ''; };
+      .map((c: any) => `${c.text} (${[c.author, new Date(c.createdAt).toLocaleDateString(locale)].filter(Boolean).join(', ')})`).join(' | ');
+    const claimText = (inv: any) => { const n = claimCountOf(inv); return n > 1 ? t('Claim no. {n}', { n }) : n ? t('Claimed') : ''; };
     const detail: any[][] = [
-      ['Fecha', 'Descripción', 'Factura', 'Estado', 'Vencimiento', 'Importe', 'Saldo', 'Reclamación', 'Última reclamación', 'Comentarios'],
-      [initialDate, 'Saldo Inicial', '', '', null, null, initialBalance, '', null, ''],
+      [t('Date'), t('Description'), t('Invoice'), t('Status'), t('Due Date'), t('Amount'), t('Balance'), t('Claim'), t('Last claim'), t('Comments')],
+      [initialDate, t('Opening Balance'), '', '', null, null, initialBalance, '', null, ''],
     ];
     const levels: number[] = [0, 0];
     for (const e of visible) {
       const invoices: any[] = e.invoices || [];
       const claimed = invoices.filter((i: any) => i.lastReminderDate);
       detail.push([
-        new Date(e.date), e.description, invoices.length ? `${invoices.length} facturas` : '', '', null, e.amount, e.balance,
-        claimed.length ? `${claimed.length}/${invoices.length} reclamadas` : '', null, commentText(lineKey(e)),
+        new Date(e.date), e.description, invoices.length ? t('{n} invoices', { n: invoices.length }) : '', '', null, e.amount, e.balance,
+        claimed.length ? t('{claimed}/{total} claimed', { claimed: claimed.length, total: invoices.length }) : '', null, commentText(lineKey(e)),
       ]);
       levels.push(0);
       for (const inv of invoices) {
@@ -469,14 +471,14 @@ export default function CashflowPage() {
 
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, `Cashflow ${currentCurrency}`);
-    XLSX.utils.book_append_sheet(wb, wsDetail, 'Detalle facturas');
+    XLSX.utils.book_append_sheet(wb, wsDetail, t('Invoice detail'));
     const today = new Date().toISOString().substring(0, 10);
     XLSX.writeFile(wb, `Cashflow_${selectedCompany}_${currentCurrency}_${today}.xlsx`.replace(/\s+/g, '_'));
   };
 
   const handleExportTemplate = () => {
     const ws = XLSX.utils.json_to_sheet([
-      { fecha: '2026-08-01', supplier: 'Ejemplo Pago Alquiler', amount: -1500.50 }
+      { fecha: '2026-08-01', supplier: t('Example Rent Payment'), amount: -1500.50 }
     ]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Template');
@@ -511,7 +513,7 @@ export default function CashflowPage() {
         }).filter(r => r.date && r.description && !isNaN(r.amount));
 
         if (newEntries.length === 0) {
-          alert('El archivo no tiene el formato correcto o está vacío. Asegúrate de tener las columnas: fecha, supplier, amount.');
+          alert(t('The file does not have the correct format or is empty. Make sure it has the columns: fecha, supplier, amount.'));
           return;
         }
 
@@ -524,11 +526,11 @@ export default function CashflowPage() {
           body: JSON.stringify(entriesWithCurrency)
         });
         
-        alert(`¡Se han importado ${newEntries.length} registros en la cuenta ${currentCurrency}!`);
+        alert(t('{n} records have been imported into the {currency} account!', { n: newEntries.length, currency: currentCurrency }));
         fetchCashflow();
       } catch (err) {
         console.error('Failed to import Excel:', err);
-        alert('Error importando el archivo.');
+        alert(t('Error importing the file.'));
       } finally {
         setSyncing(false);
         if (fileInputRef.current) fileInputRef.current.value = '';
@@ -603,7 +605,7 @@ export default function CashflowPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      if (!res.ok) { alert((await res.json().catch(() => ({}))).error || 'No se pudo guardar'); return; }
+      if (!res.ok) { const err = (await res.json().catch(() => ({}))).error; alert(err ? tx(err) : t('Could not save')); return; }
       setEditingRecurring(null);
       fetchRecurringPayments();
       fetchCashflow();
@@ -614,7 +616,7 @@ export default function CashflowPage() {
     try {
       // Los manuales se borran; los de BC se quedan en la lista como no añadidos
       if (isManualRecurring(rec)) {
-        if (!confirm(`¿Borrar el pago recurrente "${rec.description}"?`)) return;
+        if (!confirm(t('Delete the recurring payment "{name}"?', { name: rec.description }))) return;
         await fetch(`/api/cashflow/recurring?id=${rec.id}`, { method: 'DELETE' });
       } else await fetch('/api/cashflow/recurring', {
         method: 'PUT',
@@ -631,7 +633,7 @@ export default function CashflowPage() {
   const daysSince = (date: string) => Math.max(0, Math.floor((Date.now() - new Date(date).getTime()) / 86400000));
   const claimLabel = (date: string) => {
     const d = daysSince(date);
-    return `${new Date(date).toLocaleDateString('es-ES')} · ${d === 0 ? 'hoy' : d === 1 ? 'hace 1 día' : `hace ${d} días`}`;
+    return `${new Date(date).toLocaleDateString(locale)} · ${d === 0 ? t('today') : d === 1 ? t('1 day ago') : t('{n} days ago', { n: d })}`;
   };
 
   // Nº de reclamaciones (las reclamadas antes de existir el contador cuentan como 1)
@@ -663,7 +665,7 @@ export default function CashflowPage() {
         ? { ...e, invoices: e.invoices.map((i: any) => updated.has(i.id) ? { ...i, ...updated.get(i.id) } : i) }
         : e));
     } catch (err: any) {
-      alert(`No se pudo guardar la marca: ${err.message || err}`);
+      alert(t('Could not save the mark: {error}', { error: tx(String(err.message || err)) }));
     }
   };
 
@@ -690,10 +692,10 @@ export default function CashflowPage() {
         ? { ...e, invoices: e.invoices.map((i: any) => updated.has(i.id) ? { ...i, ...updated.get(i.id) } : i) }
         : e));
     } catch (err: any) {
-      alert(`No se pudo guardar la llamada: ${err.message || err}`);
+      alert(t('Could not save the call: {error}', { error: tx(String(err.message || err)) }));
     }
   };
-  const callText = (count: number) => count > 1 ? `Llamado ${count}×` : 'Llamado';
+  const callText = (count: number) => count > 1 ? t('Called {n}×', { n: count }) : t('Called');
 
   // Con "Excluir reclamadas" el importe de las facturas reclamadas no cuenta en el saldo acumulado
   let runningBalance = initialBalance;
@@ -724,7 +726,7 @@ export default function CashflowPage() {
   const consolidatedBelowMin = consolidatedInMin !== null && minBalance !== null && consolidatedInMin < minBalance.amount;
   const firstBelowMin = minBalance ? balancedEntries.find(e => belowMin(e)) : undefined;
   const belowMinCount = minBalance ? balancedEntries.filter(e => belowMin(e)).length : 0;
-  const fmtMoney = (v: number, curr: string) => `${getCurrencySymbol(curr)}${v.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const fmtMoney = (v: number, curr: string) => `${getCurrencySymbol(curr)}${v.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   // Líneas visibles: filtro de tipo + buscador de texto (descripción, cliente y nº de las facturas agrupadas)
   const searchTerm = search.trim().toLowerCase();
@@ -752,17 +754,17 @@ export default function CashflowPage() {
         <div className="flex flex-wrap justify-between items-end gap-4 mb-8 sticky top-0 z-10 bg-gray-50/95 backdrop-blur-md pb-4 pt-6 -mt-6 border-b border-gray-200">
           <div>
             <h1 className="text-4xl font-black text-black mb-2">
-              Previsión de Tesorería (Cashflow)
+              {t('Cash Forecast (Cashflow)')}
             </h1>
             <div className="flex flex-wrap items-center gap-4">
-              <p className="text-gray-900 font-bold text-sm whitespace-nowrap">Flujo de caja basado en cobros y entradas manuales.</p>
+              <p className="text-gray-900 font-bold text-sm whitespace-nowrap">{t('Cash flow based on collections and manual entries.')}</p>
               <div className="flex bg-white rounded-lg p-1 border border-gray-200 items-center whitespace-nowrap">
-                <button onClick={() => setFilterType('ALL')} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${filterType === 'ALL' ? 'bg-gray-200 text-gray-900' : 'text-gray-900 font-bold hover:text-gray-900 hover:bg-gray-50'}`}>Todos</button>
-                <button onClick={() => setFilterType('AUTO')} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${filterType === 'AUTO' ? 'bg-teal-500/30 text-teal-700 font-bold' : 'text-gray-900 font-bold hover:text-gray-900 hover:bg-gray-50'}`}>Automáticos</button>
-                <button onClick={() => setFilterType('MANUAL')} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${filterType === 'MANUAL' ? 'bg-blue-500/30 text-blue-700 font-bold' : 'text-gray-900 font-bold hover:text-gray-900 hover:bg-gray-50'}`}>Manuales</button>
+                <button onClick={() => setFilterType('ALL')} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${filterType === 'ALL' ? 'bg-gray-200 text-gray-900' : 'text-gray-900 font-bold hover:text-gray-900 hover:bg-gray-50'}`}>{t('All lines')}</button>
+                <button onClick={() => setFilterType('AUTO')} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${filterType === 'AUTO' ? 'bg-teal-500/30 text-teal-700 font-bold' : 'text-gray-900 font-bold hover:text-gray-900 hover:bg-gray-50'}`}>{t('Automatic lines')}</button>
+                <button onClick={() => setFilterType('MANUAL')} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${filterType === 'MANUAL' ? 'bg-blue-500/30 text-blue-700 font-bold' : 'text-gray-900 font-bold hover:text-gray-900 hover:bg-gray-50'}`}>{t('Manual lines')}</button>
                 <div className="w-px h-4 bg-white/10 mx-2"></div>
                 <button onClick={() => setShowArchived(!showArchived)} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${showArchived ? 'bg-purple-500/30 text-purple-700 font-bold border border-purple-500/50' : 'text-gray-900 font-bold hover:text-purple-700 font-bold hover:bg-purple-500/10'}`}>
-                  {showArchived ? 'Ocultar Archivadas' : 'Ver Archivadas'}
+                  {showArchived ? t('Hide Archived') : t('Show Archived')}
                 </button>
               </div>
               <div className="relative">
@@ -771,21 +773,21 @@ export default function CashflowPage() {
                   type="text"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  placeholder="Buscar (ej. Amazon)..."
+                  placeholder={t('Search (e.g. Amazon)...')}
                   className="w-56 bg-white border border-gray-200 rounded-lg pl-8 pr-7 py-1.5 text-sm text-gray-900 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
                 />
                 {search && (
-                  <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-900" title="Limpiar búsqueda">
+                  <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-900" title={t('Clear search')}>
                     <X size={14} />
                   </button>
                 )}
               </div>
-              <div className={`flex items-center gap-2 bg-white border rounded-lg px-3 py-1 text-sm whitespace-nowrap ${untilDate ? 'border-teal-500 ring-1 ring-teal-500' : 'border-gray-200'}`} title="Mostrar solo las líneas hasta esta fecha (incluida)">
+              <div className={`flex items-center gap-2 bg-white border rounded-lg px-3 py-1 text-sm whitespace-nowrap ${untilDate ? 'border-teal-500 ring-1 ring-teal-500' : 'border-gray-200'}`} title={t('Show only lines up to this date (inclusive)')}>
                 <Calendar size={14} className="text-gray-400" />
-                <span className="text-gray-700 font-semibold">Hasta</span>
+                <span className="text-gray-700 font-semibold">{t('Until')}</span>
                 <input type="date" value={untilDate} onChange={e => setUntilDate(e.target.value)} className="bg-transparent text-gray-900 focus:outline-none" />
                 {untilDate && (
-                  <button onClick={() => setUntilDate('')} className="text-gray-400 hover:text-gray-900" title="Quitar filtro de fecha">
+                  <button onClick={() => setUntilDate('')} className="text-gray-400 hover:text-gray-900" title={t('Remove date filter')}>
                     <X size={14} />
                   </button>
                 )}
@@ -803,41 +805,41 @@ export default function CashflowPage() {
             <button 
               onClick={handleBulkDelete}
               className="flex items-center gap-2 whitespace-nowrap px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-gray-700 font-bold rounded-lg border border-red-500/20 transition-colors text-sm"
-              title={selectedEntries.filter(e => e.isManual).length > 0 ? "Borrar Manuales Seleccionadas" : "Borrar Todo (Manuales)"}
+              title={selectedEntries.filter(e => e.isManual).length > 0 ? t('Delete Selected Manual Lines') : t('Delete All (Manual)')}
             >
-              <Trash2 size={16} /> {selectedEntries.filter(e => e.isManual).length > 0 ? `Borrar (${selectedEntries.filter(e => e.isManual).length})` : 'Borrar Todas'}
+              <Trash2 size={16} /> {selectedEntries.filter(e => e.isManual).length > 0 ? t('Delete ({n})', { n: selectedEntries.filter(e => e.isManual).length }) : t('Delete All')}
             </button>
             {selectedEntries.length > 0 && (
               <button 
                 onClick={handleBulkArchive}
                 className="flex items-center gap-2 whitespace-nowrap px-4 py-2 bg-purple-500/10 hover:bg-purple-500/20 text-purple-700 font-bold rounded-lg border border-purple-500/20 transition-colors text-sm"
-                title="Archivar Seleccionadas"
+                title={t('Archive Selected')}
               >
-                <Archive size={16} /> Archivar ({selectedEntries.length})
+                <Archive size={16} /> {t('Archive ({n})', { n: selectedEntries.length })}
               </button>
             )}
             <button 
               onClick={handleExportCashflow}
               disabled={loading}
               className="flex items-center gap-2 whitespace-nowrap px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-gray-900 font-bold rounded-lg border border-emerald-500/20 transition-colors text-sm"
-              title="Exportar el cashflow en pantalla a Excel"
+              title={t('Export the on-screen cashflow to Excel')}
             >
-              <Download size={16} /> Exportar Excel
+              <Download size={16} /> {t('Export Excel')}
             </button>
             <button 
               onClick={handleExportTemplate}
               className="flex items-center gap-2 whitespace-nowrap px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-gray-900 font-bold rounded-lg border border-emerald-500/20 transition-colors text-sm"
-              title="Descargar Plantilla Excel"
+              title={t('Download Excel Template')}
             >
-              <Download size={16} /> Plantilla
+              <Download size={16} /> {t('Template')}
             </button>
             <button 
               onClick={() => fileInputRef.current?.click()}
               disabled={syncing}
               className="flex items-center gap-2 whitespace-nowrap px-4 py-2 bg-blue-500/10 hover:bg-blue-500/20 text-black rounded-lg border border-blue-500/20 transition-colors text-sm"
-              title="Importar Excel"
+              title={t('Import Excel')}
             >
-              <Upload size={16} className={syncing ? "animate-pulse" : ""} /> Importar Excel
+              <Upload size={16} className={syncing ? "animate-pulse" : ""} /> {t('Import Excel')}
             </button>
             
             <button 
@@ -846,19 +848,19 @@ export default function CashflowPage() {
               className="flex items-center gap-2 whitespace-nowrap px-4 py-2 bg-gray-50 hover:bg-gray-200 text-gray-900 rounded-lg border border-gray-200 transition-colors text-sm"
             >
               <RefreshCw size={16} className={syncing ? "animate-spin text-black" : "text-gray-900 font-bold"} />
-              {syncing ? 'Sincronizando...' : 'Actualizar Local'}
+              {syncing ? t('Syncing...') : t('Refresh Local')}
             </button>
             <button 
               onClick={openAddModal}
               className="flex items-center gap-2 whitespace-nowrap px-4 py-2 bg-black hover:bg-gray-800 text-white rounded-lg shadow-lg font-medium transition-all text-sm"
             >
-              <Plus size={16} /> Añadir Línea
+              <Plus size={16} /> {t('Add Line')}
             </button>
             <button 
               onClick={openRecurringModal}
               className="flex items-center gap-2 whitespace-nowrap px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg shadow-lg font-medium transition-all text-sm"
             >
-              <Calendar size={16} /> Configurar Recurrentes
+              <Calendar size={16} /> {t('Configure Recurring')}
             </button>
           </div>
         </div>
@@ -876,10 +878,10 @@ export default function CashflowPage() {
                     : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
                 }`}
               >
-                Cuenta {curr}
+                {t('Account {currency}', { currency: curr })}
                 {allBalances[curr] !== undefined && (
                   <span className={`ml-2 px-2 py-0.5 rounded text-xs font-black ${currentCurrency === curr ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-700'}`}>
-                    {getCurrencySymbol(curr)}{allBalances[curr].toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {getCurrencySymbol(curr)}{allBalances[curr].toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 )}
               </button>
@@ -888,16 +890,16 @@ export default function CashflowPage() {
           
           <div className="flex flex-wrap items-center gap-3">
           <div className="flex flex-col items-end gap-1">
-            <button onClick={() => setExcludeClaimed(!excludeClaimed)} className={`flex items-center gap-2 whitespace-nowrap px-4 py-2 rounded-lg border text-sm font-bold transition-all ${excludeClaimed ? 'bg-amber-500/20 text-amber-800 border-amber-500/50' : 'bg-white text-gray-900 border-gray-200 hover:bg-amber-500/10 hover:text-amber-800'}`} title="Incluir o excluir del saldo los cobros ya reclamados al cliente">
-              <MailCheck size={16} /> {excludeClaimed ? 'Reclamadas excluidas del saldo' : 'Excluir reclamadas del saldo'}
+            <button onClick={() => setExcludeClaimed(!excludeClaimed)} className={`flex items-center gap-2 whitespace-nowrap px-4 py-2 rounded-lg border text-sm font-bold transition-all ${excludeClaimed ? 'bg-amber-500/20 text-amber-800 border-amber-500/50' : 'bg-white text-gray-900 border-gray-200 hover:bg-amber-500/10 hover:text-amber-800'}`} title={t('Include or exclude from the balance the receipts already claimed from the customer')}>
+              <MailCheck size={16} /> {excludeClaimed ? t('Claimed excluded from balance') : t('Exclude claimed from balance')}
             </button>
             <span className={`text-xs font-bold whitespace-nowrap ${excludeClaimed ? 'text-amber-700' : 'text-gray-500'}`}>
-              {excludeClaimed ? 'Total fuera del saldo: −' : 'Total reclamado: '}{getCurrencySymbol(currentCurrency)}{claimedTotal.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {excludeClaimed ? t('Total outside the balance:') + ' −' : t('Total claimed:') + ' '}{getCurrencySymbol(currentCurrency)}{claimedTotal.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
           {totalEurSum !== null && (
             <div className="bg-emerald-500/10 border border-emerald-500/20 px-4 py-2 rounded-lg flex items-center gap-3">
-              <span className="text-emerald-800 font-bold text-sm uppercase tracking-wider whitespace-nowrap">Saldo Consolidado</span>
+              <span className="text-emerald-800 font-bold text-sm uppercase tracking-wider whitespace-nowrap">{t('Consolidated Balance')}</span>
               <select 
                 value={consolidatedCurrency} 
                 onChange={(e) => setConsolidatedCurrency(e.target.value)}
@@ -910,18 +912,18 @@ export default function CashflowPage() {
               </select>
               <span className="text-emerald-700 font-black text-lg">
                 {getCurrencySymbol(consolidatedCurrency)}
-                {(totalEurSum * (exchangeRates[consolidatedCurrency] || 1)).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {(totalEurSum * (exchangeRates[consolidatedCurrency] || 1)).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
           )}
           <div className={`px-4 py-2 rounded-lg border flex items-center gap-3 ${consolidatedBelowMin ? 'bg-red-500/10 border-red-500/40' : 'bg-white border-gray-200'}`}>
-            <span className={`font-bold text-sm uppercase tracking-wider whitespace-nowrap ${consolidatedBelowMin ? 'text-red-800' : 'text-gray-700'}`}>Min. Saldo Consolidado</span>
+            <span className={`font-bold text-sm uppercase tracking-wider whitespace-nowrap ${consolidatedBelowMin ? 'text-red-800' : 'text-gray-700'}`}>{t('Min. Consolidated Balance')}</span>
             {editingMin ? (
               <>
                 <input autoFocus value={minDraft} onChange={e => setMinDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') saveMinBalance(); if (e.key === 'Escape') setEditingMin(false); }}
-                  placeholder={`Importe en ${consolidatedCurrency} (vacío = sin mínimo)`} className="w-56 border border-gray-300 rounded px-2 py-1 text-sm" />
-                <button onClick={saveMinBalance} className="p-1.5 text-emerald-700 hover:bg-emerald-500/10 rounded" title="Guardar"><Save size={16} /></button>
-                <button onClick={() => setEditingMin(false)} className="p-1.5 text-gray-500 hover:bg-gray-100 rounded" title="Cancelar"><X size={16} /></button>
+                  placeholder={t('Amount in {currency} (empty = no minimum)', { currency: consolidatedCurrency })} className="w-56 border border-gray-300 rounded px-2 py-1 text-sm" />
+                <button onClick={saveMinBalance} className="p-1.5 text-emerald-700 hover:bg-emerald-500/10 rounded" title={t('Save')}><Save size={16} /></button>
+                <button onClick={() => setEditingMin(false)} className="p-1.5 text-gray-500 hover:bg-gray-100 rounded" title={t('Cancel')}><X size={16} /></button>
               </>
             ) : (
               <>
@@ -929,7 +931,7 @@ export default function CashflowPage() {
                   {minBalance ? fmtMoney(minBalance.amount, minBalance.currency) : '—'}
                 </span>
                 <button onClick={() => { setMinDraft(minBalance ? String(minBalance.amount).replace('.', ',') : ''); setEditingMin(true); }}
-                  className="p-1.5 text-gray-500 hover:text-black hover:bg-gray-100 rounded" title={`Fijar el mínimo (en ${consolidatedCurrency}, la divisa del saldo consolidado)`}>
+                  className="p-1.5 text-gray-500 hover:text-black hover:bg-gray-100 rounded" title={t('Set the minimum (in {currency}, the currency of the consolidated balance)', { currency: consolidatedCurrency })}>
                   <Edit2 size={14} />
                 </button>
               </>
@@ -943,11 +945,11 @@ export default function CashflowPage() {
             <AlertTriangle size={18} className="mt-0.5 shrink-0" />
             <div className="space-y-0.5">
               {consolidatedBelowMin && consolidatedInMin !== null && (
-                <p className="font-bold">El saldo consolidado ({fmtMoney(consolidatedInMin, minBalance.currency)}) está por debajo del mínimo de {fmtMoney(minBalance.amount, minBalance.currency)}.</p>
+                <p className="font-bold">{t('The consolidated balance ({balance}) is below the minimum of {min}.', { balance: fmtMoney(consolidatedInMin, minBalance.currency), min: fmtMoney(minBalance.amount, minBalance.currency) })}</p>
               )}
               {firstBelowMin && (
                 <p>
-                  Contando todas las cuentas, el saldo consolidado baja del mínimo el <b>{new Date(firstBelowMin.date).toLocaleDateString('es-ES')}</b> ({fmtMoney(consolidatedByEntry.get(firstBelowMin)!, minBalance.currency)}; cuenta {currentCurrency}: {fmtMoney(firstBelowMin.balance, currentCurrency)}) · {belowMinCount} movimiento(s) por debajo, marcados en la tabla.
+                  {t('Counting all accounts, the consolidated balance drops below the minimum on')} <b>{new Date(firstBelowMin.date).toLocaleDateString(locale)}</b> ({t('{balance}; account {currency}: {accountBalance}', { balance: fmtMoney(consolidatedByEntry.get(firstBelowMin)!, minBalance.currency), currency: currentCurrency, accountBalance: fmtMoney(firstBelowMin.balance, currentCurrency) })}) · {t('{n} transaction(s) below it, marked in the table.', { n: belowMinCount })}
                 </p>
               )}
             </div>
@@ -978,18 +980,18 @@ export default function CashflowPage() {
                         checked={visibleEntries.length > 0 && visibleEntries.every(v => selectedIds.has(v.id))}
                       />
                     </th>
-                    <th className="p-4">Fecha</th>
-                    <th className="p-4">Supplier o Description</th>
+                    <th className="p-4">{t('Date')}</th>
+                    <th className="p-4">{t('Supplier or Description')}</th>
                     <th className="p-4 text-right">Amount</th>
                     <th className="p-4 text-right">Balance</th>
-                    <th className="p-4 text-center">Acciones</th>
+                    <th className="p-4 text-center">{t('Actions')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   <tr className="bg-gray-50/50 border-b-2 border-gray-200 font-medium">
                     <td className="p-4 text-center text-slate-500">-</td>
                     <td className="p-4 text-gray-700 font-semibold">-</td>
-                    <td className="p-4 font-medium text-gray-700 font-semibold">Saldo Inicial ({initialBalanceDate})</td>
+                    <td className="p-4 font-medium text-gray-700 font-semibold">{t('Opening Balance ({date})', { date: initialBalanceDate })}</td>
                     <td className="p-4 text-right text-gray-700 font-semibold">-</td>
                     <td className={`p-4 text-right group relative flex justify-end items-center gap-2 ${initialBalance <= -1000000 ? 'text-purple-600 font-black text-lg' : initialBalance < 0 ? 'text-red-600 font-bold' : 'text-emerald-600 font-bold'}`}>
                       {isEditingBalance ? (
@@ -1000,7 +1002,7 @@ export default function CashflowPage() {
                         </div>
                       ) : (
                         <>
-                          {getCurrencySymbol(currentCurrency)}{initialBalance.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+                          {getCurrencySymbol(currentCurrency)}{initialBalance.toLocaleString(locale, { minimumFractionDigits: 2 })}
                           <button onClick={() => { setIsEditingBalance(true); setNewBalance(initialBalance.toString()); }} className="opacity-0 group-hover:opacity-100 p-1 text-black hover:bg-blue-400/20 rounded transition-all"><Edit2 size={12}/></button>
                         </>
                       )}
@@ -1009,7 +1011,7 @@ export default function CashflowPage() {
                   </tr>
 
                   {visibleEntries.length === 0 ? (
-                     <tr><td colSpan={6} className="p-8 text-center text-gray-700 font-semibold">{searchTerm || untilDate ? 'No hay líneas con estos filtros' : 'No hay movimientos a partir del 29/07/2026'}</td></tr>
+                     <tr><td colSpan={6} className="p-8 text-center text-gray-700 font-semibold">{searchTerm || untilDate ? t('No lines match these filters') : t('No transactions from 29/07/2026 onwards')}</td></tr>
                   ) : (
                     visibleEntries.map((entry, idx) => (
                       <React.Fragment key={entry.id}>
@@ -1021,7 +1023,7 @@ export default function CashflowPage() {
                           className={`hover:bg-gray-50 transition-colors group cursor-pointer ${draggedItem?.id === entry.id ? 'opacity-50' : ''}`}
                           onClick={() => entry.isGroup && toggleGroup(entry.id)}
                         >
-                          <td className="p-4 text-center cursor-move" title="Arrastrar para mover">
+                          <td className="p-4 text-center cursor-move" title={t('Drag to move')}>
                             <div className="flex items-center justify-center gap-2">
                               <span className="text-gray-400 cursor-move">⋮⋮</span>
                               <input 
@@ -1037,7 +1039,7 @@ export default function CashflowPage() {
                             </div>
                           </td>
                           <td className="p-4 font-medium text-gray-600">
-                            {new Date(entry.date).toLocaleDateString('es-ES')}
+                            {new Date(entry.date).toLocaleDateString(locale)}
                           </td>
                           <td className="p-4">
                             <div className="flex items-center gap-2">
@@ -1049,19 +1051,19 @@ export default function CashflowPage() {
                               {entry.isManual ? (
                                 <span className="bg-blue-500/20 text-blue-700 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-blue-500/30">Manual</span>
                               ) : entry.isRecurring ? (
-                                <span className="bg-indigo-500/20 text-indigo-700 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-indigo-500/30">Recurrente</span>
+                                <span className="bg-indigo-500/20 text-indigo-700 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-indigo-500/30">{t('Recurring')}</span>
                               ) : (
                                 <span className="bg-teal-500/20 text-teal-700 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-gray-200">Auto</span>
                               )}
-                              <span className="text-gray-900">{entry.description}</span>
-                              {entry.isGroup && <span className="text-xs text-slate-500">({entry.invoices?.length} facturas)</span>}
+                              <span className="text-gray-900">{tx(entry.description)}</span>
+                              {entry.isGroup && <span className="text-xs text-slate-500">({t('{n} invoices', { n: entry.invoices?.length })})</span>}
                               {claimedInvoices(entry).length > 0 && (() => {
                                 const claimed = claimedInvoices(entry);
                                 const last = claimed.map((i: any) => i.lastReminderDate).sort().pop();
                                 const maxCount = Math.max(...claimed.map(claimCountOf));
                                 return (
-                                  <span className="flex items-center gap-1 bg-amber-500/15 text-amber-800 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-amber-500/30" title={`Último recordatorio: ${claimLabel(last)}`}>
-                                    <MailCheck size={11} /> Reclamada {claimed.length}/{entry.invoices.length}{maxCount > 1 ? ` · ${maxCount}ª reclamación` : ''} · {claimLabel(last)}
+                                  <span className="flex items-center gap-1 bg-amber-500/15 text-amber-800 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-amber-500/30" title={t('Last reminder: {when}', { when: claimLabel(last) })}>
+                                    <MailCheck size={11} /> {t('Claimed')} {claimed.length}/{entry.invoices.length}{maxCount > 1 ? ` · ${t('Claim no. {n}', { n: maxCount })}` : ''} · {claimLabel(last)}
                                   </span>
                                 );
                               })()}
@@ -1070,7 +1072,7 @@ export default function CashflowPage() {
                                 const last = called.map((i: any) => i.lastCallDate).sort().pop();
                                 const maxCount = Math.max(...called.map((i: any) => i.callCount || 1));
                                 return (
-                                  <span className="flex items-center gap-1 bg-violet-500/15 text-violet-800 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-violet-500/30" title={`Última llamada: ${claimLabel(last)}`}>
+                                  <span className="flex items-center gap-1 bg-violet-500/15 text-violet-800 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-violet-500/30" title={t('Last call: {when}', { when: claimLabel(last) })}>
                                     <PhoneCall size={11} /> {callText(maxCount)}{called.length < entry.invoices.length ? ` ${called.length}/${entry.invoices.length}` : ''} · {claimLabel(last)}
                                   </span>
                                 );
@@ -1085,33 +1087,33 @@ export default function CashflowPage() {
                           </td>
                           <td className="p-4 text-right font-medium">
                             <span className={entry.amount > 0 ? "text-emerald-600 font-bold" : entry.amount < 0 ? "text-red-600 font-bold" : "text-gray-700 font-semibold font-bold"}>
-                              {entry.amount > 0 ? '+' : ''}{getCurrencySymbol(currentCurrency)}{entry.amount.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+                              {entry.amount > 0 ? '+' : ''}{getCurrencySymbol(currentCurrency)}{entry.amount.toLocaleString(locale, { minimumFractionDigits: 2 })}
                             </span>
                             {entry.excludedAmount !== 0 && (
-                              <div className="text-[11px] text-amber-700 font-semibold">−{getCurrencySymbol(currentCurrency)}{entry.excludedAmount.toLocaleString('es-ES', { minimumFractionDigits: 2 })} reclamado, fuera del saldo</div>
+                              <div className="text-[11px] text-amber-700 font-semibold">−{getCurrencySymbol(currentCurrency)}{entry.excludedAmount.toLocaleString(locale, { minimumFractionDigits: 2 })} {t('claimed, outside the balance')}</div>
                             )}
                           </td>
                           <td className={`p-4 text-right ${belowMin(entry) ? 'bg-red-50' : ''}`}>
                             {belowMin(entry) && (
-                              <span className="inline-flex items-center gap-1 mr-2 bg-red-500/15 text-red-700 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-red-500/30" title={`Saldo consolidado ${fmtMoney(consolidatedByEntry.get(entry)!, minBalance!.currency)}, por debajo del mínimo de ${fmtMoney(minBalance!.amount, minBalance!.currency)}`}>
-                                <AlertTriangle size={11} /> Bajo mínimo
+                              <span className="inline-flex items-center gap-1 mr-2 bg-red-500/15 text-red-700 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-red-500/30" title={t('Consolidated balance {balance}, below the minimum of {min}', { balance: fmtMoney(consolidatedByEntry.get(entry)!, minBalance!.currency), min: fmtMoney(minBalance!.amount, minBalance!.currency) })}>
+                                <AlertTriangle size={11} /> {t('Below minimum')}
                               </span>
                             )}
                             <span className={entry.balance <= -1000000 ? 'text-purple-600 font-black text-lg' : entry.balance < 0 ? 'text-red-600 font-bold text-base' : 'text-emerald-600 font-bold text-base'}>
-                              {getCurrencySymbol(currentCurrency)}{entry.balance.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+                              {getCurrencySymbol(currentCurrency)}{entry.balance.toLocaleString(locale, { minimumFractionDigits: 2 })}
                             </span>
                           </td>
                           <td className="p-4 text-center">
                             <div className="flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button onClick={(e) => openComments(e, lineKey(entry), entry.description)} className={`p-1.5 rounded-md transition-colors hover:bg-sky-400/20 ${commentsFor(lineKey(entry)).length ? 'text-sky-700' : 'text-black'}`} title="Comentarios de la línea">
+                              <button onClick={(e) => openComments(e, lineKey(entry), entry.description)} className={`p-1.5 rounded-md transition-colors hover:bg-sky-400/20 ${commentsFor(lineKey(entry)).length ? 'text-sky-700' : 'text-black'}`} title={t('Line comments')}>
                                 <MessageSquare size={14} />
                               </button>
                               {!entry.isRecurring && (
                                 <>
-                                  <button onClick={(e) => { e.stopPropagation(); openEditModal(entry); }} className="p-1.5 text-black hover:bg-blue-400/20 rounded-md transition-colors" title="Editar Fecha/Registro">
+                                  <button onClick={(e) => { e.stopPropagation(); openEditModal(entry); }} className="p-1.5 text-black hover:bg-blue-400/20 rounded-md transition-colors" title={t('Edit Date/Entry')}>
                                     <Edit2 size={14} />
                                   </button>
-                                  <button onClick={(e) => { e.stopPropagation(); handleArchive(entry); }} className="p-1.5 text-black hover:bg-purple-400/20 rounded-md transition-colors" title={entry.isArchived ? "Restaurar al cashflow" : "Archivar (ocultar del cashflow)"}>
+                                  <button onClick={(e) => { e.stopPropagation(); handleArchive(entry); }} className="p-1.5 text-black hover:bg-purple-400/20 rounded-md transition-colors" title={entry.isArchived ? t('Restore to cashflow') : t('Archive (hide from cashflow)')}>
                                     {entry.isArchived ? <RefreshCw size={14} /> : <Archive size={14} />}
                                   </button>
                                 </>
@@ -1119,7 +1121,7 @@ export default function CashflowPage() {
                               {entry.isGroup && entry.invoices?.length > 0 && (() => {
                                 const anyClaimed = claimedInvoices(entry).length > 0;
                                 return (
-                                  <button onClick={(e) => onClaimClick(e, entry.invoices)} className={`p-1.5 rounded-md transition-colors ${anyClaimed ? 'text-amber-700 hover:bg-amber-400/20' : 'text-black hover:bg-amber-400/20'}`} title={anyClaimed ? 'Otra reclamación o quitar la marca de reclamada' : 'Marcar todas las facturas como reclamadas'}>
+                                  <button onClick={(e) => onClaimClick(e, entry.invoices)} className={`p-1.5 rounded-md transition-colors ${anyClaimed ? 'text-amber-700 hover:bg-amber-400/20' : 'text-black hover:bg-amber-400/20'}`} title={anyClaimed ? t('Another claim or remove the claimed mark') : t('Mark all invoices as claimed')}>
                                     <MailCheck size={14} />
                                   </button>
                                 );
@@ -1127,20 +1129,20 @@ export default function CashflowPage() {
                               {entry.isGroup && entry.invoices?.length > 0 && (() => {
                                 const anyCalled = calledInvoices(entry).length > 0;
                                 return (
-                                  <button onClick={(e) => onCallClick(e, entry.invoices)} className={`p-1.5 rounded-md transition-colors hover:bg-violet-400/20 ${anyCalled ? 'text-violet-700' : 'text-black'}`} title={anyCalled ? 'Otra llamada o quitar la marca de llamado' : 'Marcar como llamado (cliente llamado para reclamar el cobro)'}>
+                                  <button onClick={(e) => onCallClick(e, entry.invoices)} className={`p-1.5 rounded-md transition-colors hover:bg-violet-400/20 ${anyCalled ? 'text-violet-700' : 'text-black'}`} title={anyCalled ? t('Another call or remove the called mark') : t('Mark as called (customer phoned to chase the payment)')}>
                                     <PhoneCall size={14} />
                                   </button>
                                 );
                               })()}
                               {entry.isGroup && entry.customer && (
                                 <>
-                                  <button onClick={(e) => { e.stopPropagation(); openEmailModal(entry); }} className="p-1.5 text-gray-900 font-bold hover:bg-emerald-400/20 rounded-md transition-colors" title="Enviar recordatorio al cliente (1º, 2º con comercial en copia, 3º con aviso de aseguradora); sin facturas marcadas, todas las de la línea">
+                                  <button onClick={(e) => { e.stopPropagation(); openEmailModal(entry); }} className="p-1.5 text-gray-900 font-bold hover:bg-emerald-400/20 rounded-md transition-colors" title={t('Send a reminder to the customer (1st, 2nd with salesperson in CC, 3rd with insurer warning); with no invoices ticked, all those on the line')}>
                                     <Send size={14} />
                                   </button>
                                 </>
                               )}
                               {entry.isManual && (
-                                <button onClick={(e) => { e.stopPropagation(); handleDelete(entry.dbId); }} className="p-1.5 text-gray-700 font-semibold font-bold hover:bg-red-400/20 rounded-md transition-colors" title="Eliminar">
+                                <button onClick={(e) => { e.stopPropagation(); handleDelete(entry.dbId); }} className="p-1.5 text-gray-700 font-semibold font-bold hover:bg-red-400/20 rounded-md transition-colors" title={t('Delete')}>
                                   <Trash2 size={14} />
                                 </button>
                               )}
@@ -1160,13 +1162,13 @@ export default function CashflowPage() {
                               />
                             </td>
                             <td className="p-3 pl-4 text-sm text-gray-700 font-semibold border-l-2 border-l-teal-500/30">
-                              {new Date(inv.cashflowDate || inv.confirmedPaymentDate || inv.dueDate).toLocaleDateString('es-ES')}
+                              {new Date(inv.cashflowDate || inv.confirmedPaymentDate || inv.dueDate).toLocaleDateString(locale)}
                             </td>
                             <td className="p-3 text-sm text-gray-600">
                               {inv.bcId} <span className="text-slate-500 text-xs ml-2">({inv.status})</span>
                               {inv.lastReminderDate && (
                                 <span className="inline-flex items-center gap-1 ml-2 bg-amber-500/15 text-amber-800 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-amber-500/30">
-                                  <MailCheck size={11} /> {claimCountOf(inv) > 1 ? `${claimCountOf(inv)}ª reclamación` : 'Reclamada'} {claimLabel(inv.lastReminderDate)}
+                                  <MailCheck size={11} /> {claimCountOf(inv) > 1 ? t('Claim no. {n}', { n: claimCountOf(inv) }) : t('Claimed')} {claimLabel(inv.lastReminderDate)}
                                 </span>
                               )}
                               {inv.lastCallDate && (
@@ -1182,24 +1184,24 @@ export default function CashflowPage() {
                               )}
                             </td>
                             <td className="p-3 text-sm text-right text-gray-600">
-                              €{inv.amount.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+                              €{inv.amount.toLocaleString(locale, { minimumFractionDigits: 2 })}
                             </td>
                             <td className="p-3 text-right text-slate-500">-</td>
                             <td className="p-3 text-center">
                               <div className="flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button onClick={(e) => onClaimClick(e, [inv])} className={`p-1 rounded transition-colors hover:bg-amber-400/20 ${inv.lastReminderDate ? 'text-amber-700' : 'text-black/70 hover:text-black'}`} title={inv.lastReminderDate ? 'Otra reclamación o quitar la marca de reclamada' : 'Marcar como reclamada'}>
+                                <button onClick={(e) => onClaimClick(e, [inv])} className={`p-1 rounded transition-colors hover:bg-amber-400/20 ${inv.lastReminderDate ? 'text-amber-700' : 'text-black/70 hover:text-black'}`} title={inv.lastReminderDate ? t('Another claim or remove the claimed mark') : t('Mark as claimed')}>
                                   <MailCheck size={12} />
                                 </button>
-                                <button onClick={(e) => onCallClick(e, [inv])} className={`p-1 rounded transition-colors hover:bg-violet-400/20 ${inv.lastCallDate ? 'text-violet-700' : 'text-black/70 hover:text-black'}`} title={inv.lastCallDate ? 'Otra llamada o quitar la marca de llamado' : 'Marcar como llamado'}>
+                                <button onClick={(e) => onCallClick(e, [inv])} className={`p-1 rounded transition-colors hover:bg-violet-400/20 ${inv.lastCallDate ? 'text-violet-700' : 'text-black/70 hover:text-black'}`} title={inv.lastCallDate ? t('Another call or remove the called mark') : t('Mark as called')}>
                                   <PhoneCall size={12} />
                                 </button>
-                                <button onClick={(e) => openComments(e, `invoice:${inv.id}`, inv.bcId)} className={`p-1 rounded transition-colors hover:bg-sky-400/20 ${commentsFor(`invoice:${inv.id}`).length ? 'text-sky-700' : 'text-black/70 hover:text-black'}`} title="Comentarios de la factura">
+                                <button onClick={(e) => openComments(e, `invoice:${inv.id}`, inv.bcId)} className={`p-1 rounded transition-colors hover:bg-sky-400/20 ${commentsFor(`invoice:${inv.id}`).length ? 'text-sky-700' : 'text-black/70 hover:text-black'}`} title={t('Invoice comments')}>
                                   <MessageSquare size={12} />
                                 </button>
-                                <button onClick={(e) => { e.stopPropagation(); openEditModal({ isManual: false, id: inv.id, date: inv.cashflowDate || inv.dueDate, description: inv.bcId, amount: inv.amount }); }} className="p-1 text-black/70 hover:text-black hover:bg-blue-400/20 rounded transition-colors" title="Editar fecha individual">
+                                <button onClick={(e) => { e.stopPropagation(); openEditModal({ isManual: false, id: inv.id, date: inv.cashflowDate || inv.dueDate, description: inv.bcId, amount: inv.amount }); }} className="p-1 text-black/70 hover:text-black hover:bg-blue-400/20 rounded transition-colors" title={t('Edit individual date')}>
                                   <Edit2 size={12} />
                                 </button>
-                                <button onClick={(e) => { e.stopPropagation(); handleArchive({ isManual: false, id: inv.id, isArchived: inv.isArchived, invoices: [inv] }); }} className="p-1 text-black/70 hover:text-black hover:bg-purple-400/20 rounded transition-colors" title={inv.isArchived ? "Restaurar individualmente" : "Archivar individualmente"}>
+                                <button onClick={(e) => { e.stopPropagation(); handleArchive({ isManual: false, id: inv.id, isArchived: inv.isArchived, invoices: [inv] }); }} className="p-1 text-black/70 hover:text-black hover:bg-purple-400/20 rounded transition-colors" title={inv.isArchived ? t('Restore individually') : t('Archive individually')}>
                                   {inv.isArchived ? <RefreshCw size={12} /> : <Archive size={12} />}
                                 </button>
                               </div>
@@ -1220,10 +1222,10 @@ export default function CashflowPage() {
           <div className="fixed inset-0 z-50" onClick={() => setClaimMenu(null)}>
             <div className="fixed w-56 bg-white border border-gray-200 rounded-lg shadow-xl py-1 text-sm" style={{ left: claimMenu.x, top: claimMenu.y }} onClick={e => e.stopPropagation()}>
               <button onClick={() => toggleClaim(claimMenu.invoiceIds, true)} className="w-full flex items-center gap-2 px-3 py-2 text-left text-gray-900 hover:bg-amber-50">
-                <MailCheck size={14} className="text-amber-700" /> Marcar {claimMenu.next}ª reclamación
+                <MailCheck size={14} className="text-amber-700" /> {t('Mark claim no. {n}', { n: claimMenu.next })}
               </button>
               <button onClick={() => toggleClaim(claimMenu.invoiceIds, false)} className="w-full flex items-center gap-2 px-3 py-2 text-left text-red-700 hover:bg-red-50">
-                <X size={14} /> Quitar reclamación
+                <X size={14} /> {t('Remove claim')}
               </button>
             </div>
           </div>
@@ -1234,10 +1236,10 @@ export default function CashflowPage() {
           <div className="fixed inset-0 z-50" onClick={() => setCallMenu(null)}>
             <div className="fixed w-56 bg-white border border-gray-200 rounded-lg shadow-xl py-1 text-sm" style={{ left: callMenu.x, top: callMenu.y }} onClick={e => e.stopPropagation()}>
               <button onClick={() => toggleCall(callMenu.invoiceIds, true)} className="w-full flex items-center gap-2 px-3 py-2 text-left text-gray-900 hover:bg-violet-50">
-                <PhoneCall size={14} className="text-violet-700" /> Registrar otra llamada (hoy)
+                <PhoneCall size={14} className="text-violet-700" /> {t('Log another call (today)')}
               </button>
               <button onClick={() => toggleCall(callMenu.invoiceIds, false)} className="w-full flex items-center gap-2 px-3 py-2 text-left text-red-700 hover:bg-red-50">
-                <X size={14} /> Quitar marca de llamado
+                <X size={14} /> {t('Remove called mark')}
               </button>
             </div>
           </div>
@@ -1249,20 +1251,20 @@ export default function CashflowPage() {
             <div className="bg-white border border-gray-200 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
               <div className="flex justify-between items-center p-5 border-b border-gray-200 bg-gray-50">
                 <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2 min-w-0">
-                  <MessageSquare size={18} className="shrink-0" /> <span className="truncate">Comentarios · {commentTarget.label}</span>
+                  <MessageSquare size={18} className="shrink-0" /> <span className="truncate">{t('Comments')} · {commentTarget.label}</span>
                 </h3>
                 <button onClick={() => setCommentTarget(null)} className="text-gray-900 hover:text-gray-600"><X size={20} /></button>
               </div>
               <div className="p-5 space-y-3 max-h-80 overflow-y-auto">
                 {commentsFor(commentTarget.key).length === 0 ? (
-                  <p className="text-sm text-gray-500">Sin comentarios todavía.</p>
+                  <p className="text-sm text-gray-500">{t('No comments yet.')}</p>
                 ) : commentsFor(commentTarget.key).map(c => (
                   <div key={c.id} className="group/comment bg-gray-50 border border-gray-200 rounded-lg p-3">
                     <div className="flex justify-between items-start gap-2">
                       <p className="text-sm text-gray-900 whitespace-pre-wrap break-words">{c.text}</p>
-                      <button onClick={() => deleteComment(c.id)} className="opacity-0 group-hover/comment:opacity-100 p-1 text-gray-500 hover:text-red-600 rounded transition-opacity" title="Borrar comentario"><Trash2 size={12} /></button>
+                      <button onClick={() => deleteComment(c.id)} className="opacity-0 group-hover/comment:opacity-100 p-1 text-gray-500 hover:text-red-600 rounded transition-opacity" title={t('Delete comment')}><Trash2 size={12} /></button>
                     </div>
-                    <div className="text-[11px] text-gray-500 mt-1">{c.author ? `${c.author} · ` : ''}{new Date(c.createdAt).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}</div>
+                    <div className="text-[11px] text-gray-500 mt-1">{c.author ? `${c.author} · ` : ''}{new Date(c.createdAt).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' })}</div>
                   </div>
                 ))}
               </div>
@@ -1273,11 +1275,11 @@ export default function CashflowPage() {
                   value={commentDraft}
                   onChange={e => setCommentDraft(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) addComment(); }}
-                  placeholder="Escribe un comentario…"
+                  placeholder={t('Write a comment…')}
                   className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
                 />
                 <div className="flex justify-end">
-                  <button onClick={addComment} disabled={!commentDraft.trim()} className="px-4 py-2 rounded-lg bg-teal-600 text-white text-sm font-bold hover:bg-teal-700 disabled:opacity-50">Añadir comentario</button>
+                  <button onClick={addComment} disabled={!commentDraft.trim()} className="px-4 py-2 rounded-lg bg-teal-600 text-white text-sm font-bold hover:bg-teal-700 disabled:opacity-50">{t('Add comment')}</button>
                 </div>
               </div>
             </div>
@@ -1290,7 +1292,7 @@ export default function CashflowPage() {
             <div className="bg-white border border-gray-200 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden transform transition-all">
               <div className="flex justify-between items-center p-6 border-b border-gray-200 bg-gray-50">
                 <h3 className="text-xl font-bold text-gray-900">
-                  {isEditing ? (formData.type === 'manual' ? 'Editar Línea Manual' : 'Cambiar Fecha de Factura(s)') : 'Nueva Línea Manual'}
+                  {isEditing ? (formData.type === 'manual' ? t('Edit Manual Line') : t('Change Invoice Date(s)')) : t('New Manual Line')}
                 </h3>
                 <button onClick={() => setIsModalOpen(false)} className="text-gray-900 font-bold hover:text-gray-900 transition-colors">
                   <X size={20} />
@@ -1298,7 +1300,7 @@ export default function CashflowPage() {
               </div>
               <form onSubmit={handleSave} className="p-6 space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-900 font-bold mb-1">Fecha</label>
+                  <label className="block text-sm font-medium text-gray-900 font-bold mb-1">{t('Date')}</label>
                   <input 
                     type="date" 
                     required
@@ -1308,24 +1310,24 @@ export default function CashflowPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-900 font-bold mb-1">Descripción</label>
+                  <label className="block text-sm font-medium text-gray-900 font-bold mb-1">{t('Description')}</label>
                   <input 
                     type="text" 
                     required
                     disabled={formData.type === 'invoice-date'}
-                    placeholder="Ej. Pago de impuestos, Nóminas..."
+                    placeholder={t('E.g. Tax payment, Payroll...')}
                     value={formData.description}
                     onChange={e => setFormData({...formData, description: e.target.value})}
                     className="w-full bg-white border border-gray-200 rounded-lg px-4 py-2.5 text-gray-900 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 transition-all disabled:opacity-50"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-900 font-bold mb-1">Importe (€)</label>
+                  <label className="block text-sm font-medium text-gray-900 font-bold mb-1">{t('Amount (€)')}</label>
                   <input 
                     type="text" 
                     required
                     disabled={formData.type === 'invoice-date'}
-                    placeholder="Ej. -1500 o 200+500"
+                    placeholder={t('E.g. -1500 or 200+500')}
                     value={formData.amount}
                     onChange={e => setFormData({...formData, amount: e.target.value})}
                     className="w-full bg-white border border-gray-200 rounded-lg px-4 py-2.5 text-gray-900 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 transition-all disabled:opacity-50"
@@ -1337,13 +1339,13 @@ export default function CashflowPage() {
                     onClick={() => setIsModalOpen(false)}
                     className="flex-1 py-2.5 px-4 rounded-lg font-medium text-gray-800 font-medium bg-gray-50 hover:bg-gray-200 border border-gray-200 transition-colors"
                   >
-                    Cancelar
+                    {t('Cancel')}
                   </button>
                   <button 
                     type="submit"
                     className="flex-1 py-2.5 px-4 rounded-lg font-medium text-gray-900 bg-black hover:bg-gray-800 text-white shadow-lg shadow-gray-500/20 transition-all flex justify-center items-center gap-2"
                   >
-                    <Save size={16} /> Guardar
+                    <Save size={16} /> {t('Save')}
                   </button>
                 </div>
               </form>
@@ -1370,12 +1372,12 @@ export default function CashflowPage() {
               <div className="flex justify-between items-center p-6 border-b border-gray-200 bg-gray-50 shrink-0">
                 <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
                   <Calendar className="text-indigo-600" />
-                  Configuración de Pagos Recurrentes
+                  {t('Recurring Payments Configuration')}
                 </h3>
                 <div className="flex items-center gap-3">
                   <button onClick={() => { setEditingRecurring({ id: null, description: '' }); setRecurringForm(newRecurringForm()); }}
                     className="px-3 py-1.5 bg-indigo-600 text-white hover:bg-indigo-700 font-bold text-sm rounded-lg transition-colors">
-                    + Nuevo pago recurrente
+                    + {t('New recurring payment')}
                   </button>
                   <button onClick={() => setRecurringModalOpen(false)} className="text-gray-500 hover:text-gray-900 transition-colors">
                     <X size={20} />
@@ -1387,15 +1389,15 @@ export default function CashflowPage() {
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="border-b border-gray-200 text-sm text-gray-500 font-bold bg-gray-50">
-                      <th className="p-3">Código BC</th>
-                      <th className="p-3">Descripción</th>
-                      <th className="p-3 text-center">Configurado en App</th>
-                      <th className="p-3 text-center">Acciones</th>
+                      <th className="p-3">{t('BC Code')}</th>
+                      <th className="p-3">{t('Description')}</th>
+                      <th className="p-3 text-center">{t('Configured in App')}</th>
+                      <th className="p-3 text-center">{t('Actions')}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {recurringPayments.length === 0 ? (
-                      <tr><td colSpan={4} className="p-4 text-center text-gray-500">No hay pagos recurrentes de BC ni manuales.</td></tr>
+                      <tr><td colSpan={4} className="p-4 text-center text-gray-500">{t('There are no recurring payments from BC or manual ones.')}</td></tr>
                     ) : (
                       recurringPayments.map(rec => (
                         <tr key={rec.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
@@ -1404,25 +1406,25 @@ export default function CashflowPage() {
                           <td className="p-3 text-center">
                             {rec.isActive ? (
                               <div className="text-sm">
-                                <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded font-bold mr-2">ACTIVO</span>
-                                <div>{FREQUENCIES.find(f => f.value === (rec.frequency || 'monthly'))?.label}{rec.frequency === 'weekly' ? '' : ` · día ${rec.dayOfMonth}`} | {getCurrencySymbol(rec.currencyCode || 'EUR')}{rec.amount}</div>
-                                <div className="text-xs text-gray-500">Desde: {rec.activeFromDate ? new Date(rec.activeFromDate).toLocaleDateString() : '-'}</div>
+                                <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded font-bold mr-2">{t('ACTIVE')}</span>
+                                <div>{t(FREQUENCIES.find(f => f.value === (rec.frequency || 'monthly'))?.label || '')}{rec.frequency === 'weekly' ? '' : ` · ${t('day {n}', { n: rec.dayOfMonth })}`} | {getCurrencySymbol(rec.currencyCode || 'EUR')}{rec.amount}</div>
+                                <div className="text-xs text-gray-500">{t('From:')} {rec.activeFromDate ? new Date(rec.activeFromDate).toLocaleDateString(locale) : '-'}</div>
                               </div>
                             ) : (
-                              <span className="bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-bold text-sm">NO AÑADIDO</span>
+                              <span className="bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-bold text-sm">{t('NOT ADDED')}</span>
                             )}
                           </td>
                           <td className="p-3 text-center">
                             {rec.isActive ? (
                               <button onClick={() => handleRemoveRecurring(rec)} className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 font-bold text-xs rounded transition-colors">
-                                {isManualRecurring(rec) ? 'Borrar' : 'Quitar del Cashflow'}
+                                {isManualRecurring(rec) ? t('Delete payment') : t('Remove from Cashflow')}
                               </button>
                             ) : (
                               <button onClick={() => {
                                 setEditingRecurring(rec);
                                 setRecurringForm(newRecurringForm());
                               }} className="px-3 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 font-bold text-xs rounded transition-colors">
-                                Añadir al Cashflow
+                                {t('Add to Cashflow')}
                               </button>
                             )}
                           </td>
@@ -1442,7 +1444,7 @@ export default function CashflowPage() {
             <div className="bg-white border border-gray-200 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden transform transition-all">
               <div className="flex justify-between items-center p-6 border-b border-gray-200 bg-gray-50">
                 <h3 className="text-xl font-bold text-gray-900">
-                  {editingRecurring.id ? 'Configurar Pago' : 'Nuevo pago recurrente'}
+                  {editingRecurring.id ? t('Configure Payment') : t('New recurring payment')}
                 </h3>
                 <button onClick={() => setEditingRecurring(null)} className="text-gray-900 hover:text-gray-900 transition-colors">
                   <X size={20} />
@@ -1453,9 +1455,9 @@ export default function CashflowPage() {
                   <p className="text-sm text-gray-600 font-medium mb-4">{editingRecurring.description}</p>
                 ) : (
                   <div>
-                    <label className="block text-sm font-bold text-gray-900 mb-1">Descripción</label>
+                    <label className="block text-sm font-bold text-gray-900 mb-1">{t('Description')}</label>
                     <input
-                      type="text" required autoFocus placeholder="ej. Alquiler oficina"
+                      type="text" required autoFocus placeholder={t('e.g. Office rent')}
                       value={recurringForm.description}
                       onChange={e => setRecurringForm({...recurringForm, description: e.target.value})}
                       className="w-full bg-white border border-gray-200 rounded-lg px-4 py-2.5 text-gray-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -1463,20 +1465,20 @@ export default function CashflowPage() {
                   </div>
                 )}
                 <div>
-                  <label className="block text-sm font-bold text-gray-900 mb-1">Periodicidad</label>
+                  <label className="block text-sm font-bold text-gray-900 mb-1">{t('Frequency')}</label>
                   <select
                     value={recurringForm.frequency}
                     onChange={e => setRecurringForm({...recurringForm, frequency: e.target.value})}
                     className="w-full bg-white border border-gray-200 rounded-lg px-4 py-2.5 text-gray-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   >
-                    {FREQUENCIES.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+                    {FREQUENCIES.map(f => <option key={f.value} value={f.value}>{t(f.label)}</option>)}
                   </select>
                   {recurringForm.frequency === 'weekly' && (
-                    <p className="text-xs text-gray-500 mt-1">Cada 7 días a partir de la fecha de inicio.</p>
+                    <p className="text-xs text-gray-500 mt-1">{t('Every 7 days from the start date.')}</p>
                   )}
                 </div>
                 {recurringForm.frequency !== 'weekly' && <div>
-                  <label className="block text-sm font-bold text-gray-900 mb-1">Día del Mes (1-31)</label>
+                  <label className="block text-sm font-bold text-gray-900 mb-1">{t('Day of Month (1-31)')}</label>
                   <input 
                     type="number" min="1" max="31" required
                     value={recurringForm.dayOfMonth}
@@ -1484,11 +1486,11 @@ export default function CashflowPage() {
                     className="w-full bg-white border border-gray-200 rounded-lg px-4 py-2.5 text-gray-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   />
                   {recurringForm.frequency !== 'monthly' && (
-                    <p className="text-xs text-gray-500 mt-1">En el mes de la fecha de inicio y cada {recurringForm.frequency === 'quarterly' ? '3' : recurringForm.frequency === 'semiannual' ? '6' : '12'} meses.</p>
+                    <p className="text-xs text-gray-500 mt-1">{t('In the month of the start date and every {n} months.', { n: recurringForm.frequency === 'quarterly' ? '3' : recurringForm.frequency === 'semiannual' ? '6' : '12' })}</p>
                   )}
                 </div>}
                 <div>
-                  <label className="block text-sm font-bold text-gray-900 mb-1">Importe (ej. -1000)</label>
+                  <label className="block text-sm font-bold text-gray-900 mb-1">{t('Amount (e.g. -1000)')}</label>
                   <input 
                     type="number" step="0.01" required
                     value={recurringForm.amount}
@@ -1497,7 +1499,7 @@ export default function CashflowPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-gray-900 mb-1">A partir de (Fecha)</label>
+                  <label className="block text-sm font-bold text-gray-900 mb-1">{t('Starting from (Date)')}</label>
                   <input 
                     type="date" required
                     value={recurringForm.activeFromDate}
@@ -1507,10 +1509,10 @@ export default function CashflowPage() {
                 </div>
                 <div className="pt-4 flex gap-3">
                   <button type="button" onClick={() => setEditingRecurring(null)} className="flex-1 py-2 px-4 rounded-lg font-medium text-gray-800 bg-gray-50 border border-gray-200 hover:bg-gray-200">
-                    Cancelar
+                    {t('Cancel')}
                   </button>
                   <button type="submit" className="flex-1 py-2 px-4 rounded-lg font-medium text-white bg-indigo-600 hover:bg-indigo-700 flex justify-center items-center gap-2">
-                    <Save size={16} /> Guardar
+                    <Save size={16} /> {t('Save')}
                   </button>
                 </div>
               </form>
@@ -1521,12 +1523,12 @@ export default function CashflowPage() {
         {/* Subtotal de las líneas marcadas */}
         {selectionCount > 0 && (
           <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-black text-white rounded-xl shadow-2xl px-5 py-3 flex items-center gap-5">
-            <span className="text-sm text-gray-300">{selectionCount} {selectionCount === 1 ? 'línea seleccionada' : 'líneas seleccionadas'}</span>
+            <span className="text-sm text-gray-300">{selectionCount === 1 ? t('{n} line selected', { n: selectionCount }) : t('{n} lines selected', { n: selectionCount })}</span>
             <span className="text-sm font-semibold uppercase tracking-wider text-gray-300">Subtotal</span>
             <span className={`text-lg font-black ${selectionTotal < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-              {selectionTotal > 0 ? '+' : ''}{getCurrencySymbol(currentCurrency)}{selectionTotal.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {selectionTotal > 0 ? '+' : ''}{getCurrencySymbol(currentCurrency)}{selectionTotal.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
-            <button onClick={() => { setSelectedEntries([]); setSelectedInvoices({}); }} className="p-1 text-gray-400 hover:text-white rounded transition-colors" title="Quitar selección">
+            <button onClick={() => { setSelectedEntries([]); setSelectedInvoices({}); }} className="p-1 text-gray-400 hover:text-white rounded transition-colors" title={t('Clear selection')}>
               <X size={16} />
             </button>
           </div>

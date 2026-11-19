@@ -5,13 +5,17 @@ import Sidebar from '@/components/Sidebar';
 import { getSession, AUTH_ENABLED } from '@/lib/auth';
 import { CompanyProvider } from '@/contexts/CompanyContext';
 import { LanguageProvider } from '@/contexts/LanguageContext';
+import { serverT } from '@/lib/i18nServer';
 
 const inter = Inter({ subsets: ['latin'] });
 
-export const metadata: Metadata = {
-  title: 'Craze Finanzas',
-  description: 'Gestión y optimización financiera para Craze',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await serverT();
+  return {
+    title: t('Craze Finance'),
+    description: t('Financial management and optimisation for Craze'),
+  };
+}
 
 export default async function RootLayout({
   children,

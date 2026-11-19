@@ -16,25 +16,25 @@ const cents = (v: number) => Math.round(v * 100);
 export async function POST(req: Request) {
   try {
     const companyId = (await cookies()).get('craze_selected_company')?.value || 'CRAZE';
-    if (companyId === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
+    if (companyId === 'ALL') return NextResponse.json({ error: 'Select a specific company.' }, { status: 400 });
     const body = await req.json() as { journalCode: string; date: string; lines: (ClearingLine & { postingDate?: string | null })[] };
-    if (!body.journalCode) return NextResponse.json({ error: 'Elige el lote del General Journal.' }, { status: 400 });
-    if (!isDate(body.date || '')) return NextResponse.json({ error: 'Falta la fecha.' }, { status: 400 });
+    if (!body.journalCode) return NextResponse.json({ error: 'Choose the General Journal batch.' }, { status: 400 });
+    if (!isDate(body.date || '')) return NextResponse.json({ error: 'The date is missing.' }, { status: 400 });
     const lines = Array.isArray(body.lines) ? body.lines : [];
-    if (lines.length < 2) return NextResponse.json({ error: 'Hacen falta las dos líneas.' }, { status: 400 });
+    if (lines.length < 2) return NextResponse.json({ error: 'Both lines are required.' }, { status: 400 });
     if (lines.some(l => !['Customer', 'Vendor'].includes(l.accountType) || !String(l.accountNo || '').trim() || !cents(l.amount) || !l.appliesToDocNo))
-      return NextResponse.json({ error: 'Falta la cuenta, el importe o el documento a liquidar en alguna línea.' }, { status: 400 });
-    if (lines.reduce((t, l) => t + cents(l.amount), 0) !== 0) return NextResponse.json({ error: 'Las líneas no suman 0.' }, { status: 400 });
-    if (new Set(lines.map(l => l.currencyCode || '')).size > 1) return NextResponse.json({ error: 'Los movimientos tienen distinta divisa.' }, { status: 400 });
+      return NextResponse.json({ error: 'A line is missing the account, the amount or the document to apply.' }, { status: 400 });
+    if (lines.reduce((t, l) => t + cents(l.amount), 0) !== 0) return NextResponse.json({ error: 'The lines do not add up to 0.' }, { status: 400 });
+    if (new Set(lines.map(l => l.currencyCode || '')).size > 1) return NextResponse.json({ error: 'The entries have different currencies.' }, { status: 400 });
 
     // BC no deja liquidar un movimiento con fecha posterior a la del asiento
     const latest = lines.map(l => String(l.postingDate || '')).sort().pop() || '';
-    if (latest && body.date < latest) return NextResponse.json({ error: `La fecha no puede ser anterior al ${latest.split('-').reverse().join('/')} (el movimiento más reciente de los dos).` }, { status: 400 });
+    if (latest && body.date < latest) return NextResponse.json({ error: `The date cannot be earlier than ${latest.split('-').reverse().join('/')} (the later of the two entries).` }, { status: 400 });
 
     const ctx = await getBcContext(companyId);
     const journal = await journalByCode(ctx, body.journalCode);
     const result = await sendClearing(ctx, journal, body.date, lines.map(({ postingDate, ...l }) => l)); // eslint-disable-line @typescript-eslint/no-unused-vars
-    await logAction('Open Entries: cierre cruzado enviado al General Journal',
+    await logAction('Open Entries: cross clearing sent to the General Journal',
       `${journal.code} · ${result.documentNumber} · ${lines.map(l => `${l.accountType} ${l.accountNo} ${l.appliesToDocNo} ${l.amount}`).join(' / ')}`, companyId);
     return NextResponse.json(result);
   } catch (error: any) {

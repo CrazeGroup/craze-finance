@@ -131,7 +131,7 @@ function parseBankRows(rows: unknown[][]): Movement[] {
       extras = head.map((x, j) => (COLUMNS.extra.includes(x) ? j : -1)).filter(j => j >= 0);
     }
   }
-  if (!c) throw new Error('No se reconoce el formato: no hay una fila con columnas de fecha e importe (p. ej. Buchungstag/Betrag, Fecha/Importe o Cargo/Abono).');
+  if (!c) throw new Error('Unrecognised format: there is no row with date and amount columns (e.g. Buchungstag/Betrag, Fecha/Importe or Cargo/Abono).');
   const cols = c;
   const get = (row: unknown[], i: number) => (i >= 0 ? String(row[i] ?? '').trim() : '');
   // Si la fila de cabecera tiene la cuenta encima (Sabadell: "Cuenta: ES12 …"), es la del extracto
@@ -177,7 +177,7 @@ export function collapseGroups<T extends Movement>(movements: T[], matched: Map<
 
 export function parseBankCsv(text: string): Movement[] {
   const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(l => l.trim());
-  if (!lines.length) throw new Error('El fichero está vacío.');
+  if (!lines.length) throw new Error('The file is empty.');
   const sep = [';', '\t', ','].find(x => lines.slice(0, 40).some(l => l.includes(x))) || ';';
   return parseBankRows(lines.map(l => splitCsvLine(l, sep)));
 }
@@ -258,7 +258,7 @@ export async function openEntries(ctx: BcContext): Promise<OpenEntry[]> {
 
 export async function journalByCode(ctx: BcContext, code: string) {
   const rows = await bcFetchAll(odataUrl(`${ctx.apiBase}/journals`, { $filter: `code eq '${q(code)}'`, $select: 'id,code,balancingAccountNumber' }), ctx.token);
-  if (!rows.length) throw new Error(`No existe el lote ${code} en el General Journal de BC.`);
+  if (!rows.length) throw new Error(`Batch ${code} does not exist in the BC General Journal.`);
   return rows[0] as { id: string; code: string; balancingAccountNumber: string };
 }
 
@@ -684,15 +684,15 @@ function applyWithinAccount(m: Movement, side: 'Customer' | 'Vendor', no: string
   const cited = own.filter(cites);
   if (cited.length) {
     const total = cents(cited.reduce((t, o) => t + o.remaining, 0));
-    if (total === target) return { lines: cited.map(o => lineFor(o)), note: `El concepto cita ${cited.map(o => o.docNo).join(', ')}` };
-    if (cited.length === 1) return { lines: [lineFor(cited[0], m.amount)], note: `El concepto cita ${cited[0].docNo}, con pendiente ${r2(cited[0].remaining).toFixed(2)}: revisa la diferencia` };
+    if (total === target) return { lines: cited.map(o => lineFor(o)), note: `The description cites ${cited.map(o => o.docNo).join(', ')} (same amount)` };
+    if (cited.length === 1) return { lines: [lineFor(cited[0], m.amount)], note: `The description cites ${cited[0].docNo}, with ${r2(cited[0].remaining).toFixed(2)} outstanding: check the difference` };
   }
   const same = own.filter(o => cents(o.remaining) === target);
-  if (same.length) return { lines: [lineFor(same[0])], note: `${same[0].docNo} tiene pendiente el mismo importe${same.length > 1 ? ` (y ${same.length - 1} más)` : ''}` };
+  if (same.length) return { lines: [lineFor(same[0])], note: `Document ${same[0].docNo} has the same amount outstanding${same.length > 1 ? ` (and ${same.length - 1} more)` : ''}` };
   const idx = own.length >= 2 ? subsetIndexes(own.map(o => cents(o.remaining)), target) : null;
-  if (idx) return { lines: idx.map(i => lineFor(own[i])), note: `${idx.map(i => own[i].docNo).join(' + ')} suman el importe` };
+  if (idx) return { lines: idx.map(i => lineFor(own[i])), note: `Documents ${idx.map(i => own[i].docNo).join(' + ')} add up to the amount` };
   const refs = m.purpose.toUpperCase().match(/\b(?:[A-Z]{2,5}-)?[A-Z]{2,5}\d{2}-\d{4,6}\b/g);
-  return refs ? { lines: null, note: `El concepto cita ${Array.from(new Set(refs)).join(', ')}, sin pendiente en esta cuenta` } : null;
+  return refs ? { lines: null, note: `The description cites ${Array.from(new Set(refs)).join(', ')}, with nothing outstanding on this account` } : null;
 }
 
 function matchParty(m: Movement, parties: Party[]) {
@@ -745,14 +745,14 @@ export function suggest(
       // La diferencia puede ser una factura abierta del otro lado con nombre parecido (cobro neto de una factura de compra)
       const other = open.find(c => c.side !== o.side && cents(c.remaining) === cents(m.amount) - total && firstWord(c.name) === firstWord(name));
       if (total === cents(m.amount)) {
-        out.set(m.idx, { documentNo, source: 'Factura', note: `Cuadra con ${cited.map(c => c.docNo).join(', ')}`, lines: cited.map(applied) });
+        out.set(m.idx, { documentNo, source: 'Invoice', note: `Invoices ${cited.map(c => c.docNo).join(', ')} match the amount`, lines: cited.map(applied) });
       } else if (other) {
         const otherLine: SuggestedLine = { ...line(other.side, other.no, `${other.name} ${other.docNo}`, other.remaining), accountName: other.name, appliesToDocType: docType(other.docType), appliesToDocNo: other.docNo };
-        out.set(m.idx, { documentNo, source: 'Factura', note: `Cuadra con ${cited.map(c => c.docNo).join(', ')} menos ${other.docNo} de ${other.name}`, lines: [...cited.map(applied), otherLine] });
+        out.set(m.idx, { documentNo, source: 'Invoice', note: `Invoices ${cited.map(c => c.docNo).join(', ')} less ${other.docNo} from ${other.name} match the amount`, lines: [...cited.map(applied), otherLine] });
       } else if (cited.length === 1) {
-        out.set(m.idx, { documentNo, source: 'Factura', note: `${o.docNo} tiene pendiente ${r2(o.remaining).toFixed(2)}: revisa la diferencia (Skonto, comisión…)`, lines: [{ ...applied(o), amount: r2(m.amount) }] });
+        out.set(m.idx, { documentNo, source: 'Invoice', note: `Outstanding on ${o.docNo}: ${r2(o.remaining).toFixed(2)}; check the difference (Skonto, fee…)`, lines: [{ ...applied(o), amount: r2(m.amount) }] });
       } else {
-        out.set(m.idx, { documentNo, source: 'Factura', note: `Facturas citadas ${cited.map(c => `${c.docNo} (${r2(c.remaining).toFixed(2)})`).join(', ')}: no suman el importe, liquídalas en BC`, lines: [{ ...line(o.side, o.no, name), accountName: name }] });
+        out.set(m.idx, { documentNo, source: 'Invoice', note: `Cited invoices ${cited.map(c => `${c.docNo} (${r2(c.remaining).toFixed(2)})`).join(', ')} do not add up to the amount: apply them in BC`, lines: [{ ...line(o.side, o.no, name), accountName: name }] });
       }
       continue;
     }
@@ -770,20 +770,20 @@ export function suggest(
       if (hist && (hist.ref || hist.purposeHit) && hist.key !== `${rule.accountType}|${rule.accountNo}`) rule = null;
     }
     if (rule) {
-      const when = `Como el ${rule.date.split('-').reverse().join('.')}`;
+      const when = `Same as the ${rule.date.split('-').reverse().join('.')} posting`;
       // Varias líneas (p. ej. leasing: cuota, intereses e IVA): las mismas; con otro importe, solo si son cuentas de
       // G/L, y la principal se queda la diferencia (las de clientes y proveedores van por factura)
       const same = cents(rule.amount) === cents(m.amount);
       if (rule.lines.length > 1 && (same || rule.lines.every(l => l.accountType === 'G/L Account'))) {
         const main = rule.lines.reduce((a, b) => (Math.abs(b.amount) > Math.abs(a.amount) ? b : a));
         const lines = rule.lines.map(l => line(l.accountType, l.accountNo, rule.usesPurpose ? m.purpose : l.description, l === main ? l.amount + m.amount - rule.amount : l.amount));
-        out.set(m.idx, { documentNo, source: 'Histórico', note: same ? `${when}, mismo importe` : `${when}: revisa el reparto entre las líneas`, lines });
+        out.set(m.idx, { documentNo, source: 'History', note: same ? `${when}, same amount` : `${when}: check the split between the lines`, lines });
         continue;
       }
       const description = documentNo || (rule.usesPurpose ? m.purpose : rule.description) || defaultDescription(m);
       const single = line(rule.accountType, rule.accountNo, description);
       const applied = withApply(single);
-      out.set(m.idx, { documentNo, source: 'Histórico', note: [when, applied.note].filter(Boolean).join(' · '), lines: applied.lines });
+      out.set(m.idx, { documentNo, source: 'History', note: [when, applied.note].filter(Boolean).join(' · '), lines: applied.lines });
       continue;
     }
 
@@ -792,8 +792,8 @@ export function suggest(
     if (hist) {
       const b = hist.best;
       const applied = withApply(line(b.balType, b.balNo, b.via || b.description));
-      const when = `Como "${b.description.substring(0, 40)}" el ${b.date.split('-').reverse().join('.')}${b.via ? ` (corregido a ${b.via.substring(0, 30)})` : ''}`;
-      out.set(m.idx, { documentNo, source: 'Histórico', note: [when, applied.note].filter(Boolean).join(' · '), lines: applied.lines });
+      const when = `Same as the ${b.date.split('-').reverse().join('.')} posting${b.via ? ` (corrected to ${b.via.substring(0, 30)})` : ''} "${b.description.substring(0, 40)}"`;
+      out.set(m.idx, { documentNo, source: 'History', note: [when, applied.note].filter(Boolean).join(' · '), lines: applied.lines });
       continue;
     }
 
@@ -801,10 +801,10 @@ export function suggest(
     const party = matchParty(m, parties);
     if (party) {
       const applied = withApply({ ...line(party.side, party.no, party.name), accountName: party.name });
-      out.set(m.idx, { documentNo, source: 'Nombre', note: applied.note, lines: applied.lines });
+      out.set(m.idx, { documentNo, source: 'Name', note: applied.note, lines: applied.lines });
       continue;
     }
-    out.set(m.idx, { documentNo, source: '', note: 'Sin sugerencia: indica la cuenta', lines: [line('', '', `${m.name} ${m.purpose}`.trim())] });
+    out.set(m.idx, { documentNo, source: '', note: 'No suggestion: enter the account', lines: [line('', '', `${m.name} ${m.purpose}`.trim())] });
   }
   // En las líneas de cliente o proveedor el nombre ya está en la cuenta: la descripción no lo repite ("ALDI TURNHOUT N.V.
   // CRZ-SI26-03349" → "CRZ-SI26-03349"); si no queda nada, la factura que liquida o el concepto del banco
@@ -882,11 +882,11 @@ export async function sendToBatch(ctx: BcContext, journal: { id: string; code: s
         ...(c.applies ? { Applies_to_Doc_Type: c.applies.type, Applies_to_Doc_No: c.applies.no } : {}),
       });
     } catch (e: any) {
-      warnings.push(`No se ha podido poner el tipo de documento ni la liquidación en las líneas (${String(e?.message || e).substring(0, 160)}); revísalo en BC.`);
+      warnings.push(`Could not set the document type or the application on the lines (${String(e?.message || e).substring(0, 160)}): check it in BC.`);
       break;
     }
   }
-  if (created.some(c => !c.documentNumber)) warnings.push('Alguna línea ha quedado sin nº de documento: ponlo en BC antes de registrar.');
+  if (created.some(c => !c.documentNumber)) warnings.push('Some lines have no document no.: set it in BC before posting.');
   return { lines: created.length, documentNumbers: Array.from(new Set(created.map(c => c.documentNumber).filter(Boolean))), warnings };
 }
 
@@ -933,10 +933,10 @@ export async function sendClearing(ctx: BcContext, journal: { id: string; code: 
     } catch (e: any) {
       for (const d of created) await bcRequest('DELETE', `${base}(${d.id})`, ctx.token).catch(() => {});
       const msg = String(e?.message || e).replace(/^BC PATCH [^:]*: /, '');
-      throw new Error(`BC no deja liquidar ${c.line.appliesToDocType} ${c.line.appliesToDocNo} (${c.line.accountType} ${c.line.accountNo}): ${msg.substring(0, 300)}. No se ha dejado nada en el lote.`);
+      throw new Error(`BC does not allow applying ${c.line.appliesToDocType} ${c.line.appliesToDocNo} (${c.line.accountType} ${c.line.accountNo}): ${msg.substring(0, 300)}. Nothing has been left in the batch.`);
     }
   }
   const warnings: string[] = [];
-  if (!docNo) warnings.push('Las líneas han quedado sin nº de documento: ponles el mismo en BC antes de registrar.');
+  if (!docNo) warnings.push('The lines have no document no.: give them all the same one in BC before posting.');
   return { lines: created.length, documentNumber: docNo, warnings };
 }

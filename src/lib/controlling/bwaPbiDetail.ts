@@ -87,7 +87,7 @@ export async function bwaAccountDetail(account2: string, scope: string, from: st
         hidden = hiddenByPairs(pairs, byDoc);
         cancelled += hidden.size / 2;
       } catch (e: any) {
-        warnings.push(`${company}: no se ha podido leer el detalle de sus movimientos (${e.message}). Se muestran solo nº de documento e importe.`);
+        warnings.push(`${company}: could not read the detail of its entries (${e.message}). Only document no. and amount are shown.`);
       }
       for (const e of list) {
         if (hidden.has(s(e.documentNo))) continue;

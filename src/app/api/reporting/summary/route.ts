@@ -12,7 +12,7 @@ export async function POST(req: Request) {
     const company = cookieStore.get('craze_selected_company')?.value || 'CRAZE';
     const { view, lang, month, data, force } = await req.json();
     if (!['operational', 'management'].includes(view) || !['es', 'en', 'de'].includes(lang) || !data) {
-      return NextResponse.json({ error: 'Petición no válida' }, { status: 400 });
+      return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
     }
     return NextResponse.json(await generateSummary(view as SummaryView, lang as SummaryLang, month, company, data, !!force));
   } catch (error: any) {

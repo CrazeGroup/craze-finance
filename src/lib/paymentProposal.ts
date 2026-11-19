@@ -53,21 +53,21 @@ async function odataUsers(ctx: BcContext, from: string, to: string, tried: strin
       const list: string[] = ((await res.json()).value || []).map((s: any) => s.name);
       // Primero los servicios "…_Excel" (como Currencies_Excel o General_Ledger_Entries_Excel)
       names = list.filter(n => /vendor.?ledger.?entr/i.test(n)).sort((a, b) => Number(!/excel/i.test(a)) - Number(!/excel/i.test(b)));
-      if (!names.length) tried.push('la lista de servicios OData no incluye ninguno con "Vendor Ledger Entries" en el nombre');
-    } else tried.push(`lista de servicios OData: error ${res.status}`);
+      if (!names.length) tried.push('the OData service list has no service with "Vendor Ledger Entries" in its name');
+    } else tried.push(`OData service list: error ${res.status}`);
     if (!names.includes(DEFAULT_USERS_SERVICE)) names.push(DEFAULT_USERS_SERVICE);
   }
   for (const name of names) {
     const base = `${ctx.odataCompanyBase}/${name}`;
     let sample: any[] = [];
     try { sample = await bcFetchAll(odataUrl(base, { $top: '1' }), ctx.token); } catch (e: any) { tried.push(`${name}: ${e.message.substring(0, 300)}`); continue; }
-    if (!sample.length) { tried.push(`${name}: sin filas`); continue; }
+    if (!sample.length) { tried.push(`${name}: no rows`); continue; }
     const keys = Object.keys(sample[0]);
     const entryKey = findKey(keys, k => /^entry_?no$/i.test(k));
     const dueKey = findKey(keys, k => /^due_?date$/i.test(k));
     const openKey = findKey(keys, k => /^open$/i.test(k));
     if (!entryKey || !findKey(keys, k => isPendingKey(k) || isApprovalKey(k))) {
-      tried.push(`${name}: sin campos Entry No / Pending Users (campos: ${keys.filter(k => !k.startsWith('@')).join(', ')})`);
+      tried.push(`${name}: no Entry No / Pending Users fields (fields: ${keys.filter(k => !k.startsWith('@')).join(', ')})`);
       continue;
     }
     const filter = [openKey && `${openKey} eq true`, dueKey && `${dueKey} ge ${from} and ${dueKey} le ${to}`].filter(Boolean).join(' and ');
@@ -76,7 +76,7 @@ async function odataUsers(ctx: BcContext, from: string, to: string, tried: strin
     try {
       rows = await bcFetchAll(odataUrl(base, { $filter: filter || undefined, $select: select }), ctx.token);
     } catch (e: any) {
-      tried.push(`${name} (filtro ${filter}, campos ${select}): ${e.message.substring(0, 300)}`);
+      tried.push(`${name} (filter ${filter}, fields ${select}): ${e.message.substring(0, 300)}`);
       continue;
     }
     return { service: name, byEntry: new Map(rows.map(r => [num(r[entryKey]), usersFrom(r, keys)])) };

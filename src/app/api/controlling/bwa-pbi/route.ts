@@ -12,7 +12,7 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const year = Number(searchParams.get('year'));
-    if (!Number.isInteger(year) || year < 2000 || year > 2100) return NextResponse.json({ error: 'Año no válido' }, { status: 400 });
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) return NextResponse.json({ error: 'Invalid year' }, { status: 400 });
     const ctx = await getBcContext('CRAZE');
     return NextResponse.json(await bwaPbiData(ctx, year, searchParams.get('force') === '1'));
   } catch (error: any) {

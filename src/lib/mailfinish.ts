@@ -57,7 +57,7 @@ export function parseMailfinishExcel(data: ArrayBuffer | Uint8Array) {
     const head = rows[h].map((c: any) => String(c ?? '').trim());
     const col = (re: RegExp) => head.findIndex((c: string) => re.test(c));
     const C = { code: col(/^item\s*code$/i), sku: col(/^sku$/i), good: col(/^i\.?\s*wahl/i), damaged: col(/^ii\.?\s*wahl/i) };
-    if (C.good < 0) throw new Error('El Excel no tiene la columna "I. Wahl" junto a "Item code".');
+    if (C.good < 0) throw new Error('The Excel file does not have the "I. Wahl" column next to "Item code".');
     const gadgets: ExcelGadget[] = [];
     for (const r of rows.slice(h + 1)) {
       const code = String(r?.[C.code] ?? '').trim();
@@ -67,7 +67,7 @@ export function parseMailfinishExcel(data: ArrayBuffer | Uint8Array) {
     }
     return gadgets;
   }
-  throw new Error('No se encuentra la tabla de gadgets (cabecera "Item code") en el Excel.');
+  throw new Error('The gadget table (header "Item code") was not found in the Excel file.');
 }
 
 // ---------- Datos de BC ----------
@@ -137,7 +137,7 @@ export async function suggestOrders(ctx: BcContext, gadgets: ExcelGadget[], date
   const warnings: string[] = [];
   const map = { ...(await outputMap()), ...overrides };
   const [hist, { stock, names }, open] = await Promise.all([history(ctx), magazineStock(ctx, date), openOrders(ctx).catch(e => {
-    warnings.push(`No se han podido leer las Assembly Orders abiertas: ${String(e.message).substring(0, 160)}`);
+    warnings.push(`Could not read the open Assembly Orders: ${String(e.message).substring(0, 160)}`);
     return [] as OpenOrder[];
   })]);
   const available = new Map(stock.map(s => [`${s.item}|${s.location}`, s.qty]));
@@ -152,7 +152,7 @@ export async function suggestOrders(ctx: BcContext, gadgets: ExcelGadget[], date
       : hist.filter((o: any) => o.itemNumber === g.code || new RegExp(`^${g.code.replace(/[^\w]/g, '')}[A-Z]+$`, 'i').test(o.itemNumber));
     const output = mapped || own.find((o: any) => o.itemNumber === g.code)?.itemNumber || own[0]?.itemNumber || g.code;
     const outputDescription = own[0]?.description || (mapped ? '' : g.sku);
-    if (output !== g.code) warnings.push(`${g.code}: se da de alta como ${output}${mapped ? ' (equivalencia guardada)' : ', el artículo de sus recuperaciones en BC'}.`);
+    if (output !== g.code) warnings.push(`${g.code}: created as ${output}${mapped ? ' (saved equivalence)' : ', the item of its previous recoveries in BC'}.`);
 
     // Revistas de entrada: las de las últimas recuperaciones, de la más reciente a la más antigua
     const candidates: Candidate[] = [];
@@ -165,8 +165,8 @@ export async function suggestOrders(ctx: BcContext, gadgets: ExcelGadget[], date
       const mag = magazineFromDescription(`${outputDescription} ${g.sku}`, names);
       if (mag) { candidates.push({ item: mag, location: DEFAULT_INPUT_LOCATION, lastOrder: '', lastDate: '' }); source = 'description'; }
     }
-    if (source === 'none') warnings.push(`${g.code} ${g.sku}: sin recuperaciones anteriores ni revista en la descripción; elige la revista a mano.`);
-    else if (source === 'description') warnings.push(`${g.code}: sin recuperaciones anteriores; se propone la revista de su descripción (${candidates[0].item}).`);
+    if (source === 'none') warnings.push(`${g.code} ${g.sku}: no previous recoveries and no magazine in the description; pick the magazine manually.`);
+    else if (source === 'description') warnings.push(`${g.code}: no previous recoveries; the magazine from its description is suggested (${candidates[0].item}).`);
 
     for (const [location, qty] of [[LOC_GOOD, g.good], [LOC_DAMAGED, g.damaged]] as const) {
       let rest = qty;
@@ -191,7 +191,7 @@ export async function suggestOrders(ctx: BcContext, gadgets: ExcelGadget[], date
     }
   }
   const short = suggestions.filter(s => s.shortage);
-  if (short.length) warnings.push(`${short.length} órdenes sin stock suficiente de la revista sugerida a ${date.split('-').reverse().join('/')}: elige otra revista o ajusta la cantidad.`);
+  if (short.length) warnings.push(`${short.length} orders without enough stock of the suggested magazine on ${date.split('-').reverse().join('/')}: pick another magazine or adjust the quantity.`);
   return { suggestions, stock, open, warnings };
 }
 
@@ -202,8 +202,8 @@ export type OrderInput = { output: string; location: string; quantity: number; i
 // La API v2 assemblyOrders es de solo lectura ("Entity does not support insert"): las órdenes se crean por la página
 // 900 "Assembly Order" publicada como servicio web OData (nombre "AssemblyOrder", o el del ajuste
 // mailfinishAssemblyService), que expone sus líneas (subpágina 901) como "<servicio>Lines".
-const ASSEMBLY_SETUP = 'BC no permite crear Assembly Orders por la API estándar. Publica en BC la página 900 "Assembly Order" ' +
-  'como servicio web (Servicios web → Nuevo: Tipo de objeto Página, Id. de objeto 900, Nombre del servicio AssemblyOrder, Publicado).';
+const ASSEMBLY_SETUP = 'BC does not allow creating Assembly Orders through the standard API. Publish page 900 "Assembly Order" in BC ' +
+  'as a web service (Web Services → New: Object Type Page, Object ID 900, Service Name AssemblyOrder, Published).';
 
 async function assemblyService(ctx: BcContext) {
   const root = ctx.odataCompanyBase.replace(/\/Company\(.*$/, '');
@@ -213,7 +213,7 @@ async function assemblyService(ctx: BcContext) {
   const head = configured || list.find(n => /^assembly_?order$/i.test(n)) || list.find(n => /^assembly_?orders?(_card)?$/i.test(n));
   if (!head || (list.length && !list.includes(head))) throw new Error(ASSEMBLY_SETUP);
   const lines = list.find(n => n !== head && n.toLowerCase().startsWith(head.toLowerCase()) && /line/i.test(n));
-  if (!lines) throw new Error(`El servicio web ${head} no expone las líneas de la orden: publica la página 900 "Assembly Order" (con su subpágina de líneas).`);
+  if (!lines) throw new Error(`The ${head} web service does not expose the order lines: publish page 900 "Assembly Order" (with its lines subpage).`);
   return { head: `${ctx.odataCompanyBase}/${head}`, lines: `${ctx.odataCompanyBase}/${lines}` };
 }
 

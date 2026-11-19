@@ -71,7 +71,7 @@ export async function POST(req: Request) {
       }
     });
 
-    await logAction('Alta Contrato', `Contrato: ${description}`, companyId);
+    await logAction('Contract added', `Contract: ${description}`, companyId);
 
     // Return the policy without the heavy base64 strings
     return NextResponse.json({

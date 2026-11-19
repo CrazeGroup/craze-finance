@@ -3,9 +3,9 @@
 export const SYNC_COMPANIES = ['CRAZE', 'Craze Iberia SL', 'Craze UK', 'CRAZE Group AG', 'Craze Entertainment'];
 
 export const SYNC_STEPS = [
-  { key: 'customers', label: 'Clientes' },
-  { key: 'invoices', label: 'Facturas' },
-  { key: 'vendors', label: 'Proveedores' },
-  { key: 'vendorInvoices', label: 'Fact. Proveedores' },
-  { key: 'recurring', label: 'Pagos recurrentes' },
+  { key: 'customers', label: 'Customers' },
+  { key: 'invoices', label: 'Invoices' },
+  { key: 'vendors', label: 'Vendors' },
+  { key: 'vendorInvoices', label: 'Vendor invoices' },
+  { key: 'recurring', label: 'Recurring payments' },
 ] as const;

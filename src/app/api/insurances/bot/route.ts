@@ -29,7 +29,7 @@ export async function POST(req: Request) {
 
     if (policies.length === 0) {
       return NextResponse.json({ 
-        reply: "No tienes ninguna póliza de seguro registrada para esta empresa, por lo que no puedo consultar incidencias." 
+        reply: "You have no insurance policy registered for this company, so I cannot look up any claims." 
       });
     }
 
@@ -127,6 +127,6 @@ Archivos adjuntos: ${attachmentsList.length > 0 ? attachmentsList.join(', ') : '
 
   } catch (error: any) {
     console.error('Error in Insurance Bot:', error);
-    return NextResponse.json({ error: error.message || 'Error interno del bot de seguros' }, { status: 500 });
+    return NextResponse.json({ error: error.message || 'Internal error of the insurance bot' }, { status: 500 });
   }
 }

@@ -206,8 +206,8 @@ export async function findService(ctx: BcContext): Promise<{ name: string; url: 
   if (a) return { name: a, url: `${ctx.customApiBase}/${a}` };
 
   throw new RoyaltiesSetupError(
-    'No se encuentra en Business Central el servicio web de la página 60000 "AIT Documents LM Components". ' +
-    'Publícala en "Servicios web" (tipo Página, objeto 60000) o indica su nombre en la configuración.',
+    'The Business Central web service for page 60000 "AIT Documents LM Components" was not found. ' +
+    'Publish it under "Web Services" (type Page, object 60000) or enter its name in the settings.',
     { odataServices: odata, apiEntities: api }
   );
 }
@@ -225,7 +225,7 @@ async function bcLines(ctx: BcContext, from: string, to: string): Promise<{ serv
   const missing = REQUIRED.filter(f => !F[f]);
   if (missing.length) {
     throw new RoyaltiesSetupError(
-      `El servicio "${service.name}" no tiene los campos esperados (${missing.join(', ')}). Campos del servicio: ${keys.join(', ')}`,
+      `The service "${service.name}" does not have the expected fields (${missing.join(', ')}). Service fields: ${keys.join(', ')}`,
       { service: service.name, availableFields: keys }
     );
   }
@@ -267,27 +267,27 @@ async function itemRoyaltyCodes(ctx: BcContext): Promise<Record<string, string>>
   for (const url of candidates) {
     const keys = await sampleKeys(url, ctx.token);
     const name = url.split('/').pop() as string;
-    tried.push(`${name}${keys ? '' : ' (no accesible)'}`);
+    tried.push(`${name}${keys ? '' : ' (not accessible)'}`);
     const codeKey = keys?.find(k => ROYALTY_FIELD.test(k));
     const noKey = keys?.find(k => ['number', 'no', 'No'].includes(k));
     if (!codeKey || !noKey) continue;
     const rows = await bcFetchAll(odataUrl(url, { $select: `${noKey},${codeKey}` }), ctx.token);
     return Object.fromEntries(rows.map(r => [str(r[noKey]), str(r[codeKey])]));
   }
-  throw new Error(`No se encuentra el Royalty Code de la ficha de artículo en ${ctx.companyName} (probado: ${tried.join(', ') || 'ningún servicio de artículos'}).`);
+  throw new Error(`The item card Royalty Code was not found in ${ctx.companyName} (tried: ${tried.join(', ') || 'no item service'}).`);
 }
 
 // % de royalty de la página 80007 "Royalties" (servicio web RoyaltiesCRZ, fijable con 'royaltiesRatesService')
 async function royaltyRates(ctx: BcContext): Promise<RoyaltyRates> {
   const service = await readSetting<string>('royaltiesRatesService', 'RoyaltiesCRZ');
   const rows = await bcFetchAll(`${ctx.odataCompanyBase}/${service}`, ctx.token);
-  if (!rows.length) throw new Error(`El servicio ${service} de ${ctx.companyName} no devuelve ningún Royalty Code.`);
+  if (!rows.length) throw new Error(`The ${service} service of ${ctx.companyName} does not return any Royalty Code.`);
   const keys = Object.keys(rows[0]);
   // Código de la licencia: Code o License_No según cómo esté publicada la página 80007
   const codeKey = keys.find(k => /^code$/i.test(k)) || keys.find(k => /^licen[cs]e_?no$/i.test(k)) || keys.find(k => /^no$/i.test(k));
   const domKey = keys.find(k => /domestic/i.test(k) && !/total/i.test(k));
   const fobKey = keys.find(k => /fob/i.test(k) && !/total/i.test(k));
-  if (!codeKey || !domKey) throw new Error(`El servicio ${service} no tiene los campos Code / % Domestic Royalty (campos: ${keys.join(', ')}).`);
+  if (!codeKey || !domKey) throw new Error(`The ${service} service does not have the Code / % Domestic Royalty fields (fields: ${keys.join(', ')}).`);
   return Object.fromEntries(rows.map(r => [str(r[codeKey]).toUpperCase(), {
     domestic: num(r[domKey]) / 100,
     fob: (fobKey ? num(r[fobKey]) : num(r[domKey])) / 100,
@@ -348,7 +348,7 @@ export async function eurRate(ctx: BcContext | null, currency: string, force: bo
     return await cached(`royalties:fx:${currency}`, 6 * HOUR, async () => {
       const rows = await bcFetchAll(odataUrl(`${gmbh.odataCompanyBase}/Currencies_Excel`, { $select: 'Code,ExchangeRateAmt,ExchangeRateDate' }), gmbh.token);
       const row = rows.find((c: any) => c.Code === currency && c.ExchangeRateAmt);
-      if (!row) throw new Error(`No hay tipo de cambio para ${currency} en Currencies_Excel.`);
+      if (!row) throw new Error(`No exchange rate for ${currency} in Currencies_Excel.`);
       return { rate: num(row.ExchangeRateAmt), date: str(row.ExchangeRateDate).substring(0, 10), error: null as string | null };
     }, force);
   } catch (e: any) {
@@ -364,7 +364,7 @@ export async function royaltiesReport(ctx: BcContext | null, company: string, fr
   const currency = companyCurrency(company);
   const fx = currency === 'EUR' ? null : await eurRate(ctx, currency, force);
   const masterInfo = { currency, fx, itemsError: master.itemsError, ratesSource: master.ratesSource, ratesBcError: master.ratesBcError };
-  if (!ctx) throw new RoyaltiesSetupError('No se ha podido conectar con Business Central.', {});
+  if (!ctx) throw new RoyaltiesSetupError('Could not connect to Business Central.', {});
   // Se guardan las líneas (no el agregado) para aplicar los Royalty Codes de artículo vigentes
   const fromBc = await cached(`royalties:lines3:${company}:${from}:${to}`, to < today() ? 12 * HOUR : 1 * HOUR, () => bcLines(ctx, from, to), force);
   return {

@@ -166,16 +166,16 @@ export async function commercialFacts(abbr: CompanyAbbr, year: number, force = f
     const safe = <T,>(label: string, p: Promise<T[]>) => p.catch((e: any) => { warnings.push(`${label}: ${String(e.message).substring(0, 160)}`); return [] as T[]; });
 
     const [lm, salesLines, customers, fx] = await Promise.all([
-      safe('Facturado (LM)', bcFetchAll(odataUrl(`${ctx.customApiBase}/documentsLMComponents`, {
+      safe('Invoiced (LM)', bcFetchAll(odataUrl(`${ctx.customApiBase}/documentsLMComponents`, {
         $filter: `postingDate ge ${from} and postingDate le ${to}`,
         $select: 'postingDate,sellToCustomerNo,no,quantity,lineAmount,lineAmountLCY,lineAmountEUR,component,mainItemCRZ,shipToCountryRegionCode,customerGroupCode,productLineCode,royaltyCode',
       }), ctx.token, 55_000)),
       // Pedidos abiertos de cualquier año (el Power BI no filtra: cada línea cuenta en el año de su fecha)
-      safe('Pedidos abiertos', abbr === 'GmbH' ? openSalesLines(ctx, 'notAsia')
+      safe('Open orders', abbr === 'GmbH' ? openSalesLines(ctx, 'notAsia')
         : abbr === 'Asia' ? Promise.all([openSalesLines(ctx, 'all'), getBcContext('CRAZE').then(crz => openSalesLines(crz, 'asia'))]).then(([a, b]) => [...a, ...b])
         : openSalesLines(ctx, 'all')),
       // Ficha de cliente de CRAZE para todas las empresas (Customer_Card_Excel del Power BI)
-      safe('Clientes', getBcContext('CRAZE').then(crz => bcFetchAll(odataUrl(`${crz.odataCompanyBase}/Customer_Card_Excel`, { $select: 'No,Country_Region_Code,Customer_Group_Code_CRZ,Currency_Code' }), crz.token))),
+      safe('Customers', getBcContext('CRAZE').then(crz => bcFetchAll(odataUrl(`${crz.odataCompanyBase}/Customer_Card_Excel`, { $select: 'No,Country_Region_Code,Customer_Group_Code_CRZ,Currency_Code' }), crz.token))),
       rateToEur(company.currency),
     ]);
     const { itemBy, extra } = await itemsWith(dims, [...lm.map((l: any) => s(l.no)), ...salesLines.map(l => l.item)]);
@@ -255,8 +255,8 @@ export async function commercialPlans(abbr: CompanyAbbr, year: number, force = f
     const safe = <T,>(label: string, p: Promise<T[]>) => p.catch((e: any) => { warnings.push(`${label}: ${String(e.message).substring(0, 160)}`); return [] as T[]; });
     const read = (entity: string) => bcFetchAll(odataUrl(`${ctx.customApiBase}/${entity}`, { $filter: `postingDate ge ${from} and postingDate le ${to}` }), ctx.token, 55_000);
     const [bItems, bUnits, fItems, fUnits, fx] = await Promise.all([
-      safe('Presupuesto', read('budgetItems')), safe('Presupuesto (uds.)', read('budgetUnits')),
-      safe('Forecast', read('forecastItems')), safe('Forecast (uds.)', read('forecastUnits')),
+      safe('Budget', read('budgetItems')), safe('Budget (units)', read('budgetUnits')),
+      safe('Forecast', read('forecastItems')), safe('Forecast (units)', read('forecastUnits')),
       rateToEur(company.currency),
     ]);
     const { itemBy, extra } = await itemsWith(dims, [bItems, bUnits, fItems, fUnits].flatMap(list => list.map((b: any) => s(b.itemNo))));

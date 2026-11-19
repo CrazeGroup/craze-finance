@@ -4,7 +4,7 @@ import React, { Fragment, useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
 import { ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 import { companyLabel, useCompany } from '@/contexts/CompanyContext';
-import { useLanguage } from '@/contexts/LanguageContext';
+import { useLanguage, useT } from '@/contexts/LanguageContext';
 import { makeT } from '../reporting/i18n';
 import { Card, ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
 import InventoryBreakdown, { Analysis, Delta, Dim, InvAttrs } from '../reporting/InventoryBreakdown';
@@ -45,6 +45,8 @@ export default function AmazonPage() {
   const { lang } = useLanguage();
   const fmt = useMemo(() => makeT(lang), [lang]);
   const { eur, pct } = fmt;
+  const { t, tx, locale } = useT();
+  const estNote = (ests: Est[]) => estNoteText(ests, t, locale);
   const thisYear = new Date().getFullYear();
   const [year, setYear] = useState(thisYear);
   const [reload, setReload] = useState({ n: 0, force: false });
@@ -99,19 +101,19 @@ export default function AmazonPage() {
           <div className="flex items-center gap-4 mr-auto">
             <Image src="/logo.png" alt="Craze Group" width={104} height={50} className="object-contain" />
             <div>
-              <p className="font-bold text-gray-900 leading-tight">Amazon · margen por cliente</p>
+              <p className="font-bold text-gray-900 leading-tight">{t('Amazon · margin by customer')}</p>
               <p className="text-xs text-gray-500">
                 {data ? `${fmt.date(data.cur.from)} – ${fmt.date(data.cur.to)}` : '…'} · {companyLabel(company)}
-                {data && <> · calculado {new Date(data.cur.computedAt).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}</>}
+                {data && <> · {t('calculated {date}', { date: new Date(data.cur.computedAt).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) })}</>}
               </p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 hidden sm:inline">Año</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 hidden sm:inline">{t('Year')}</span>
             <select value={year} onChange={e => setYear(Number(e.target.value))} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold bg-white">
               {years.map(y => <option key={y} value={y}>{y}</option>)}
             </select>
-            <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={state.loading} title="Recalcular desde BC"
+            <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={state.loading} title={t('Recalculate from BC')}
               className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">
               <RefreshCw size={16} className={state.loading ? 'animate-spin' : ''} />
             </button>
@@ -120,33 +122,33 @@ export default function AmazonPage() {
       </header>
 
       <main className="w-full px-4 md:px-8 pt-6 space-y-8">
-        {selectedCompany === 'ALL' ? <p className="text-sm text-gray-600">Selecciona una empresa concreta en el menú lateral.</p>
-          : state.error ? <ErrorBox message={state.error} />
-          : !data || !view ? <Loading text="Calculando el margen de Amazon (la primera vez puede tardar un par de minutos)…" />
+        {selectedCompany === 'ALL' ? <p className="text-sm text-gray-600">{t('Select a specific company in the side menu.')}</p>
+          : state.error ? <ErrorBox message={tx(state.error)} />
+          : !data || !view ? <Loading text={t('Calculating the Amazon margin (the first time it can take a couple of minutes)…')} />
           : (
             <>
-              <Section title={`Amazon ${data.cur.year}`} source={`Facturas y abonos de venta registrados · logística (Logistic Costs) · Amazon Ads (AA-00015) y deducciones Amazon EU por país${data.prev ? ` · vs mismo periodo ${data.prev.year}` : ''}`}>
+              <Section title={`Amazon ${data.cur.year}`} source={`${t('Posted sales invoices and credit memos · logistics (Logistic Costs) · Amazon Ads (AA-00015) and Amazon EU deductions by country')}${data.prev ? ` · ${t('vs same period {year}', { year: data.prev.year })}` : ''}`}>
                 <Grid cols={3}>
-                  {([['Ventas', 's'], ['Product cost', 'c'], ['Coste logístico', 'l'], ['Amazon Ads', 'a'], ['Deducciones Amazon', 'd']] as const).map(([label, k]) => (
-                    <Kpi key={k} label={label} value={eur(view.total[k])}
-                      sub={view.totalLy && k !== 'a' && k !== 'd' ? `${data.prev!.year}: ${eur(view.totalLy[k])}${k !== 's' && view.total.s ? ` · ${pct((view.total[k] / view.total.s) * 100)} s/ventas` : ''}` : k !== 's' && view.total.s ? `${pct((view.total[k] / view.total.s) * 100)} s/ventas` : undefined}
+                  {([['Sales', 's'], ['Product cost', 'c'], ['Logistics cost', 'l'], ['Amazon Ads', 'a'], ['Amazon deductions', 'd']] as const).map(([label, k]) => (
+                    <Kpi key={k} label={k === 'c' ? label : t(label)} value={eur(view.total[k])}
+                      sub={view.totalLy && k !== 'a' && k !== 'd' ? `${data.prev!.year}: ${eur(view.totalLy[k])}${k !== 's' && view.total.s ? ` · ${t('{pct} of sales', { pct: pct((view.total[k] / view.total.s) * 100) })}` : ''}` : k !== 's' && view.total.s ? t('{pct} of sales', { pct: pct((view.total[k] / view.total.s) * 100) }) : undefined}
                       extra={view.totalLy && k !== 'a' && k !== 'd' ? <span className="text-xs font-semibold"><Delta fmt={fmt} cur={view.total[k]} prev={view.totalLy[k]} invert={k !== 's'} /></span> : undefined} />
                   ))}
-                  <Kpi label="Margen" value={eur(margin(view.total))} tone={margin(view.total) < 0 ? 'red' : 'main'} highlight
-                    sub={`${pctOf(view.total)} s/ventas${view.totalLy ? ` · ${data.prev!.year}: ${eur(margin(view.totalLy))} (${pctOf(view.totalLy)})${view.prevEst.some(e => e.months.length) ? `, ${view.prevEst.filter(e => e.months.length).map(e => KIND_NAME[e.kind]).join(' y ')} estimados` : ''}` : ''}`}
+                  <Kpi label={t('Margin')} value={eur(margin(view.total))} tone={margin(view.total) < 0 ? 'red' : 'main'} highlight
+                    sub={`${t('{pct} of sales', { pct: pctOf(view.total) })}${view.totalLy ? ` · ${data.prev!.year}: ${eur(margin(view.totalLy))} (${pctOf(view.totalLy)})${view.prevEst.some(e => e.months.length) ? `, ${t('{list} estimated', { list: view.prevEst.filter(e => e.months.length).map(e => t(KIND_NAME[e.kind])).join(` ${t('and')} `) })}` : ''}` : ''}`}
                     extra={view.totalLy ? <span className="text-xs font-semibold"><Delta fmt={fmt} cur={margin(view.total)} prev={margin(view.totalLy)} /></span> : undefined} />
                 </Grid>
                 <InventoryBreakdown fmt={fmt} an={view.analysis} kind="flow" opts={{
-                  title: 'Margen Amazon por mes', dims: DIMS, sameDayLy: true,
-                  note: 'Margen = venta − Product cost (cantidad × Unit Cost de la línea) − coste logístico − Amazon Ads − deducciones Amazon. El acumulado del año anterior llega hasta el mismo día; en el gráfico sus meses son completos.' + estNote(view.prevEst) + estNote(view.curEst),
+                  title: t('Amazon margin by month'), dims: DIMS, sameDayLy: true,
+                  note: t("Margin = sales − Product cost (quantity × the line's Unit Cost) − logistics cost − Amazon Ads − Amazon deductions. The previous year's cumulative goes up to the same day; in the chart its months are complete.") + estNote(view.prevEst) + estNote(view.curEst),
                 }} />
               </Section>
 
               <section className="rpt-section space-y-3">
                 <button onClick={toggleTable} className="flex w-full items-center gap-2 border-b-2 border-gray-900 pb-2 text-left">
                   {tableOpen ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
-                  <h2 className="text-[22px] font-bold text-gray-900 tracking-tight">Detalle por cliente Amazon</h2>
-                  <span className="text-xs text-gray-500">cliente → mes → factura → líneas{data.prev ? ` · comparado con ${data.prev.year} hasta el ${fmt.shortDate(data.cur.to)}` : ''}</span>
+                  <h2 className="text-[22px] font-bold text-gray-900 tracking-tight">{t('Detail by Amazon customer')}</h2>
+                  <span className="text-xs text-gray-500">{t('customer → month → invoice → lines')}{data.prev ? ` · ${t('compared with {year} up to {date}', { year: data.prev.year, date: fmt.shortDate(data.cur.to) })}` : ''}</span>
                 </button>
                 {tableOpen && (
                   <Card>
@@ -154,18 +156,18 @@ export default function AmazonPage() {
                       <table className="w-full text-[13px]">
                         <thead>
                           <tr className="border-b border-gray-200 text-[10px] font-semibold uppercase tracking-wider text-gray-500 font-mono">
-                            <th className="py-2 px-2 text-left">Cliente / mes / documento</th>
-                            <th className="py-2 px-2 text-left">País</th>
-                            <th className="py-2 px-2 text-right">Ventas</th>
+                            <th className="py-2 px-2 text-left">{t('Customer / month / document')}</th>
+                            <th className="py-2 px-2 text-left">{t('Country')}</th>
+                            <th className="py-2 px-2 text-right">{t('Sales')}</th>
                             <th className="py-2 px-2 text-right">Product cost</th>
-                            <th className="py-2 px-2 text-right">Logística</th>
+                            <th className="py-2 px-2 text-right">{t('Logistics')}</th>
                             <th className="py-2 px-2 text-right">Ads</th>
-                            <th className="py-2 px-2 text-right">Deducciones</th>
-                            <th className="py-2 px-2 text-right">Margen</th>
-                            <th className="py-2 px-2 text-right">% margen</th>
-                            <th className="py-2 px-2 text-right">{data.prev ? `Ventas ${data.prev.year}` : ''}</th>
-                            <th className="py-2 px-2 text-right">{data.prev ? `Margen ${data.prev.year}` : ''}</th>
-                            <th className="py-2 px-2 text-right">{data.prev ? 'Δ margen' : ''}</th>
+                            <th className="py-2 px-2 text-right">{t('Deductions')}</th>
+                            <th className="py-2 px-2 text-right">{t('Margin')}</th>
+                            <th className="py-2 px-2 text-right">{t('% margin')}</th>
+                            <th className="py-2 px-2 text-right">{data.prev ? t('Sales {year}', { year: data.prev.year }) : ''}</th>
+                            <th className="py-2 px-2 text-right">{data.prev ? t('Margin {year}', { year: data.prev.year }) : ''}</th>
+                            <th className="py-2 px-2 text-right">{data.prev ? t('Δ margin') : ''}</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -194,7 +196,7 @@ export default function AmazonPage() {
                                             <tr onClick={() => toggle(dk)} className="border-b border-gray-100 cursor-pointer hover:bg-gray-50 text-gray-700">
                                               <td className="py-1.5 px-2 pl-14">
                                                 <span className="inline-flex items-center gap-1">{open.has(dk) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                                  {d.no} <span className="text-gray-400">· {fmt.date(d.date)}{d.credit ? ' · abono' : ''}{d.order ? ` · ${d.order}` : ''}</span></span>
+                                                  {d.no} <span className="text-gray-400">· {fmt.date(d.date)}{d.credit ? ` · ${t('credit memo')}` : ''}{d.order ? ` · ${d.order}` : ''}</span></span>
                                               </td>
                                               <td />
                                               {cells(d.agg)}
@@ -204,7 +206,7 @@ export default function AmazonPage() {
                                               const g = zero(); addTo(g, l);
                                               return (
                                                 <tr key={`${dk}:${i}`} className="border-b border-gray-100 text-gray-500 text-[12px]">
-                                                  <td className="py-1 px-2 pl-20">{it.no} {it.desc} <span className="text-gray-400">· {fmt.num(l[2])} uds</span></td>
+                                                  <td className="py-1 px-2 pl-20">{it.no} {it.desc} <span className="text-gray-400">· {t('{n} units', { n: fmt.num(l[2]) })}</span></td>
                                                   <td />
                                                   {cells(g)}
                                                 </tr>
@@ -221,8 +223,8 @@ export default function AmazonPage() {
                           })}
                           {view.open.map(a => (
                             <tr key={`${a.kind}:${a.country}`} className="border-b border-gray-100 text-[#B7791F]">
-                              <td className="py-1.5 px-2">{a.kind === 'a' ? 'Amazon Ads' : 'Deducciones Amazon'} sin ventas a clientes Amazon del país ({a.months.join(', ')})</td>
-                              <td className="py-1.5 px-2">{a.country || '(sin país)'}</td>
+                              <td className="py-1.5 px-2">{t('{kind} with no sales to Amazon customers in the country ({months})', { kind: a.kind === 'a' ? 'Amazon Ads' : t('Amazon deductions'), months: a.months.join(', ') })}</td>
+                              <td className="py-1.5 px-2">{a.country || t('(no country)')}</td>
                               {cells({ ...zero(), [a.kind]: a.amount })}
                             </tr>
                           ))}
@@ -235,11 +237,11 @@ export default function AmazonPage() {
                       </table>
                     </div>
                     <div className="mt-3 space-y-1 text-[11px] text-gray-500">
-                      <p>Cliente = Sell-to de la factura (clientes cuyo nombre contiene «Amazon», sin «FBA Regularization»); importes en divisa local, sin IVA. Product cost = cantidad × Unit Cost (LCY) de la línea.</p>
-                      <p>Logística = Total Charges de Logistic Costs: su Order No. (nº de Warehouse Shipment) → envío registrado → pedido de venta → primera factura del pedido desde la fecha del envío, repartido entre sus líneas por importe.
-                        {data.cur.logistic.unassigned ? ` Envíos a Amazon aún sin factura (o sin enlace): ${eur(data.cur.logistic.unassigned)} en ${data.cur.logistic.unassignedRows} envíos, no incluidos.` : ''}</p>
-                      <p>Amazon Ads = artículo AA-00015 en facturas/abonos de compra de proveedores Amazon, por país del proveedor (Polonia con Alemania) y mes, repartido entre los clientes Amazon de ese país en proporción a la venta del mes.{estNote(view.prevEst)}{estNote(view.curEst)}</p>
-                      <p>Deducciones Amazon = líneas sin IVA de las facturas/abonos de compra de los proveedores «Amazon EU …» (acuerdos, co-op, damage allowance, rebates, chargebacks, Amazon Promotions…), sin Ads (AA-00015) ni gastos «OPERATING» y sin UK Branch (no hay ventas a Amazon UK); por país del proveedor y mes, repartidas como los Ads. Si un país no tiene ventas ese mes (p. ej. LU), van a sus ventas del año.</p>
+                      <p>{t("Customer = the invoice's Sell-to (customers whose name contains «Amazon», excluding «FBA Regularization»); amounts in local currency, excluding VAT. Product cost = quantity × the line's Unit Cost (LCY).")}</p>
+                      <p>{t("Logistics = Total Charges from Logistic Costs: its Order No. (Warehouse Shipment no.) → posted shipment → sales order → the order's first invoice from the shipment date, spread over its lines by amount.")}
+                        {data.cur.logistic.unassigned ? ` ${t('Shipments to Amazon not invoiced yet (or not linked): {amount} in {n} shipments, not included.', { amount: eur(data.cur.logistic.unassigned), n: data.cur.logistic.unassignedRows })}` : ''}</p>
+                      <p>{t("Amazon Ads = item AA-00015 on purchase invoices/credit memos from Amazon vendors, by vendor country (Poland together with Germany) and month, spread over that country's Amazon customers in proportion to the month's sales.")}{estNote(view.prevEst)}{estNote(view.curEst)}</p>
+                      <p>{t('Amazon deductions = lines excluding VAT of the purchase invoices/credit memos from «Amazon EU …» vendors (agreements, co-op, damage allowance, rebates, chargebacks, Amazon Promotions…), without Ads (AA-00015), «OPERATING» costs or UK Branch (there are no sales to Amazon UK); by vendor country and month, spread like the Ads. If a country has no sales that month (e.g. LU), they go to its sales of the year.')}</p>
                     </div>
                   </Card>
                 )}
@@ -257,7 +259,8 @@ export default function AmazonPage() {
 // los meses anteriores se estiman (sustituyen lo poco que tengan).
 type Kind = 'a' | 'd';
 const KIND_COL: Record<Kind, number> = { a: 6, d: 7 };
-const KIND_NAME: Record<Kind, string> = { a: 'Ads', d: 'deducciones' };
+const KIND_NAME: Record<Kind, string> = { a: 'Ads', d: 'deductions' };
+const KIND_CAP: Record<Kind, string> = { a: 'Ads', d: 'Deductions' };
 type Est = { year: number; kind: Kind; first: string; months: string[]; rates: Record<string, number> };
 const listOf = (y: Year, kind: Kind) => (kind === 'a' ? y.ads : y.ded || []);
 function firstMonth(y: Year, kind: Kind) {
@@ -305,8 +308,15 @@ function estimateAll(y: Year, refs: Year[]) {
   const d = estimate(y, a.lines, refs, 'd');
   return { lines: d.lines, ests: [a.est, d.est] };
 }
-const estNote = (ests: Est[]) => ests.filter(e => e.months.length).map(e =>
-  ` ${KIND_NAME[e.kind].charAt(0).toUpperCase() + KIND_NAME[e.kind].slice(1)} de ${e.year} estimados en ${e.months.map(m => `${m.substring(5, 7)}/${m.substring(2, 4)}`).join(', ')} (sin facturas subidas): venta × % de ${KIND_NAME[e.kind]} del país en los meses con facturas (${Object.entries(e.rates).map(([c, r]) => `${c} ${(r * 100).toFixed(1).replace('.', ',')} %`).join(', ')}).`).join('');
+const estNoteText = (ests: Est[], t: (en: string, vars?: Record<string, string | number>) => string, locale: string) => {
+  const nf1 = new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  return ests.filter(e => e.months.length).map(e =>
+    ` ${t("{Kind} for {year} estimated in {months} (no invoices uploaded): sales × the country's {kind} % in the months with invoices ({rates}).", {
+      Kind: t(KIND_CAP[e.kind]), kind: t(KIND_NAME[e.kind]), year: e.year,
+      months: e.months.map(m => `${m.substring(5, 7)}/${m.substring(2, 4)}`).join(', '),
+      rates: Object.entries(e.rates).map(([c, r]) => `${c} ${nf1.format(r * 100)} %`).join(', '),
+    })}`).join('');
+};
 
 // Agrega los datos: totales, clientes → meses → documentos y las filas del gráfico (formato de Análisis Inventario)
 function build({ cur, prev }: Data) {

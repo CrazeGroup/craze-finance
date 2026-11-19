@@ -67,10 +67,10 @@ function suggestFor(e: Entry, group: Entry[]): Suggestion | null {
   const cited = cands.filter(c => cites(e, c) || cites(c, e));
   const exact = cands.filter(c => cents(c.remainingAmount) === target);
   const exactRef = exact.filter(c => cited.includes(c));
-  if (exactRef.length) return { kind: 'exact_ref', entries: pack([exactRef[0]]), note: 'Mismo importe y se citan' };
+  if (exactRef.length) return { kind: 'exact_ref', entries: pack([exactRef[0]]), note: 'Same amount and they cite each other' };
   if (exact.length) {
     const best = [...exact].sort((a, b) => dist(a) - dist(b))[0];
-    return { kind: 'exact', entries: pack([best]), note: exact.length > 1 ? `Mismo importe (${exact.length} posibles: el de fecha más cercana)` : 'Mismo importe' };
+    return { kind: 'exact', entries: pack([best]), note: exact.length > 1 ? `Same amount (${exact.length} candidates: the closest date)` : 'Same amount' };
   }
   // Combinaciones de 2 a 4 entre los más cercanos en fecha
   const near = [...cands].filter(c => dist(c) <= 120 * 86400000).sort((a, b) => dist(a) - dist(b)).slice(0, 25);
@@ -87,11 +87,11 @@ function suggestFor(e: Entry, group: Entry[]): Suggestion | null {
     }
   };
   search(0, target, []);
-  if (combo) return { kind: 'combo', entries: pack((combo as number[]).map(i => near[i])), note: `Suman el importe exacto (${(combo as number[]).length} movimientos)` };
+  if (combo) return { kind: 'combo', entries: pack((combo as number[]).map(i => near[i])), note: `They add up to the exact amount (${(combo as number[]).length} entries)` };
   if (cited.length) {
     const c = cited[0];
     const rest = (e.remainingAmount + c.remainingAmount);
-    return { kind: 'ref', entries: pack([c]), note: `Se citan, pero con otro importe: quedaría ${rest.toFixed(2)}` };
+    return { kind: 'ref', entries: pack([c]), note: `They cite each other, but with a different amount: ${rest.toFixed(2)} would remain` };
   }
   return null;
 }
@@ -129,7 +129,7 @@ export async function GET() {
   try {
     const cookieStore = await cookies();
     const company = cookieStore.get('craze_selected_company')?.value || 'CRAZE';
-    if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
+    if (company === 'ALL') return NextResponse.json({ error: 'Select a specific company.' }, { status: 400 });
     const ctx = await getBcContext(company);
 
     const [customers, vendors] = await Promise.all([

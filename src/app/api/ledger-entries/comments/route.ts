@@ -26,7 +26,7 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     const lineKey = String(body?.key || '');
-    if (!/^(Customer|Vendor):\d+$/.test(lineKey)) return NextResponse.json({ error: 'Línea no válida' }, { status: 400 });
+    if (!/^(Customer|Vendor):\d+$/.test(lineKey)) return NextResponse.json({ error: 'Invalid line' }, { status: 400 });
     const k = await keyOf();
     const all = await read(k);
     const text = String(body.text || '').trim().slice(0, 1000);

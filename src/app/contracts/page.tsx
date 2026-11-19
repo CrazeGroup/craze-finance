@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { ShieldCheck, Plus, FileText, Download, Trash2, Send, Bot, User as UserIcon, Loader2, Save, Edit2 } from 'lucide-react';
 import { useCompany, COMPANIES } from '@/contexts/CompanyContext';
 import { upload } from '@vercel/blob/client';
+import { useT } from '@/contexts/LanguageContext';
 
 interface Contract {
   id: number;
@@ -22,14 +23,18 @@ interface ChatMessage {
   content: string;
 }
 
+// Saludo inicial del chat: se guarda en inglés y se traduce al mostrarlo
+const GREETING = 'Hi! I am your contracts assistant. Ask me about clauses, conditions or any question you have about the customer contracts.';
+
 export default function ContractsPage() {
   const { selectedCompany } = useCompany();
+  const { t, tx, locale } = useT();
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'bot', content: '¡Hola! Soy tu asistente de contratos. Pregúntame sobre cláusulas, condiciones o cualquier duda que tengas sobre los contratos de clientes.' }
+    { role: 'bot', content: GREETING }
   ]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
@@ -85,7 +90,7 @@ export default function ContractsPage() {
 
     const validFiles = files.filter(f => f.name.toLowerCase().endsWith('.pdf'));
     if (validFiles.length !== files.length) {
-      alert('Algunos archivos no son PDF. Solo se han seleccionado los PDFs.');
+      alert(t('Some files are not PDFs. Only the PDFs have been selected.'));
     }
     if (validFiles.length === 0) return;
 
@@ -93,7 +98,7 @@ export default function ContractsPage() {
     validFiles.forEach(f => totalSize += f.size);
     // Vercel Blob client-side uploads handle large files easily, but we can set a generous limit (e.g. 50MB)
     if (totalSize > 50 * 1024 * 1024) {
-      alert('El tamaño total de los archivos supera el límite de 50MB.');
+      alert(t('The total size of the files exceeds the 50MB limit.'));
       return;
     }
 
@@ -119,7 +124,7 @@ export default function ContractsPage() {
       setFormData(prev => ({ ...prev, attachments: newAttachments }));
     } catch (error: any) {
       console.error("Error al subir a Vercel Blob:", error);
-      alert(`Error en paso 1 (Subiendo a Blob): ${error?.message || 'Fallo desconocido'}`);
+      alert(t('Error in step 1 (Uploading to Blob): {error}', { error: error?.message || t('Unknown failure') }));
       setIsExtracting(false);
       return; // Stop here if upload fails
     }
@@ -143,12 +148,12 @@ export default function ContractsPage() {
         }));
       } else {
         const errorData = await res.json().catch(() => null);
-        const errorMessage = errorData?.error || 'Error desconocido';
-        alert(`Error en paso 2 (Extracción): El servidor devolvió status ${res.status}. Detalles: ${errorMessage}`);
+        const errorMessage = errorData?.error ? tx(errorData.error) : t('Unknown error');
+        alert(t('Error in step 2 (Extraction): The server returned status {status}. Details: {error}', { status: res.status, error: errorMessage }));
       }
     } catch (error: any) {
       console.error("Error al extraer datos con Gemini:", error);
-      alert(`Error en paso 2 (Llamada a Gemini): ${error?.message || 'Fallo desconocido'}`);
+      alert(t('Error in step 2 (Gemini call): {error}', { error: error?.message || t('Unknown failure') }));
     } finally {
       setIsExtracting(false);
     }
@@ -164,7 +169,7 @@ export default function ContractsPage() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.clientName || !formData.description || !formData.startDate || !formData.endDate) {
-      return alert('Rellena los campos obligatorios');
+      return alert(t('Fill in the required fields'));
     }
 
     setIsUploading(true);
@@ -185,30 +190,30 @@ export default function ContractsPage() {
         fetchContracts();
       } else {
         if (res.status === 413) {
-          alert('Error: El archivo es demasiado grande para ser procesado por el servidor.');
+          alert(t('Error: The file is too large to be processed by the server.'));
         } else {
           try {
             const err = await res.json();
-            alert(err.error || 'Error al guardar');
+            alert(err.error ? tx(err.error) : t('Error saving'));
           } catch(e) {
-            alert(`Error de servidor (${res.status}). Puede que el archivo sea muy grande.`);
+            alert(t('Server error ({status}). The file may be too large.', { status: res.status }));
           }
         }
       }
     } catch (e) {
-      alert('Error de red. Comprueba tu conexión a internet.');
+      alert(t('Network error. Check your internet connection.'));
     } finally {
       setIsUploading(false);
     }
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm('¿Estás contrato de eliminar este contrato?')) return;
+    if (!confirm(t('Are you sure you want to delete this contract?'))) return;
     try {
       const res = await fetch(`/api/contracts/${id}`, { method: 'DELETE' });
       if (res.ok) fetchContracts();
     } catch (e) {
-      alert('Error de conexión');
+      alert(t('Connection error'));
     }
   };
 
@@ -253,10 +258,10 @@ export default function ContractsPage() {
       });
 
       if (downloadedCount === 0) {
-        alert('Este contrato no tiene archivos adjuntos');
+        alert(t('This contract has no attached files'));
       }
     } catch (e) {
-      alert('Error al descargar');
+      alert(t('Error downloading'));
     }
   };
 
@@ -279,12 +284,12 @@ export default function ContractsPage() {
       const data = await res.json();
       
       if (data.error) {
-        setMessages(prev => [...prev, { role: 'bot', content: `❌ Error: ${data.error}` }]);
+        setMessages(prev => [...prev, { role: 'bot', content: `❌ Error: ${tx(data.error)}` }]);
       } else {
         setMessages(prev => [...prev, { role: 'bot', content: data.reply }]);
       }
     } catch (e) {
-      setMessages(prev => [...prev, { role: 'bot', content: '❌ Error de conexión al consultar al bot.' }]);
+      setMessages(prev => [...prev, { role: 'bot', content: `❌ ${t('Connection error while asking the bot.')}` }]);
     } finally {
       setChatLoading(false);
     }
@@ -296,9 +301,9 @@ export default function ContractsPage() {
         <div>
           <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
             <ShieldCheck className="text-black w-8 h-8" /> 
-            Gestión de Contratos
+            {t('Contract Management')}
           </h1>
-          <p className="text-gray-500 mt-1">Controla las contratos de {selectedCompany} y consulta dudas con la IA</p>
+          <p className="text-gray-500 mt-1">{t('Manage the contracts of {company} and ask the AI your questions', { company: selectedCompany })}</p>
         </div>
         <button 
           onClick={() => {
@@ -307,7 +312,7 @@ export default function ContractsPage() {
           }}
           className="flex items-center gap-2 px-5 py-2.5 bg-black hover:bg-gray-800 text-white rounded-lg shadow-lg font-medium transition-colors"
         >
-          <Plus size={18} /> Añadir Contrato
+          <Plus size={18} /> {t('Add Contract')}
         </button>
       </div>
 
@@ -318,16 +323,16 @@ export default function ContractsPage() {
           <div className="p-4 border-b border-gray-100 bg-gray-50">
             <h2 className="font-bold text-gray-800 flex items-center gap-2">
               <FileText size={18} className="text-blue-600" />
-              Contratos Activas
+              {t('Active Contracts')}
             </h2>
           </div>
           
           <div className="flex-1 overflow-y-auto p-4">
             {loading ? (
-              <div className="text-center py-10 text-gray-400">Cargando contratos...</div>
+              <div className="text-center py-10 text-gray-400">{t('Loading contracts...')}</div>
             ) : contracts.length === 0 ? (
               <div className="text-center py-10 text-gray-400 border-2 border-dashed border-gray-200 rounded-xl">
-                No hay contratos registrados para {selectedCompany}.
+                {t('There are no contracts registered for {company}.', { company: selectedCompany })}
               </div>
             ) : (
               <div className="space-y-3">
@@ -342,15 +347,15 @@ export default function ContractsPage() {
                   threeMonthsFromNow.setMonth(today.getMonth() + 3);
                   const isExpiringSoon = isActive && end <= threeMonthsFromNow;
 
-                  let statusText = 'CADUCADO';
+                  let statusText = 'EXPIRED';
                   let statusColor = 'bg-red-100 text-red-700';
                   
                   if (isActive) {
                     if (isExpiringSoon) {
-                      statusText = 'RENOVAR PRONTO';
+                      statusText = 'RENEW SOON';
                       statusColor = 'bg-red-100 text-red-700';
                     } else {
-                      statusText = 'ACTIVO';
+                      statusText = 'ACTIVE';
                       statusColor = 'bg-green-100 text-green-700';
                     }
                   }
@@ -365,16 +370,16 @@ export default function ContractsPage() {
                           </span>
                         </h3>
                         <p className="text-sm text-gray-500 mt-1">
-                          {start.toLocaleDateString()} - {end.toLocaleDateString()}
+                          {start.toLocaleDateString(locale)} - {end.toLocaleDateString(locale)}
                         </p>
                         <div className="flex items-center gap-3 mt-2">
                           <span className={`inline-block px-2 py-0.5 rounded text-xs font-bold ${statusColor}`}>
-                            {statusText}
+                            {t(statusText)}
                           </span>
                           {(policy.attachments?.length || policy.fileName) ? (
                             <span className="flex items-center gap-1 text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
                               <FileText size={12} />
-                              {((policy.attachments?.length || 0) + (policy.fileName ? 1 : 0))} documento(s)
+                              {t('{n} document(s)', { n: (policy.attachments?.length || 0) + (policy.fileName ? 1 : 0) })}
                             </span>
                           ) : null}
                         </div>
@@ -397,7 +402,7 @@ export default function ContractsPage() {
                             setIsModalOpen(true);
                           }}
                           className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
-                          title="Editar Contrato"
+                          title={t('Edit Contract')}
                         >
                           <Edit2 size={18} />
                         </button>
@@ -405,7 +410,7 @@ export default function ContractsPage() {
                           <button 
                             onClick={() => handleDownload(policy.id, policy.fileName)}
                             className="p-2 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
-                            title="Descargar Documentos"
+                            title={t('Download Documents')}
                           >
                             <Download size={18} />
                           </button>
@@ -413,7 +418,7 @@ export default function ContractsPage() {
                         <button 
                           onClick={() => handleDelete(policy.id)}
                           className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
-                          title="Eliminar Contrato"
+                          title={t('Delete Contract')}
                         >
                           <Trash2 size={18} />
                         </button>
@@ -431,9 +436,9 @@ export default function ContractsPage() {
           <div className="p-4 border-b border-gray-200 bg-white flex items-center justify-between">
             <h2 className="font-bold text-gray-800 flex items-center gap-2">
               <Bot size={20} className="text-purple-600" />
-              Asistente de Contratos (IA)
+              {t('Contracts Assistant (AI)')}
             </h2>
-            <span className="text-xs font-medium px-2 py-1 bg-purple-100 text-purple-700 rounded-full">Lee tus contratos (PDF)</span>
+            <span className="text-xs font-medium px-2 py-1 bg-purple-100 text-purple-700 rounded-full">{t('Reads your contracts (PDF)')}</span>
           </div>
           
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -443,7 +448,7 @@ export default function ContractsPage() {
                   {msg.role === 'user' ? <UserIcon size={16} /> : <Bot size={16} />}
                 </div>
                 <div className={`p-3 rounded-2xl text-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-sm' : 'bg-white border border-gray-200 text-gray-800 rounded-tl-sm shadow-sm whitespace-pre-wrap'}`}>
-                  {msg.content}
+                  {msg.role === 'bot' && msg.content === GREETING ? t(GREETING) : msg.content}
                 </div>
               </div>
             ))}
@@ -453,7 +458,7 @@ export default function ContractsPage() {
                   <Bot size={16} />
                 </div>
                 <div className="p-4 bg-white border border-gray-200 rounded-2xl rounded-tl-sm shadow-sm flex items-center gap-2 text-sm text-gray-500">
-                  <Loader2 size={14} className="animate-spin" /> Consultando contratos...
+                  <Loader2 size={14} className="animate-spin" /> {t('Checking contracts...')}
                 </div>
               </div>
             )}
@@ -466,7 +471,7 @@ export default function ContractsPage() {
                 type="text" 
                 value={chatInput}
                 onChange={e => setChatInput(e.target.value)}
-                placeholder="Ej: ¿El contrato cubre robo en los almacenes?"
+                placeholder={t('E.g.: Does the contract cover theft in the warehouses?')}
                 className="flex-1 px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 text-sm"
               />
               <button 
@@ -488,15 +493,15 @@ export default function ContractsPage() {
             <div className="p-6 border-b border-gray-200">
               <h3 className="text-xl font-bold flex items-center gap-2">
                 {editingContractId ? (
-                  <><Edit2 className="text-indigo-600" /> Editar/Renovar Contrato</>
+                  <><Edit2 className="text-indigo-600" /> {t('Edit/Renew Contract')}</>
                 ) : (
-                  <><Plus className="text-indigo-600" /> Añadir Contrato de Contrato</>
+                  <><Plus className="text-indigo-600" /> {t('Add New Contract')}</>
                 )}
               </h3>
             </div>
             <form onSubmit={handleSave} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">Empresa</label>
+                <label className="block text-sm font-medium text-gray-600 mb-1">{t('Company')}</label>
                 <select
                   value={formData.companyId}
                   onChange={e => setFormData({...formData, companyId: e.target.value})}
@@ -509,30 +514,30 @@ export default function ContractsPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">Nombre del Cliente</label>
+                <label className="block text-sm font-medium text-gray-600 mb-1">{t('Customer Name')}</label>
                 <input 
                   type="text" 
                   value={formData.clientName}
                   onChange={e => setFormData({...formData, clientName: e.target.value})}
                   className="w-full bg-white border border-gray-200 rounded-lg px-4 py-2"
-                  placeholder="Ej: Tennistech SL"
+                  placeholder={t('E.g.: Tennistech SL')}
                   required
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">Descripción / Nombre</label>
+                <label className="block text-sm font-medium text-gray-600 mb-1">{t('Description / Name')}</label>
                 <input 
                   type="text" 
                   value={formData.description}
                   onChange={e => setFormData({...formData, description: e.target.value})}
                   className="w-full bg-white border border-gray-200 rounded-lg px-4 py-2"
-                  placeholder="Ej: Contrato de RC Plus"
+                  placeholder={t('E.g.: Liability Contract Plus')}
                   required
                 />
               </div>
               <div className="flex gap-4">
                 <div className="w-1/2">
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Fecha de Inicio</label>
+                  <label className="block text-sm font-medium text-gray-600 mb-1">{t('Start Date')}</label>
                   <input 
                     type="date" 
                     value={formData.startDate}
@@ -542,7 +547,7 @@ export default function ContractsPage() {
                   />
                 </div>
                 <div className="w-1/2">
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Fecha de Fin</label>
+                  <label className="block text-sm font-medium text-gray-600 mb-1">{t('End Date')}</label>
                   <input 
                     type="date" 
                     value={formData.endDate}
@@ -553,21 +558,21 @@ export default function ContractsPage() {
                 </div>
               </div>
               <div className="flex flex-col space-y-1">
-                <label className="text-sm font-medium text-gray-700">Documentos Adjuntos (Múltiples PDF)</label>
+                <label className="text-sm font-medium text-gray-700">{t('Attached Documents (Multiple PDFs)')}</label>
                 <div className="flex items-center space-x-2">
                   <input type="file" multiple accept=".pdf" onChange={handleFileChange} className="w-full rounded-md border border-gray-300 p-2 text-sm file:mr-4 file:rounded-full file:border-0 file:bg-blue-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-blue-700 hover:file:bg-blue-100" />
                   {isExtracting && <Loader2 className="h-5 w-5 animate-spin text-blue-600" />}
                 </div>
                 {isExtracting ? (
-                  <p className="text-xs text-blue-600 font-medium">✨ Leyendo contratos con IA...</p>
+                  <p className="text-xs text-blue-600 font-medium">✨ {t('Reading contracts with AI...')}</p>
                 ) : (
-                  <p className="text-xs text-gray-500">Puedes seleccionar varios PDFs a la vez. La IA los leerá todos para extraer la información.</p>
+                  <p className="text-xs text-gray-500">{t('You can select several PDFs at once. The AI will read them all to extract the information.')}</p>
                 )}
                 
                 {/* List of current attachments */}
                 {formData.attachments && formData.attachments.length > 0 && (
                   <div className="mt-3 space-y-2">
-                    <p className="text-xs font-semibold text-gray-600">Archivos seleccionados:</p>
+                    <p className="text-xs font-semibold text-gray-600">{t('Selected files:')}</p>
                     <div className="max-h-32 overflow-y-auto space-y-1 pr-2">
                       {formData.attachments.map((att, idx) => (
                         <div key={idx} className="flex justify-between items-center bg-gray-50 border border-gray-200 rounded p-2">
@@ -579,7 +584,7 @@ export default function ContractsPage() {
                             type="button"
                             onClick={() => removeAttachment(idx)}
                             className="text-red-500 hover:text-red-700 p-1"
-                            title="Eliminar archivo"
+                            title={t('Delete file')}
                           >
                             <Trash2 size={14} />
                           </button>
@@ -599,7 +604,7 @@ export default function ContractsPage() {
                   }}
                   className="px-4 py-2 text-gray-600 hover:bg-gray-50 rounded-lg font-medium"
                 >
-                  Cancelar
+                  {t('Cancel')}
                 </button>
                 <button 
                   type="submit" 
@@ -607,7 +612,7 @@ export default function ContractsPage() {
                   className="px-4 py-2 bg-black hover:bg-gray-800 text-white rounded-lg font-medium flex items-center gap-2 disabled:opacity-50"
                 >
                   {isUploading ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                  {isUploading ? 'Guardando...' : (editingContractId ? 'Actualizar' : 'Guardar')}
+                  {isUploading ? t('Saving...') : (editingContractId ? t('Update') : t('Save'))}
                 </button>
               </div>
             </form>

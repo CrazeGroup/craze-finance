@@ -22,10 +22,10 @@ export async function POST(req: Request) {
     const template = String(body.template || 'ITEM');
     const batch = String(body.batch || 'DEFAULT');
     const lines: Line[] = Array.isArray(body.lines) ? body.lines : [];
-    if (!lines.length || lines.length > 200) return NextResponse.json({ error: 'Entre 1 y 200 líneas.' }, { status: 400 });
+    if (!lines.length || lines.length > 200) return NextResponse.json({ error: 'Between 1 and 200 lines.' }, { status: 400 });
     for (const l of lines) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(l.date || '') || !l.itemNo || !l.location || !(l.quantity > 0) || !TYPES.includes(l.entryType || 'Negative Adjmt.')) {
-        return NextResponse.json({ error: `Línea no válida: ${JSON.stringify(l)}` }, { status: 400 });
+        return NextResponse.json({ error: `Invalid line: ${JSON.stringify(l)}` }, { status: 400 });
       }
     }
     const ctx = await getBcContext(DFORCE_COMPANY);
@@ -52,7 +52,7 @@ export async function POST(req: Request) {
       created.push({ lineNo, ...l, description: row?.Description });
     }
     if (created.length) {
-      await logAction('Item Journal: líneas de ajuste añadidas', `${template}/${batch}: ${created.map(c => `${c.itemNo} ${c.location} ${c.entryType || 'Negative Adjmt.'} ${c.quantity}${c.appliesToEntry ? ` (mov. ${c.appliesToEntry})` : ''}`).join('; ')}`, DFORCE_COMPANY);
+      await logAction('Item Journal: adjustment lines added', `${template}/${batch}: ${created.map(c => `${c.itemNo} ${c.location} ${c.entryType || 'Negative Adjmt.'} ${c.quantity}${c.appliesToEntry ? ` (entry ${c.appliesToEntry})` : ''}`).join('; ')}`, DFORCE_COMPANY);
     }
     return NextResponse.json({ template, batch, created, skipped });
   } catch (error: any) {

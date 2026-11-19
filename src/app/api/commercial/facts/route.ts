@@ -13,7 +13,7 @@ export async function GET(req: Request) {
     const company = searchParams.get('company') as CompanyAbbr;
     const year = Number(searchParams.get('year'));
     if (!COMPANIES.some(c => c.abbr === company) || !Number.isInteger(year) || year < 2023 || year > 2100) {
-      return NextResponse.json({ error: 'Parámetros no válidos' }, { status: 400 });
+      return NextResponse.json({ error: 'Invalid parameters' }, { status: 400 });
     }
     const [facts, plans] = await Promise.all([
       commercialFacts(company, year, searchParams.get('force') === '1'),

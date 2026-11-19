@@ -25,10 +25,10 @@ export async function GET(req: Request) {
 export async function PATCH(req: Request) {
   try {
     const { linkIds, read } = await req.json();
-    if (!Array.isArray(linkIds) || !linkIds.length) return NextResponse.json({ error: 'Sin notas' }, { status: 400 });
+    if (!Array.isArray(linkIds) || !linkIds.length) return NextResponse.json({ error: 'No notes' }, { status: 400 });
     const session = await getSession();
     await setRead(await company(), linkIds.map(String), read !== false, session?.username || 'Sistema');
-    await logAction(read !== false ? 'Notas de compra marcadas como leídas' : 'Notas de compra marcadas como no leídas', `${linkIds.length} nota(s)`);
+    await logAction(read !== false ? 'Purchase notes marked as read' : 'Purchase notes marked as unread', `${linkIds.length} note(s)`);
     return NextResponse.json({ ok: true });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

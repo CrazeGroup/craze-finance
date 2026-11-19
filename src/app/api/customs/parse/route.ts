@@ -12,9 +12,9 @@ export async function POST(req: Request) {
   try {
     const cookieStore = await cookies();
     const company = cookieStore.get('craze_selected_company')?.value || 'CRAZE';
-    if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
+    if (company === 'ALL') return NextResponse.json({ error: 'Select a specific company.' }, { status: 400 });
     const files = (await req.formData()).getAll('files').filter((f): f is File => f instanceof File);
-    if (!files.length) return NextResponse.json({ error: 'Sube al menos un PDF de aduanas.' }, { status: 400 });
+    if (!files.length) return NextResponse.json({ error: 'Upload at least one customs PDF.' }, { status: 400 });
 
     const [ctx, cfg] = await Promise.all([getBcContext(company), customsConfig()]);
     const docs = await Promise.all(files.map(async f => {
@@ -23,7 +23,7 @@ export async function POST(req: Request) {
         const existing = doc.atc ? await existingInvoices(ctx, doc.atc, cfg) : [];
         return { ...doc, existing };
       } catch (e: any) {
-        return { file: f.name, error: `No se ha podido leer el PDF: ${e.message}` };
+        return { file: f.name, error: `Could not read the PDF: ${e.message}` };
       }
     }));
     return NextResponse.json({ company: ctx.companyName, config: cfg, docs });

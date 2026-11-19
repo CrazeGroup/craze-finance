@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx';
 import type { Fmt } from '../reporting/i18n';
 import { ErrorBox, Grid, Kpi, Loading, Section } from '../reporting/ui';
 import CompanySelect, { CONSOLIDATED, REPORT_COMPANIES, useReportCompany } from './CompanySelect';
+import { useT } from '@/contexts/LanguageContext';
 
 // Controlling · Intercompany: facturas de venta entre empresas del grupo frente a su factura de compra en la otra
 // empresa (mismo nº, importe, divisa, fecha, artículos y cantidades) y, en las ventas de CRAZE GmbH a UK / Group AG
@@ -26,19 +27,20 @@ type Orphan = { target: string; no: string; vendorInvoiceNo: string; postingDate
 type Excluded = { invoiceNo: string; creditMemoNo: string; target: string; postingDate: string; externalDocNo: string; creditMemoAmount: number; source?: string };
 type Data = { rows: Row[]; orphanPurchases: Orphan[]; excludedCredited?: Excluded[]; warnings: string[] };
 
-const MONTHS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 const GROUPINGS = [
-  { id: 'none', label: 'Sin agrupar' },
-  { id: 'month', label: 'Mes' },
-  { id: 'pair', label: 'Empresa origen → destino' },
-  { id: 'issue', label: 'Tipo de incidencia' },
+  { id: 'none', label: 'No grouping' },
+  { id: 'month', label: 'Month' },
+  { id: 'pair', label: 'Source company → target' },
+  { id: 'issue', label: 'Issue type' },
 ] as const;
 type Grouping = typeof GROUPINGS[number]['id'];
 const th = 'py-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-gray-500 whitespace-nowrap text-left';
 const td = 'py-1.5 px-2 whitespace-nowrap';
-const issueType = (i: string) => i.replace(/\s*\(.*$/, '').replace(/ en (Craze UK|CRAZE Group AG|CRAZE|Craze Iberia SL|Craze Entertainment).*$/, '').replace(/ con (Vendor Invoice No\.|nº).*$/, '');
+// Tipo de incidencia (texto del servidor en inglés, o en castellano en cachés antiguas) sin empresa, números ni importes
+const issueType = (i: string) => i.replace(/\s*\(.*$/, '').replace(/ (en|in) (Craze UK|CRAZE Group AG|CRAZE|Craze Iberia SL|Craze Entertainment).*$/, '').replace(/ (con|with) (Vendor Invoice No\.|nº|no\.).*$/, '');
 
 export default function IntercompanyView({ fmt, company: globalCompany }: { fmt: Fmt; company: string }) {
+  const { t, tx } = useT();
   const { num, date } = fmt;
   const [company, setCompany] = useReportCompany(globalCompany);
   const [from, setFrom] = useState(() => `${new Date().getFullYear()}-01-01`);
@@ -68,7 +70,7 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`);
       setValidated(d.validated);
     } catch (e: any) {
-      alert(`No se pudo guardar la validación: ${e.message}`);
+      alert(t('Could not save the validation: {msg}', { msg: tx(e.message) }));
     } finally {
       setSaving(null);
     }
@@ -88,7 +90,7 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
     const load = company === CONSOLIDATED
       ? Promise.allSettled(REPORT_COMPANIES.map(one)).then(settled => {
         const parts = settled.flatMap(r => (r.status === 'fulfilled' ? [r.value] : []));
-        const failed = settled.flatMap(r => (r.status === 'rejected' ? [`No incluida: ${r.reason?.message || r.reason}`] : []));
+        const failed = settled.flatMap(r => (r.status === 'rejected' ? [t('Not included: {msg}', { msg: tx(String(r.reason?.message || r.reason)) })] : []));
         if (!parts.length) throw new Error(failed.join(' · '));
         return { rows: parts.flatMap(p => p.rows), orphanPurchases: parts.flatMap(p => p.orphanPurchases), excludedCredited: parts.flatMap(p => p.excludedCredited || []), warnings: [...failed, ...parts.flatMap(p => p.warnings)] };
       })
@@ -111,22 +113,23 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
 
   const groupKeys = (r: Row): string[] => grouping === 'month' ? [r.postingDate.substring(0, 7)]
     : grouping === 'pair' ? [`${r.source} → ${r.target}`]
-    : grouping === 'issue' ? (r.corrected?.length ? ['Corregida'] : isValidated(r) ? ['Validada'] : r.issues.length ? Array.from(new Set(r.issues.map(issueType))) : ['Correcta']) : ['all'];
-  const groupLabel = (k: string) => (grouping === 'month' ? `${MONTHS[Number(k.substring(5, 7)) - 1]} ${k.substring(0, 4)}` : k);
+    : grouping === 'issue' ? (r.corrected?.length ? ['Corrected'] : isValidated(r) ? ['Validated'] : r.issues.length ? Array.from(new Set(r.issues.map(issueType))) : ['Correct']) : ['all'];
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+  const groupLabel = (k: string) => (grouping === 'month' ? `${cap(fmt.monthOnly(k))} ${k.substring(0, 4)}` : grouping === 'issue' ? tx(k) : k);
 
   const exportExcel = () => {
     const out = rows.map(r => ({
-      'Empresa origen': r.source, 'Empresa destino': r.target, 'Factura venta': r.invoiceNo, 'Posting Date': r.postingDate, 'Fecha factura': r.invoiceDate,
-      'Divisa': r.currency, 'Importe sin IVA': r.amount, 'External Document No.': r.externalDocNo,
-      'Factura compra': r.purchase?.no || '', 'Vendor Invoice No.': r.purchase?.vendorInvoiceNo || '', 'Fecha compra': r.purchase?.invoiceDate || '',
-      'Divisa compra': r.purchase?.currency || '', 'Importe compra': r.purchase?.amount ?? '',
-      'Venta final': r.final?.found ? r.final.no : '', 'Cliente final': r.final?.customer || '', 'Incidencias': r.issues.join(' · ') || 'Correcta', 'Corregida': r.corrected?.join(' · ') || '',
-      'Validada': validated[rowKey(r)] ? `${validated[rowKey(r)].by || 'Sí'} ${validated[rowKey(r)].at.substring(0, 10)}` : '',
+      [t('Source company')]: r.source, [t('Target company')]: r.target, [t('Sales invoice')]: r.invoiceNo, 'Posting Date': r.postingDate, [t('Invoice date')]: r.invoiceDate,
+      [t('Inv. currency')]: r.currency, [t('Amount excl. VAT')]: r.amount, 'External Document No.': r.externalDocNo,
+      [t('Purchase invoice')]: r.purchase?.no || '', 'Vendor Invoice No.': r.purchase?.vendorInvoiceNo || '', [t('Purchase date')]: r.purchase?.invoiceDate || '',
+      [t('Purchase currency')]: r.purchase?.currency || '', [t('Purchase amount')]: r.purchase?.amount ?? '',
+      [t('Final sale')]: r.final?.found ? r.final.no : '', [t('Final customer')]: r.final?.customer || '', [t('Issues')]: r.issues.map(tx).join(' · ') || t('Correct'), [t('Corrected')]: r.corrected?.map(tx).join(' · ') || '',
+      [t('Validated')]: validated[rowKey(r)] ? `${validated[rowKey(r)].by || t('Yes')} ${validated[rowKey(r)].at.substring(0, 10)}` : '',
     }));
-    const orphans = (d?.orphanPurchases || []).map(o => ({ 'Empresa (compra)': o.target, 'Proveedor': o.vendor, 'Factura compra': o.no, 'Vendor Invoice No.': o.vendorInvoiceNo, 'Fecha': o.invoiceDate, 'Divisa': o.currency, 'Importe': o.amount }));
+    const orphans = (d?.orphanPurchases || []).map(o => ({ [t('Company (purchase)')]: o.target, [t('Vendor')]: o.vendor, [t('Purchase invoice')]: o.no, 'Vendor Invoice No.': o.vendorInvoiceNo, [t('Date')]: o.invoiceDate, [t('Inv. currency')]: o.currency, [t('Amount')]: o.amount }));
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(out), 'Facturas intercompañía');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(orphans), 'Compras sin venta');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(out), t('Intercompany invoices'));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(orphans), t('Purchases without sale'));
     XLSX.writeFile(wb, `Intercompany_${company}_${from}_${to}.xlsx`.replace(/\s+/g, '_'));
   };
 
@@ -147,10 +150,10 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
     return (
       <table className="w-full text-[12px] bg-white border border-gray-200 rounded-lg">
         <thead><tr className="border-b border-gray-200 bg-gray-50">
-          <th className={th}>Artículo</th><th className={th}>Descripción</th>
-          <th className={`${th} text-right`}>Venta {r.source}<span className={sub}>uds.</span></th><th className={`${th} text-right`}>Venta {r.source}<span className={sub}>importe {r.currency}</span></th>
-          <th className={`${th} text-right`}>Compra {r.target}<span className={sub}>uds.</span></th><th className={`${th} text-right`}>Compra {r.target}<span className={sub}>importe {pCur}</span></th>
-          {r.final && <><th className={`${th} text-right`}>Venta final {r.target}<span className={sub}>uds.</span></th><th className={`${th} text-right`}>Venta final {r.target}<span className={sub}>importe {fCur}</span></th></>}
+          <th className={th}>{t('Item')}</th><th className={th}>{t('Description')}</th>
+          <th className={`${th} text-right`}>{t('Sale {company}', { company: r.source })}<span className={sub}>{t('pcs.')}</span></th><th className={`${th} text-right`}>{t('Sale {company}', { company: r.source })}<span className={sub}>{t('amount {cur}', { cur: r.currency })}</span></th>
+          <th className={`${th} text-right`}>{t('Purchase {company}', { company: r.target })}<span className={sub}>{t('pcs.')}</span></th><th className={`${th} text-right`}>{t('Purchase {company}', { company: r.target })}<span className={sub}>{t('amount {cur}', { cur: pCur })}</span></th>
+          {r.final && <><th className={`${th} text-right`}>{t('Final sale {company}', { company: r.target })}<span className={sub}>{t('pcs.')}</span></th><th className={`${th} text-right`}>{t('Final sale {company}', { company: r.target })}<span className={sub}>{t('amount {cur}', { cur: fCur })}</span></th></>}
         </tr></thead>
         <tbody>
           {rowsData.map(x => {
@@ -171,7 +174,7 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
             );
           })}
           <tr className="bg-gray-50 font-semibold">
-            <td className={td} colSpan={2}>Total</td>
+            <td className={td} colSpan={2}>{t('Total')}</td>
             <td className={td} /><td className={`${td} text-right font-mono`}>{num(sum('saleAmt'), 2)}</td>
             <td className={td} /><td className={`${td} text-right font-mono ${r.purchase && Math.abs(sum('saleAmt') - sum('purchAmt')) > 0.05 ? red : ''}`}>{r.purchase ? num(sum('purchAmt'), 2) : '–'}</td>
             {r.final && <><td className={td} /><td className={`${td} text-right font-mono`}>{r.final.found ? num(sum('finAmt'), 2) : '–'}</td></>}
@@ -184,9 +187,9 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
   const RowsTable = ({ list }: { list: Row[] }) => (
     <table className="w-full text-[12px]">
       <thead><tr className="border-b border-gray-200 bg-gray-50">
-        <th className={th} /><th className={th}>Origen → destino</th><th className={th}>Factura venta</th><th className={th}>Fecha</th>
-        <th className={`${th} text-right`}>Importe</th><th className={th}>Factura compra</th><th className={th}>Vendor Inv. No.</th><th className={th}>Fecha compra</th>
-        <th className={`${th} text-right`}>Importe compra</th><th className={th}>Venta final (drop shipment)</th><th className={th}>Incidencias</th>
+        <th className={th} /><th className={th}>{t('Source → target')}</th><th className={th}>{t('Sales invoice')}</th><th className={th}>{t('Date')}</th>
+        <th className={`${th} text-right`}>{t('Amount')}</th><th className={th}>{t('Purchase invoice')}</th><th className={th}>Vendor Inv. No.</th><th className={th}>{t('Purchase date')}</th>
+        <th className={`${th} text-right`}>{t('Purchase amount')}</th><th className={th}>{t('Final sale (drop shipment)')}</th><th className={th}>{t('Issues')}</th>
       </tr></thead>
       <tbody>
         {list.map(r => {
@@ -205,14 +208,14 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
                 <td className={`${td} text-right font-mono`}>{r.purchase ? money(r.purchase.amount, r.purchase.currency) : '–'}</td>
                 <td className={td}>{r.final ? (r.final.found ? <span className="font-mono">{r.final.no} <span className="text-gray-500 font-sans">{r.final.customer}</span></span> : <span className="text-gray-400">{r.externalDocNo || '–'}</span>) : <span className="text-gray-300">n/a</span>}</td>
                 <td className="py-1.5 px-2 text-[11px] min-w-[240px]">
-                  {r.corrected?.length ? <span className="block mb-0.5 text-sky-800 font-semibold">Corregida: <span className="font-normal">{r.corrected.join(' · ')}</span></span> : null}
+                  {r.corrected?.length ? <span className="block mb-0.5 text-sky-800 font-semibold">{t('Corrected:')} <span className="font-normal">{r.corrected.map(tx).join(' · ')}</span></span> : null}
                   {canValidate && (
                     <label onClick={e => e.stopPropagation()} className={`flex items-center gap-1.5 mb-0.5 font-semibold cursor-pointer ${v ? 'text-violet-800' : 'text-gray-600'}`}>
                       <input type="checkbox" checked={!!v} disabled={saving === k} onChange={e => setValid(r, e.target.checked)} />
-                      {v ? <span>Validada{v.by ? ` por ${v.by}` : ''} el {date(v.at.substring(0, 10))}</span> : <span>Validar incidencias</span>}
+                      {v ? <span>{v.by ? t('Validated by {by} on {date}', { by: v.by, date: date(v.at.substring(0, 10)) }) : t('Validated on {date}', { date: date(v.at.substring(0, 10)) })}</span> : <span>{t('Validate issues')}</span>}
                     </label>
                   )}
-                  <span className={r.corrected?.length || v ? 'text-gray-500' : 'text-[#C0392B]'}>{r.issues.join(' · ') || <span className="text-emerald-700">Correcta</span>}</span>
+                  <span className={r.corrected?.length || v ? 'text-gray-500' : 'text-[#C0392B]'}>{r.issues.map(tx).join(' · ') || <span className="text-emerald-700">{t('Correct')}</span>}</span>
                 </td>
               </tr>
               {open[k] && <tr><td /><td colSpan={10} className="py-2 pr-2"><LinesTable r={r} /></td></tr>}
@@ -232,10 +235,10 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
 
   const total = d?.rows.length || 0, bad = d?.rows.filter(pending).length || 0, fixed = d?.rows.filter(r => r.corrected?.length).length || 0, valid = d?.rows.filter(r => r.issues.length && !r.corrected?.length && isValidated(r)).length || 0;
   return (
-    <Section title="Intercompany" source="Facturas de venta registradas a empresas del grupo (API v2 salesInvoices + líneas) frente a la factura de compra en la otra empresa (purchaseInvoices + líneas) y, en drop shipment de CRAZE GmbH a UK / Group AG, la venta final al cliente">
+    <Section title="Intercompany" source={t('Posted sales invoices to group companies (API v2 salesInvoices + lines) vs the purchase invoice in the other company (purchaseInvoices + lines) and, in drop shipments from CRAZE GmbH to UK / Group AG, the final sale to the customer')}>
       <div className="flex flex-wrap items-end gap-4">
         <CompanySelect value={company} onChange={setCompany} />
-        {([['Desde', from, setFrom], ['Hasta', to, setTo]] as const).map(([label, value, set]) => (
+        {([[t('From'), from, setFrom], [t('Until'), to, setTo]] as const).map(([label, value, set]) => (
           <label key={label} className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
             {label}
             <input type="date" value={value} onChange={e => set(e.target.value)}
@@ -243,43 +246,43 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
           </label>
         ))}
         <label className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
-          Agrupar por
+          {t('Group by')}
           <select value={grouping} onChange={e => setGrouping(e.target.value as Grouping)}
             className="block mt-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-900 bg-white normal-case tracking-normal">
-            {GROUPINGS.map(g => <option key={g.id} value={g.id}>{g.label}</option>)}
+            {GROUPINGS.map(g => <option key={g.id} value={g.id}>{t(g.label)}</option>)}
           </select>
         </label>
         <label className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 flex-1 min-w-[200px]">
-          Buscar
+          {t('Search')}
           <span className="mt-1 flex items-center gap-2 border border-gray-300 rounded-lg px-3 py-1.5 bg-white">
             <Search size={14} className="text-gray-400" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Nº de factura, External Doc. No., cliente…" className="w-full text-sm outline-none normal-case tracking-normal font-normal" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder={t('Invoice no., External Doc. No., customer…')} className="w-full text-sm outline-none normal-case tracking-normal font-normal" />
           </span>
         </label>
         <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 pb-2">
-          <input type="checkbox" checked={onlyIssues} onChange={e => setOnlyIssues(e.target.checked)} /> Solo con incidencias
+          <input type="checkbox" checked={onlyIssues} onChange={e => setOnlyIssues(e.target.checked)} /> {t('Only with issues')}
         </label>
         <button onClick={exportExcel} disabled={state.loading || !d}
           className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-black disabled:opacity-40">
-          <FileDown size={16} /> Exportar Excel
+          <FileDown size={16} /> {t('Export Excel')}
         </button>
-        <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={state.loading} title="Volver a leer de BC"
+        <button onClick={() => setReload(r => ({ n: r.n + 1, force: true }))} disabled={state.loading} title={t('Reload from BC')}
           className="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:text-gray-900 disabled:opacity-40">
           <RefreshCw size={16} className={state.loading ? 'animate-spin' : ''} />
         </button>
       </div>
 
-      {from > to ? <ErrorBox message="La fecha Desde es posterior a Hasta." />
-        : state.error ? <ErrorBox message={state.error} />
-        : state.loading || !d ? <Loading text="Leyendo facturas de venta y compra de las empresas del grupo en Business Central…" />
+      {from > to ? <ErrorBox message={t('The From date is after the To date.')} />
+        : state.error ? <ErrorBox message={tx(state.error)} />
+        : state.loading || !d ? <Loading text={t('Reading sales and purchase invoices of the group companies from Business Central…')} />
         : (
           <>
-            {d.warnings.map(w => <p key={w} className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{w}</p>)}
+            {d.warnings.map(w => <p key={w} className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{tx(w)}</p>)}
             <Grid cols={4}>
-              <Kpi label="Facturas intercompañía" value={num(total)} sub="Ventas a empresas del grupo en el periodo" />
-              <Kpi label="Correctas" value={num(total - bad)} sub={total ? `${num(((total - bad) / total) * 100, 1)} %${fixed ? ` · ${num(fixed)} corregidas con abonos / facturas nuevas` : ''}${valid ? ` · ${num(valid)} validadas a mano` : ''}` : ''} />
-              <Kpi highlight tone="main" label="Con incidencias" value={num(bad)} sub="Sin compra, importe, divisa, fecha o artículos distintos, o sin venta final" />
-              <Kpi label="Compras sin factura de venta" value={num(d.orphanPurchases.length)} sub="Compras a una empresa del grupo cuyo Vendor Invoice No. no es una venta suya del periodo" />
+              <Kpi label={t('Intercompany invoices')} value={num(total)} sub={t('Sales to group companies in the period')} />
+              <Kpi label={t('Correct')} value={num(total - bad)} sub={total ? `${num(((total - bad) / total) * 100, 1)} %${fixed ? ` · ${t('{n} corrected with credit memos / new invoices', { n: num(fixed) })}` : ''}${valid ? ` · ${t('{n} validated by hand', { n: num(valid) })}` : ''}` : ''} />
+              <Kpi highlight tone="main" label={t('With issues')} value={num(bad)} sub={t('No purchase, different amount, currency, date or items, or no final sale')} />
+              <Kpi label={t('Purchases without sales invoice')} value={num(d.orphanPurchases.length)} sub={t('Purchases from a group company whose Vendor Invoice No. is not one of its sales in the period')} />
             </Grid>
             <div className="rpt-card bg-white rounded-xl border border-gray-200 overflow-x-auto">
               {grouping === 'none' ? <RowsTable list={rows} /> : (
@@ -289,21 +292,21 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
                       <button onClick={() => toggle(`g:${k}`)} className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm bg-gray-50 hover:bg-gray-100">
                         {open[`g:${k}`] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                         <span className="font-semibold text-gray-900">{groupLabel(k)}</span>
-                        <span className="ml-auto text-xs text-gray-500">{list.length} facturas · {list.filter(pending).length} con incidencias{list.some(r => r.corrected?.length) ? ` · ${list.filter(r => r.corrected?.length).length} corregidas` : ''}{list.some(r => r.issues.length && !r.corrected?.length && isValidated(r)) ? ` · ${list.filter(r => r.issues.length && !r.corrected?.length && isValidated(r)).length} validadas` : ''}</span>
+                        <span className="ml-auto text-xs text-gray-500">{t('{n} invoices · {m} with issues', { n: list.length, m: list.filter(pending).length })}{list.some(r => r.corrected?.length) ? ` · ${t('{n} corrected', { n: list.filter(r => r.corrected?.length).length })}` : ''}{list.some(r => r.issues.length && !r.corrected?.length && isValidated(r)) ? ` · ${t('{n} validated', { n: list.filter(r => r.issues.length && !r.corrected?.length && isValidated(r)).length })}` : ''}</span>
                       </button>
                       {open[`g:${k}`] && <div className="overflow-x-auto"><RowsTable list={list} /></div>}
                     </div>
                   ))}
                 </div>
               )}
-              {!rows.length && <p className="text-sm text-gray-500 p-4">Sin facturas intercompañía con estos filtros.</p>}
+              {!rows.length && <p className="text-sm text-gray-500 p-4">{t('No intercompany invoices with these filters.')}</p>}
             </div>
             {d.orphanPurchases.length > 0 && (
               <div className="rpt-card bg-white rounded-xl border border-gray-200 table-scroll">
-                <p className="px-4 pt-3 font-bold text-gray-900">Compras a empresas del grupo sin factura de venta en el periodo</p>
+                <p className="px-4 pt-3 font-bold text-gray-900">{t('Purchases from group companies without a sales invoice in the period')}</p>
                 <table className="w-full text-[12px] mt-2">
                   <thead><tr className="border-b border-gray-200 bg-gray-50">
-                    <th className={th}>Empresa (compra)</th><th className={th}>Proveedor</th><th className={th}>Factura compra</th><th className={th}>Vendor Invoice No.</th><th className={th}>Fecha</th><th className={`${th} text-right`}>Importe</th>
+                    <th className={th}>{t('Company (purchase)')}</th><th className={th}>{t('Vendor')}</th><th className={th}>{t('Purchase invoice')}</th><th className={th}>Vendor Invoice No.</th><th className={th}>{t('Date')}</th><th className={`${th} text-right`}>{t('Amount')}</th>
                   </tr></thead>
                   <tbody>
                     {d.orphanPurchases.map(o => (
@@ -315,18 +318,18 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
                     ))}
                   </tbody>
                 </table>
-                <p className="px-4 py-2 text-xs text-gray-500">Pueden ser facturas de venta de otro periodo, abonos o un Vendor Invoice No. que no coincide con el nº de la venta.</p>
+                <p className="px-4 py-2 text-xs text-gray-500">{t('They may be sales invoices of another period, credit memos or a Vendor Invoice No. that does not match the sales invoice no.')}</p>
               </div>
             )}
             {(d.excludedCredited || []).length > 0 && (
               <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-                <span className="font-semibold">Excluidas (factura a importe 0 abonada): </span>
-                {(d.excludedCredited || []).map((x, i) => <span key={`${x.source}|${x.invoiceNo}`}>{i ? ' · ' : ''}{x.invoiceNo} ↔ abono {x.creditMemoNo} ({x.target}, ext. {x.externalDocNo || '–'})</span>)}
+                <span className="font-semibold">{t('Excluded (zero-amount invoice credited):')} </span>
+                {(d.excludedCredited || []).map((x, i) => <span key={`${x.source}|${x.invoiceNo}`}>{i ? ' · ' : ''}{x.invoiceNo} ↔ {t('credit memo {no}', { no: x.creditMemoNo })} ({x.target}, ext. {x.externalDocNo || '–'})</span>)}
               </p>
             )}
             <p className="text-xs text-gray-500">
-              Se emparejan por nº: la factura de compra debe llevar como Vendor Invoice No. el nº de la factura de venta (un punto final de más se da por bueno). En las compras de Craze Entertainment, el foilbag de GmbH registrado como AA-00049 se da por bueno. Divisa en blanco = divisa local de cada empresa (CRAZE, Iberia y Entertainment EUR, UK GBP, Group AG CHF).
-              Fecha = fecha de factura (Document Date) de las dos. Artículos y cantidades por nº de artículo. Drop shipment (CRAZE → UK / Group AG): la venta final se busca por nº o por External Document No.; haz clic en una factura para ver la comparación de líneas. Los abonos todavía no se comparan; las facturas a importe 0 abonadas (abono con el mismo nº de factura o el mismo External Document No.) se excluyen junto con su abono.
+              {t('Matched by number: the purchase invoice must carry the sales invoice no. as Vendor Invoice No. (an extra trailing dot is accepted). In Craze Entertainment purchases, the GmbH foilbag posted as AA-00049 is accepted. Blank currency = local currency of each company (CRAZE, Iberia and Entertainment EUR, UK GBP, Group AG CHF).')}
+              {' '}{t('Date = invoice date (Document Date) of both. Items and quantities by item no. Drop shipment (CRAZE → UK / Group AG): the final sale is searched by no. or by External Document No.; click an invoice to see the line comparison. Credit memos are not compared yet; zero-amount invoices that were credited (credit memo with the same invoice no. or the same External Document No.) are excluded together with their credit memo.')}
             </p>
           </>
         )}

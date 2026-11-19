@@ -17,7 +17,7 @@ async function fields(url: string, token: string): Promise<string[] | string> {
   const res = await fetch(`${url}?$top=1`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
   if (!res.ok) return `HTTP ${res.status}: ${(await res.text()).substring(0, 200)}`;
   const data: any = await res.json();
-  return data.value?.[0] ? Object.keys(data.value[0]).filter(k => !k.startsWith('@')) : '(sin filas)';
+  return data.value?.[0] ? Object.keys(data.value[0]).filter(k => !k.startsWith('@')) : '(no rows)';
 }
 
 export async function GET(req: Request) {

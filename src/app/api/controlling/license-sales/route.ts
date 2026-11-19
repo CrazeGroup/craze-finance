@@ -18,12 +18,12 @@ export async function GET(req: Request) {
   try {
     const cookieStore = await cookies();
     const company = new URL(req.url).searchParams.get('company') || cookieStore.get('craze_selected_company')?.value || 'CRAZE';   // ?company= (selector del informe) o la empresa del menú
-    if (company === 'ALL') return NextResponse.json({ error: 'Selecciona una empresa concreta.' }, { status: 400 });
+    if (company === 'ALL') return NextResponse.json({ error: 'Select a specific company.' }, { status: 400 });
 
     const { searchParams } = new URL(req.url);
     const from = searchParams.get('from');
     const to = searchParams.get('to');
-    if (!isDate(from) || !isDate(to) || from > to) return NextResponse.json({ error: 'Rango de fechas no válido' }, { status: 400 });
+    if (!isDate(from) || !isDate(to) || from > to) return NextResponse.json({ error: 'Invalid date range' }, { status: 400 });
 
     const force = searchParams.get('force') === '1';
     const ctx = await getBcContext(company).catch(e => { console.error('License sales BC:', e); return null; });

@@ -10,7 +10,7 @@ export type AiPart = string | { inlineData: { data: string; mimeType: string } }
 const DEFAULT_OPENROUTER_MODEL = 'anthropic/claude-sonnet-5.5';
 
 export const aiConfigured = () => !!(process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY);
-export const AI_NOT_CONFIGURED = 'No hay ninguna IA configurada: añade OPENROUTER_API_KEY (o GEMINI_API_KEY) en las variables de entorno de Vercel.';
+export const AI_NOT_CONFIGURED = 'No AI is configured: add OPENROUTER_API_KEY (or GEMINI_API_KEY) to the Vercel environment variables.';
 export const aiProvider = () => (process.env.OPENROUTER_API_KEY ? `openrouter:${process.env.OPENROUTER_MODEL || DEFAULT_OPENROUTER_MODEL}` : 'gemini');
 
 export async function generateText(parts: AiPart[], opts: { json?: boolean; timeoutMs?: number } = {}): Promise<string> {
@@ -53,16 +53,16 @@ async function openRouter(parts: AiPart[], opts: { json?: boolean; timeoutMs?: n
     const data: any = await res.json().catch(() => ({}));
     if (!res.ok || data.error) {
       const msg = data.error?.message || `HTTP ${res.status}`;
-      if (res.status === 401) throw new Error('La clave OPENROUTER_API_KEY no es válida.');
-      if (res.status === 402) throw new Error('OpenRouter: sin saldo suficiente en la cuenta.');
-      if (res.status === 429) throw new Error('La IA está saturada (OpenRouter 429). Prueba en unos minutos.');
-      throw new Error(`Error de la IA (OpenRouter): ${String(msg).substring(0, 200)}`);
+      if (res.status === 401) throw new Error('The OPENROUTER_API_KEY is not valid.');
+      if (res.status === 402) throw new Error('OpenRouter: insufficient account balance.');
+      if (res.status === 429) throw new Error('The AI is overloaded (OpenRouter 429). Try again in a few minutes.');
+      throw new Error(`AI error (OpenRouter): ${String(msg).substring(0, 200)}`);
     }
     const text = data.choices?.[0]?.message?.content;
-    if (!text) throw new Error('La IA no devolvió texto.');
+    if (!text) throw new Error('The AI returned no text.');
     return typeof text === 'string' ? text : text.map((c: any) => c.text || '').join('');
   } catch (e: any) {
-    if (e.name === 'AbortError') throw new Error('La IA ha tardado demasiado en responder. Prueba de nuevo.');
+    if (e.name === 'AbortError') throw new Error('The AI took too long to respond. Try again.');
     throw e;
   } finally {
     clearTimeout(timer);

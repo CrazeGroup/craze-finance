@@ -21,7 +21,7 @@ const DOCS = {
   credit: { label: 'Sales Credit Memo', entity: 'salesCreditMemos', lines: 'salesCreditMemoLines', parentType: 'Sales Credit Memo', side: 'sales' },
   purchase: { label: 'Purchase Invoice', entity: 'purchaseInvoices', lines: 'purchaseInvoiceLines', parentType: 'Purchase Invoice', side: 'purchase' },
 } as const;
-export const KIND_LABEL: Record<DForceKind, string> = { ...Object.fromEntries(Object.entries(DOCS).map(([k, d]) => [k, d.label])), journal: `Diario ${JOURNAL_BATCH}` } as Record<DForceKind, string>;
+export const KIND_LABEL: Record<DForceKind, string> = { ...Object.fromEntries(Object.entries(DOCS).map(([k, d]) => [k, d.label])), journal: `${JOURNAL_BATCH} journal` } as Record<DForceKind, string>;
 
 const q = (s: string) => s.replace(/'/g, "''");
 const short = (e: any) => String(e?.message || e).substring(0, 200);
@@ -109,14 +109,14 @@ export async function setLineExtras(ctx: BcContext, kind: Exclude<DForceKind, 'j
       } catch (e) { error ||= short(e); }
     }
     if (error) { tried.push(`${name}: ${error}`); continue; }
-    if (!rows.length) { tried.push(`${name}: no devuelve las líneas de ${docNo}`); continue; }
+    if (!rows.length) { tried.push(`${name}: does not return the lines of ${docNo}`); continue; }
     const keys = Object.keys(rows[0]);
     const field = (k: keyof Extras) => keys.find(x => FIELD_PATTERNS[side][k].test(x));
     const missing = Array.from(wanted).filter(k => !field(k));
-    if (missing.includes('project') || missing.includes('task')) { tried.push(`${name}: sin ${missing.map(k => FIELD_LABEL[k]).join(', ')}`); continue; }
+    if (missing.includes('project') || missing.includes('task')) { tried.push(`${name}: missing ${missing.map(k => FIELD_LABEL[k]).join(', ')}`); continue; }
 
     const warnings: string[] = [];
-    if (missing.length) warnings.push(`${docNo}: el servicio ${name} no tiene ${missing.map(k => FIELD_LABEL[k]).join(', ')}; rellénalo en BC.`);
+    if (missing.length) warnings.push(`${docNo}: the ${name} service does not have ${missing.map(k => FIELD_LABEL[k]).join(', ')}; fill it in in BC.`);
     let done = 0, failed = 0, firstError = '';
     for (const r of rows) {
       const e = byLine.get(Number(r.Line_No ?? r.lineNumber ?? r.lineNo));
@@ -140,14 +140,14 @@ export async function setLineExtras(ctx: BcContext, kind: Exclude<DForceKind, 'j
       if (failed && !done) break;
     }
     if (failed && !done) { tried.push(`${name}: ${firstError}`); continue; }
-    if (failed) warnings.push(`${docNo}: ${failed} líneas sin ${fieldList} (${firstError}); complétalas en BC.`);
+    if (failed) warnings.push(`${docNo}: ${failed} lines without ${fieldList} (${firstError}); complete them in BC.`);
     return warnings;
   }
-  return [`${docNo}: no se han podido poner ${fieldList} en las líneas: ${tried.length ? tried.join(' · ') : 'no hay ningún servicio web OData de líneas publicado'}. ` +
+  return [`${docNo}: could not set ${fieldList} on the lines: ${tried.length ? tried.join(' · ') : 'no OData lines web service is published'}. ` +
     (side === 'sales'
-      ? `Publica en "Servicios web" la página ${kind === 'invoice' ? '43 "Sales Invoice"' : '44 "Sales Credit Memo"'} (sus líneas tienen los campos AIT) `
-      : 'Publica en "Servicios web" una página de líneas de compra editable con esos campos ') +
-    `(o indica el servicio en el ajuste dforceLinesService) o rellénalos en BC.`];
+      ? `Publish page ${kind === 'invoice' ? '43 "Sales Invoice"' : '44 "Sales Credit Memo"'} under "Web Services" (its lines have the AIT fields) `
+      : 'Publish an editable purchase lines page with those fields under "Web Services" ') +
+    `(or enter the service in the dforceLinesService setting) or fill them in in BC.`];
 }
 
 // ---------- Ignore Custom Qty. Fields ----------
@@ -175,8 +175,8 @@ export async function ignoreCustomQty(ctx: BcContext, kind: 'invoice' | 'credit'
     try {
       const row = (await odataGet(ctx, odataUrl(base, { $filter: `No eq '${q(no)}'` }))).value?.[0];
       const field = row && Object.keys(row).find(k => IGNORE_QTY.test(k));
-      if (!row) { tried.push(`${name}: no encuentra ${no}`); continue; }
-      if (!field) { tried.push(`${name}: sin el campo Ignore Custom Qty. Fields`); continue; }
+      if (!row) { tried.push(`${name}: ${no} not found`); continue; }
+      if (!field) { tried.push(`${name}: no Ignore Custom Qty. Fields field`); continue; }
       if (row[field] === true) return;
       const link = row['@odata.editLink'];
       await bcRequest('PATCH', editUrl(ctx, link), ctx.token, { [field]: true });
@@ -184,8 +184,8 @@ export async function ignoreCustomQty(ctx: BcContext, kind: 'invoice' | 'credit'
     } catch (e) { tried.push(`${name}: ${short(e)}`); }
   }
   const page = kind === 'invoice' ? '43 "Sales Invoice"' : '44 "Sales Credit Memo"';
-  throw new Error(`no se ha podido activar "Ignore Custom Qty. Fields" en ${no} (${tried.join(' · ') || 'no hay ninguna página publicada'}). ` +
-    `Publica en "Servicios web" la página ${page} (nombre ${kind === 'invoice' ? 'SalesInvoice' : 'SalesCreditMemo'}).`);
+  throw new Error(`Could not enable "Ignore Custom Qty. Fields" on ${no} (${tried.join(' · ') || 'no page is published'}). ` +
+    `Publish page ${page} under "Web Services" (name ${kind === 'invoice' ? 'SalesInvoice' : 'SalesCreditMemo'}).`);
 }
 
 // ---------- Documentos ----------
@@ -212,7 +212,7 @@ export async function createDocument(ctx: BcContext, input: DocInput, files: Att
     if (sales) {
       const loc = await bcRequest('GET', odataUrl(`${ctx.apiBase}/locations`, { $filter: `code eq '${LOCATION}'`, $select: 'id' }), ctx.token);
       locationId = loc?.value?.[0]?.id || '';
-      if (!locationId) warnings.push(`No existe el almacén ${LOCATION} en BC: las líneas van sin Location Code.`);
+      if (!locationId) warnings.push(`Location ${LOCATION} does not exist in BC: the lines are created without Location Code.`);
     }
     for (const line of input.lines) {
       const body = sales
@@ -238,13 +238,13 @@ export async function createDocument(ctx: BcContext, input: DocInput, files: Att
   try {
     warnings.push(...await setLineExtras(ctx, input.kind, no, extras));
   } catch (e) {
-    warnings.push(`${no}: no se han podido poner proyecto y tarea en las líneas (${short(e)}); complétalos en BC.`);
+    warnings.push(`${no}: could not set project and task on the lines (${short(e)}); complete them in BC.`);
   }
   for (const f of files) {
     try {
       await attachFile(ctx, id, f, d.parentType);
     } catch (e) {
-      warnings.push(`${no}: no se ha podido adjuntar ${f.name} (${short(e)}); adjúntalo en BC.`);
+      warnings.push(`${no}: could not attach ${f.name} (${short(e)}); attach it in BC.`);
     }
   }
   const after = await bcRequest('GET', headUrl, ctx.token).catch(() => null);
@@ -255,7 +255,7 @@ export async function createDocument(ctx: BcContext, input: DocInput, files: Att
 
 async function journalBatch(ctx: BcContext) {
   const rows = await bcFetchAll(odataUrl(`${ctx.apiBase}/journals`, { $filter: `code eq '${JOURNAL_BATCH}'`, $select: 'id,code' }), ctx.token);
-  if (!rows.length) throw new Error(`No existe el General Journal Batch ${JOURNAL_BATCH} en la plantilla de diario general de la API de BC. Créalo en BC.`);
+  if (!rows.length) throw new Error(`General Journal Batch ${JOURNAL_BATCH} does not exist in the general journal template of the BC API. Create it in BC.`);
   return rows[0].id as string;
 }
 
@@ -290,7 +290,7 @@ export async function createJournalLines(ctx: BcContext, lines: JournalLine[], f
     try {
       await attachFile(ctx, created[0], f, 'Journal');
     } catch (e) {
-      warnings.push(`No se ha podido adjuntar ${f.name} a la primera línea del diario (${short(e)}); adjúntalo en BC.`);
+      warnings.push(`Could not attach ${f.name} to the first journal line (${short(e)}); attach it in BC.`);
     }
   }
   return { no: JOURNAL_BATCH, lines: created.length, net: null, warnings };

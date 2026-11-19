@@ -3,10 +3,12 @@
 import { useEffect, useState, useMemo } from 'react';
 import { CustomerCard } from '@/components/CustomerCard';
 import { RefreshCcw } from 'lucide-react';
+import { useT } from '@/contexts/LanguageContext';
 
 export default function Dashboard() {
   const [customers, setCustomers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const { t } = useT();
 
   // Filtros y ordenación
   const [showZeroBalance, setShowZeroBalance] = useState(true);
@@ -76,16 +78,16 @@ export default function Dashboard() {
         <header className="flex justify-between items-end mb-8">
           <div>
             <h1 className="text-4xl font-black text-black tracking-tight">
-              Análisis de Riesgos
+              {t('Risk Analysis')}
             </h1>
-            <p className="text-gray-700 font-semibold font-medium mt-2">Optimización Financiera - Craze</p>
+            <p className="text-gray-700 font-semibold font-medium mt-2">{t('Financial Optimisation - Craze')}</p>
           </div>
           <button 
             onClick={fetchCustomers}
             className="flex items-center gap-2 bg-white/10 hover:bg-gray-200 text-gray-900 px-4 py-2 rounded-lg transition-all backdrop-blur-sm border border-gray-200"
           >
             <RefreshCcw size={18} className={loading ? 'animate-spin' : ''} />
-            Actualizar Datos
+            {t('Refresh Data')}
           </button>
         </header>
 
@@ -95,7 +97,7 @@ export default function Dashboard() {
             {/* Search Input */}
             <input
               type="text"
-              placeholder="Buscar cliente por nombre o ID..."
+              placeholder={t('Search customer by name or ID...')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="bg-white text-sm text-gray-900 px-3 py-1.5 rounded border border-gray-200 focus:outline-none focus:ring-1 focus:ring-black min-w-[200px]"
@@ -106,7 +108,7 @@ export default function Dashboard() {
               onClick={() => setShowZeroBalance(!showZeroBalance)}
               className={`px-3 py-1.5 rounded text-sm transition-colors border ${showZeroBalance ? 'bg-gray-200 text-black border-gray-300' : 'bg-white text-gray-700 font-semibold border-gray-200'}`}
             >
-              {showZeroBalance ? 'Ocultar Saldo 0' : 'Mostrar Saldo 0'}
+              {showZeroBalance ? t('Hide Zero Balance') : t('Show Zero Balance')}
             </button>
             
             {/* Sort mode */}
@@ -115,14 +117,14 @@ export default function Dashboard() {
               onChange={(e) => setSortMode(e.target.value)}
               className="bg-white text-sm text-gray-900 px-3 py-1.5 rounded border border-gray-200 focus:outline-none"
             >
-              <option value="none">Ordenar por...</option>
-              <option value="balance">Saldo Abierto (Mayor a Menor)</option>
-              <option value="riskLimit">Límite Riesgo (Mayor a Menor)</option>
+              <option value="none">{t('Sort by...')}</option>
+              <option value="balance">{t('Open Balance (High to Low)')}</option>
+              <option value="riskLimit">{t('Risk Limit (High to Low)')}</option>
             </select>
             
             {/* Payment filter */}
             <div className="flex flex-wrap gap-2 items-center bg-white p-1.5 rounded border border-gray-200 shadow-sm">
-              <span className="text-xs text-gray-700 font-semibold px-2 uppercase tracking-wider font-bold">Pagos:</span>
+              <span className="text-xs text-gray-700 font-semibold px-2 uppercase tracking-wider font-bold">{t('Payments:')}</span>
               {paymentMethods.map(pm => (
                 <button
                   key={pm}
@@ -136,7 +138,7 @@ export default function Dashboard() {
 
             {/* Status filter */}
             <div className="flex flex-wrap gap-2 items-center bg-white p-1.5 rounded border border-gray-200 shadow-sm">
-              <span className="text-xs text-gray-700 font-semibold px-2 uppercase tracking-wider font-bold">Estado:</span>
+              <span className="text-xs text-gray-700 font-semibold px-2 uppercase tracking-wider font-bold">{t('Status:')}</span>
               {statuses.map(s => (
                 <button
                   key={s}
@@ -154,13 +156,13 @@ export default function Dashboard() {
               onClick={() => setLayoutMode('grid')}
               className={`text-sm px-3 py-1.5 rounded transition-colors ${layoutMode === 'grid' ? 'bg-gray-200 text-gray-900' : 'bg-gray-50 text-gray-900 font-bold hover:bg-gray-200'}`}
             >
-              Cuadrícula
+              {t('Grid')}
             </button>
             <button 
               onClick={() => setLayoutMode('list')}
               className={`text-sm px-3 py-1.5 rounded transition-colors ${layoutMode === 'list' ? 'bg-gray-200 text-gray-900' : 'bg-gray-50 text-gray-900 font-bold hover:bg-gray-200'}`}
             >
-              Lista
+              {t('List')}
             </button>
           </div>
         </div>
@@ -171,12 +173,12 @@ export default function Dashboard() {
           </div>
         ) : customers.length === 0 ? (
           <div className="text-center py-20 bg-gray-50 rounded-2xl border border-gray-200 backdrop-blur-sm">
-            <p className="text-xl text-gray-800 font-medium">No hay clientes en la base de datos.</p>
-            <p className="text-sm text-gray-900 font-bold mt-2">Ve a Configuración para cargar el archivo Excel o configurar la API.</p>
+            <p className="text-xl text-gray-800 font-medium">{t('There are no customers in the database.')}</p>
+            <p className="text-sm text-gray-900 font-bold mt-2">{t('Go to Settings to upload the Excel file or configure the API.')}</p>
           </div>
         ) : filteredAndSortedCustomers.length === 0 ? (
           <div className="text-center py-20 bg-gray-50 rounded-2xl border border-gray-200 backdrop-blur-sm">
-            <p className="text-xl text-gray-800 font-medium">Ningún cliente coincide con los filtros aplicados.</p>
+            <p className="text-xl text-gray-800 font-medium">{t('No customer matches the applied filters.')}</p>
           </div>
         ) : (
           <div className={layoutMode === 'grid' ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" : "flex flex-col gap-4"}>

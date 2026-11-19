@@ -13,7 +13,7 @@ export type BcContext = {
 export async function getBcContext(companyName: string): Promise<BcContext> {
   const config = await prisma.businessCentralConfig.findUnique({ where: { id: 1 } });
   if (!config || !config.tenantId || !config.clientId || !config.clientSecret) {
-    throw new Error('La configuración de Business Central está incompleta. Por favor, rellena todos los campos en Ajustes.');
+    throw new Error('The Business Central configuration is incomplete. Please fill in all fields in Settings.');
   }
 
   const token = await getAccessToken(config.tenantId, config.clientId, config.clientSecret);
@@ -22,10 +22,10 @@ export async function getBcContext(companyName: string): Promise<BcContext> {
   const compRes = await fetch(`${root}/api/v2.0/companies`, {
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
   });
-  if (!compRes.ok) throw new Error(`No se pudieron obtener las empresas de BC: ${await compRes.text()}`);
+  if (!compRes.ok) throw new Error(`Could not fetch the BC companies: ${await compRes.text()}`);
   const compData = await compRes.json();
   const company = compData.value.find((c: any) => c.name.toLowerCase() === companyName.toLowerCase());
-  if (!company) throw new Error(`Empresa "${companyName}" no encontrada en Business Central.`);
+  if (!company) throw new Error(`Company "${companyName}" not found in Business Central.`);
 
   const escapedName = company.name.replace(/'/g, "''");
   return {
@@ -52,14 +52,14 @@ export async function bcFetchAll(url: string, token: string, timeoutMs = 45000):
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', Prefer: 'odata.maxpagesize=20000' },
         signal: controller.signal
       });
-      if (!res.ok) throw new Error(`Consulta a BC fallida (${res.status}): ${await res.text()}`);
+      if (!res.ok) throw new Error(`BC query failed (${res.status}): ${await res.text()}`);
       const data: any = await res.json();
       if (Array.isArray(data.value)) results.push(...data.value);
       const newNext: string | null = data['@odata.nextLink'] || null;
       nextUrl = newNext === nextUrl ? null : newNext;
     } catch (error: any) {
       if (error.name === 'AbortError') {
-        throw new Error(`Business Central tardó más de ${timeoutMs / 1000} segundos en responder.`);
+        throw new Error(`Business Central took more than ${timeoutMs / 1000} seconds to respond.`);
       }
       throw error;
     } finally {
@@ -86,7 +86,7 @@ export async function bcFetchByEntryRanges(
   base: string, token: string, entryField: string, select: string, extraFilter: string, parts = 6, timeoutMs = 45000
 ): Promise<any[]> {
   const res = await fetch(`${base}/$count`, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) throw new Error(`Consulta a BC fallida (${res.status}): ${await res.text()}`);
+  if (!res.ok) throw new Error(`BC query failed (${res.status}): ${await res.text()}`);
   const count = parseInt((await res.text()).replace(/[^0-9]/g, ''), 10) || 0;
   const size = Math.max(1, Math.ceil(count / parts));
   const chunks = await Promise.all(Array.from({ length: parts }, (_, i) => {
