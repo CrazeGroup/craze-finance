@@ -27,14 +27,6 @@ const TEXT: Record<Lang, Record<string, string>> = {
     noSection: 'Sin sección', dragHere: 'Arrastra aquí los apartados', newSection: 'Nueva sección', organize: 'Organizar menú', done: 'Terminar', rename: 'Renombrar', dragSection: 'Arrastra para cambiar el orden de la sección',
     deleteSection: 'Eliminar sección (sus apartados vuelven a «Sin sección»)', logout: 'Cerrar sesión', favorites: 'Favoritos', addFav: 'Añadir a favoritos', removeFav: 'Quitar de favoritos',
   },
-  de: {
-    menu: 'Menü', hide: 'Menü ausblenden', show: 'Menü einblenden', hello: 'Hallo,', activeCompany: 'Aktive Firma', allCompanies: 'ALLE FIRMEN', language: 'Sprache',
-    noSection: 'Ohne Bereich', dragHere: 'Einträge hierher ziehen', newSection: 'Neuer Bereich', organize: 'Menü organisieren', done: 'Fertig', rename: 'Umbenennen', dragSection: 'Ziehen, um den Bereich zu verschieben',
-    deleteSection: 'Bereich löschen (seine Einträge gehen zurück zu „Ohne Bereich“)', logout: 'Abmelden', favorites: 'Favoriten', addFav: 'Zu Favoriten hinzufügen', removeFav: 'Aus Favoriten entfernen',
-    '/': 'Haupt-Dashboard', '/riesgos': 'Risiken', '/recobros': 'Inkasso', '/movimientos': 'Offene Posten', '/pagos': 'Lieferantenzahlungen',
-    '/cierre-mensual': 'Monatsabschluss-Tracking', '/inventario': 'Inventar (Abschluss)', '/inventory-analysis': 'Bestandsanalyse', '/logistic-cost': 'Logistikkosten', '/customer-margin': 'Kundenmarge', '/notas-compra': 'Einkaufsnotizen', '/aduanas': 'Zoll', '/insurances': 'Versicherungen', '/contracts': 'Verträge',
-    '/settings/users': 'Benutzer', '/settings/logs': 'Protokoll', '/settings': 'Einstellungen',
-  },
 };
 const HIDDEN_KEY = 'crz-menu-hidden';
 const COLLAPSED_KEY = 'crz-menu-collapsed';
