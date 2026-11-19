@@ -255,13 +255,29 @@ export async function vendorHistory(ctx: BcContext, vendor: string) {
 }
 
 // Facturas del proveedor con ese Vendor Invoice No. (registradas o pendientes), también con un punto al final
-export async function existingFor(ctx: BcContext, vendor: string, invoiceNo: string) {
+export async function existingFor(ctx: BcContext, vendor: string, invoiceNo: string, credit = false) {
   if (!vendor || !invoiceNo) return [];
-  const variants = [invoiceNo, `${invoiceNo}.`].map(v => `vendorInvoiceNumber eq '${q(v)}'`).join(' or ');
-  const rows = await bcFetchAll(odataUrl(`${ctx.apiBase}/purchaseInvoices`, {
+  const field = credit ? 'vendorCreditMemoNumber' : 'vendorInvoiceNumber';
+  const variants = [invoiceNo, `${invoiceNo}.`].map(v => `${field} eq '${q(v)}'`).join(' or ');
+  const rows = await bcFetchAll(odataUrl(`${ctx.apiBase}/${credit ? 'purchaseCreditMemos' : 'purchaseInvoices'}`, {
     $filter: `vendorNumber eq '${q(vendor)}' and (${variants})`, $select: 'number,status',
   }), ctx.token).catch(() => []);
   return rows.filter((r: any) => r.status !== 'Canceled').map((r: any) => ({ no: r.number as string, status: r.status as string }));
+}
+
+// Abono (Purchase Credit Memo) y no factura: el documento se llama así (Gutschrift, Storno-Rechnung, Rechnungskorrektur,
+// Credit Note/Memo, Nota de crédito, Factura rectificativa, Avoir, Abono) o su total es negativo. Las palabras que también
+// aparecen en facturas normales (Gutschrift de un pago, "abono" de una cuenta) solo cuentan si el documento no se
+// presenta antes como factura.
+const STRONG_CREDIT = /\b(storno[\s-]*rechnung|stornorechnung|storno|rechnungskorrektur|korrekturrechnung|credit[\s-]*memo|factura rectificativa|nota de cr[eé]dito)\b/i;
+const WEAK_CREDIT = /\b(credit note|gutschrift|avoir|abono)\b/i;
+// Total negativo: una línea de total (no de descuento) con el importe en negativo
+const TOTAL_LINE = /(rechnungsbetrag|gesamtbetrag|endbetrag|brutto|grand total|total amount|amount due|invoice total|importe total|total factura)[^\n\d-]{0,40}-\s?\d/i;
+const negativeTotal = (text: string) => text.split(/\n/).some(l => TOTAL_LINE.test(l) && !/rabatt|discount|skonto|nachlass|descuento|remise/i.test(l));
+export function isCreditNote(text: string) {
+  const head = text.slice(0, 3000);
+  if (STRONG_CREDIT.test(head) || negativeTotal(text)) return true;
+  return WEAK_CREDIT.test(text.slice(0, 1500)) && !/\b(invoice|rechnung|factura|facture)\b/i.test(text.slice(0, 300));
 }
 
 // ---------- Propuesta sin IA ----------
@@ -579,10 +595,16 @@ export function propose(text: string, history: HistoryInvoice[], examples: Examp
   if (!refsOk) warnings.push('Some Description 2 / Posting Description references are not in the PDF: check them.');
   if (!oldText && model.lines.some(l => /\d{3,}/.test(l.description2)) ) warnings.push('The model invoice has no PDF attached: check the Description 2 / Posting Description references.');
 
-  const creditNote = /\b(credit note|gutschrift|nota de cr[eé]dito|avoir|abono)\b/i.test(t.slice(0, 1500)) && !/\b(invoice|rechnung|factura|facture)\b/i.test(t.slice(0, 300));
+  const creditNote = isCreditNote(t);
+  let docNo = invoiceNo || generic.invoiceNo || (invoiceDate ? numberFromDate(model, invoiceDate) : '');
+  // Abono: el nº lleva a menudo un sufijo que la forma del nº de las facturas no recoge ("400209-1020.S")
+  if (creditNote && docNo) {
+    const m = t.match(new RegExp(`${docNo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([.\\-/][A-Z0-9]{1,4})(?![A-Z0-9])`, 'i'));
+    if (m) docNo += m[1];
+  }
   return {
     documentType: creditNote ? 'credit_note' : 'invoice',
-    invoiceNo: invoiceNo || generic.invoiceNo || (invoiceDate ? numberFromDate(model, invoiceDate) : ''), invoiceDate, postingDate, dueDate, postingDescription,
+    invoiceNo: docNo, invoiceDate, postingDate, dueDate, postingDescription,
     currency: model.currency, net, vat, total, lines, itemFromPdf,
     comment: [`Model: invoice ${model.number} (${model.postingDate})${best && oldText ? `, the closest to the PDF (${Math.round(best.s * 100)} %)` : ', the most recent'}.`, ...warnings].join(' · '),
   };
@@ -762,7 +784,7 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
   const rates = vendor ? await vatRates(ctx, vendor.number, suggestion?.vatBusPostingGroup).catch(() => ({} as Record<string, number>)) : {};
   // (devolución de Amazon: el importe es el total, sin IVA)
   if (suggestion && text && !amazonReturnDoc) applyVatRates(suggestion, text, rates);
-  if (suggestion?.documentType === 'credit_note') warnings.push('This looks like a credit note: only invoices are created here, post it as a Credit Memo in BC.');
+  if (suggestion?.documentType === 'credit_note') warnings.push('This is a credit note: it will be created as a Purchase Credit Memo (change the document type if it is an invoice).');
   // La divisa del PDF manda aunque el proveedor no tenga facturas en ella (Uber en Macao: MOP; el modelo puede estar en
   // CHF); la local va vacía al crearla. Se avisa si no existe en BC
   if (suggestion && currency && suggestion.currency !== currency) {
@@ -774,7 +796,7 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
   } else if (vendor && currency && currency !== vendor.currency && !known) {
     warnings.push(`The invoice is in ${currency} and vendor ${vendor.number} in ${vendor.currency}: is it another vendor (e.g. the card in ${currency})?`);
   }
-  const existing = vendor && suggestion?.invoiceNo ? await existingFor(ctx, vendor.number, suggestion.invoiceNo) : [];
+  const existing = vendor && suggestion?.invoiceNo ? await existingFor(ctx, vendor.number, suggestion.invoiceNo, suggestion.documentType === 'credit_note') : [];
   return { file, scanned, ocr, currency, ids, vatRates: rates, candidates, vendor, history, suggestion, existing, warnings };
 }
 
@@ -782,17 +804,24 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
 export type OcrCreateInput = {
   vendor: string; invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string; postingDescription?: string;
   vatBusPostingGroup?: string; currency?: string; lines: OcrLine[]; ids?: string[]; force?: boolean;
+  documentType?: 'invoice' | 'credit_note';
 };
 
-// Crea la Purchase Invoice sin registrar (API v2) con las líneas de la página y el PDF adjunto
+// Crea la Purchase Invoice, o el Purchase Credit Memo si es un abono, sin registrar (API v2) con las líneas de la
+// página y el PDF adjunto. En el abono las cantidades e importes van en positivo, como en BC.
 export async function createOcrInvoice(ctx: BcContext, input: OcrCreateInput, pdf?: { name: string; data: Uint8Array }) {
   const warnings: string[] = [];
-  const head = await bcRequest('POST', `${ctx.apiBase}/purchaseInvoices`, ctx.token, {
-    vendorNumber: input.vendor, vendorInvoiceNumber: input.invoiceNo,
-    ...(input.invoiceDate ? { invoiceDate: input.invoiceDate } : {}), ...(input.postingDate ? { postingDate: input.postingDate } : {}),
+  const credit = input.documentType === 'credit_note';
+  const entity = credit ? 'purchaseCreditMemos' : 'purchaseInvoices';
+  const linesEntity = credit ? 'purchaseCreditMemoLines' : 'purchaseInvoiceLines';
+  const head = await bcRequest('POST', `${ctx.apiBase}/${entity}`, ctx.token, {
+    vendorNumber: input.vendor, ...(credit ? { vendorCreditMemoNumber: input.invoiceNo } : { vendorInvoiceNumber: input.invoiceNo }),
+    ...(input.invoiceDate ? (credit ? { creditMemoDate: input.invoiceDate } : { invoiceDate: input.invoiceDate }) : {}),
+    ...(input.postingDate ? { postingDate: input.postingDate } : {}),
   });
   const id: string = head.id, no: string = head.number;
-  const headUrl = `${ctx.apiBase}/purchaseInvoices(${id})`;
+  const headUrl = `${ctx.apiBase}/${entity}(${id})`;
+  const desc2: { sequence: number; text: string }[] = [];
   try {
     // Divisa de la factura si no es la del proveedor (Uber: AED); la divisa local va vacía. Antes de las líneas
     const lcy = companyCurrency(ctx.companyName);
@@ -801,26 +830,34 @@ export async function createOcrInvoice(ctx: BcContext, input: OcrCreateInput, pd
     // Vencimiento después de la fecha (la fecha de factura lo recalcula con los términos de pago del proveedor)
     if (input.dueDate) await bcRequest('PATCH', headUrl, ctx.token, { dueDate: input.dueDate });
     // Las líneas estándar que BC añade al poner el proveedor no están en las facturas registradas: fuera
-    const auto = await bcRequest('GET', `${headUrl}/purchaseInvoiceLines?$select=id`, ctx.token);
-    for (const l of auto?.value || []) await bcRequest('DELETE', `${headUrl}/purchaseInvoiceLines(${l.id})`, ctx.token);
+    const auto = await bcRequest('GET', `${headUrl}/${linesEntity}?$select=id`, ctx.token);
+    for (const l of auto?.value || []) await bcRequest('DELETE', `${headUrl}/${linesEntity}(${l.id})`, ctx.token);
     // VAT Bus. Posting Group (Amazon Ads: UE) antes de las líneas, que lo toman de la cabecera; no está en v2
     if (input.vatBusPostingGroup?.trim()) {
       await bcRequest('PATCH', `${ctx.odataCompanyBase}/purchaseDocuments(${id})`, ctx.token, { vatBusPostingGroup: input.vatBusPostingGroup.trim() });
     }
     for (const l of input.lines) {
       const comment = l.lineType === 'Comment';
-      await bcRequest('POST', `${headUrl}/purchaseInvoiceLines`, ctx.token, comment
+      const row = await bcRequest('POST', `${headUrl}/${linesEntity}`, ctx.token, comment
         ? { lineType: 'Comment', description: l.description }
         : {
-          lineType: l.lineType, lineObjectNumber: l.number, quantity: l.quantity, unitCost: l.unitCost,
-          ...(l.description ? { description: l.description } : {}), ...(l.description2 ? { description2: l.description2 } : {}),
+          lineType: l.lineType, lineObjectNumber: l.number,
+          // Abono: en positivo (BC ya lo resta); el PDF puede traerlo en negativo
+          quantity: credit ? Math.abs(l.quantity) : l.quantity, unitCost: credit ? Math.abs(l.unitCost) : l.unitCost,
+          ...(l.description ? { description: l.description } : {}), ...(l.description2 && !credit ? { description2: l.description2 } : {}),
           ...(l.taxCode ? { taxCode: l.taxCode } : {}),
         });
+      // Las líneas de abono de la API v2 no tienen Description 2: se pone después por OData
+      if (credit && l.description2 && row?.sequence) desc2.push({ sequence: row.sequence, text: l.description2 });
     }
   } catch (e) {
     // No dejar una factura a medias
     await bcRequest('DELETE', headUrl, ctx.token).catch(() => {});
     throw e;
+  }
+  if (desc2.length) {
+    const w = await setCreditMemoDescription2(ctx, no, desc2).catch((e: any) => `Description 2 could not be set (${String(e.message).substring(0, 120)}), enter it in BC.`);
+    if (w) warnings.push(w);
   }
   // La Posting Description no está en v2: por la página OData purchaseDocuments (por SystemId), como en Aduanas
   if (input.postingDescription?.trim()) {
@@ -832,11 +869,43 @@ export async function createOcrInvoice(ctx: BcContext, input: OcrCreateInput, pd
   }
   if (pdf) {
     try {
-      await attachFile(ctx, id, pdf);
+      await attachFile(ctx, id, pdf, credit ? 'Purchase Credit Memo' : 'Purchase Invoice');
     } catch (e: any) {
       warnings.push(`Could not attach the PDF (${String(e.message).substring(0, 160)}), attach it in BC.`);
     }
   }
   const after = await bcRequest('GET', headUrl, ctx.token).catch(() => null);
   return { id, no, net: after?.totalAmountExcludingTax ?? null, total: after?.totalAmountIncludingTax ?? null, currency: after?.currencyCode || '', warnings };
+}
+
+// Description 2 de las líneas de un abono (no está en las líneas de abono de la API v2): por el servicio OData de
+// líneas de compra que la tenga (purchaseDocumentLines…), línea a línea por Document No. + Line No. (= sequence de v2)
+async function setCreditMemoDescription2(ctx: BcContext, docNo: string, lines: { sequence: number; text: string }[]): Promise<string> {
+  const root = ctx.odataCompanyBase.replace(/\/Company\(.*$/, '');
+  const res = await fetch(root, { headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json' } });
+  const names: string[] = res.ok ? ((await res.json()).value || []).map((s: any) => s.name) : [];
+  const late = (n: string) => Number(/excel/i.test(n) && !/editable/i.test(n));
+  const services = names.filter(n => /^purch(ase)?.?(document.?)?lines?/i.test(n) && !/posted|archiv|shipment|receipt/i.test(n)).sort((a, b) => late(a) - late(b));
+  for (const name of services) {
+    for (const [docField, lineField] of [['Document_No', 'Line_No'], ['documentNumber', 'lineNumber'], ['documentNo', 'lineNo']]) {
+      const r = await fetch(odataUrl(`${ctx.odataCompanyBase}/${name}`, { $filter: `${docField} eq '${q(docNo)}'` }), {
+        headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json;odata.metadata=full' },
+      });
+      if (!r.ok) continue;
+      const rows: any[] = (await r.json()).value || [];
+      if (!rows.length) continue;
+      const field = Object.keys(rows[0]).find(k => /^description_?2$/i.test(k));
+      if (!field) break;
+      let done = 0;
+      for (const l of lines) {
+        const row = rows.find(x => Number(x[lineField]) === l.sequence);
+        const link: string | undefined = row?.['@odata.editLink'];
+        if (!link) continue;
+        const url = /^https?:/.test(link) ? link : /^Company\(/i.test(link) ? `${root}/${link}` : `${ctx.odataCompanyBase}/${link}`;
+        try { await bcRequest('PATCH', url, ctx.token, { [field]: l.text.substring(0, 50) }); done++; } catch { /* siguiente servicio */ }
+      }
+      if (done === lines.length) return '';
+    }
+  }
+  return 'Description 2 could not be set on the credit memo lines, enter it in BC.';
 }

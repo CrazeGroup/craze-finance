@@ -41,7 +41,7 @@ const es: Record<string, string> = {
   '{vendor} has no posted invoices: proposal based on those of {list}, which are identical. Check item and VAT.': '{vendor} no tiene facturas registradas: propuesta con las de {list}, que son iguales. Revisa artículo e IVA.',
   'This vendor has no posted invoices: fill in item/account and VAT group manually.': 'Este proveedor no tiene facturas registradas: completa artículo/cuenta y grupo de IVA a mano.',
   'The PDF shows {item} where the agreement invoices show their item ({model}), and it is not a BC item: if it is a new agreement, create item {item2}.': 'El PDF trae {item} donde las facturas de acuerdo traen su artículo ({model}) y no es un artículo de BC: si es un acuerdo nuevo, crea el artículo {item2}.',
-  'This looks like a credit note: only invoices are created here, post it as a Credit Memo in BC.': 'Parece un abono (credit note): aquí solo se crean facturas; regístralo como Credit Memo en BC.',
+  'This is a credit note: it will be created as a Purchase Credit Memo (change the document type if it is an invoice).': 'Es un abono: se creará como Purchase Credit Memo (cambia el tipo de documento si es una factura).',
   'Currency {cur} (from the PDF): this vendor has no previous invoices in {cur2} (the model is in {model}). {cur3} does not exist in BC: create it in Currencies or change the currency.': 'Divisa {cur} (la del PDF): no hay facturas anteriores de este proveedor en {cur2} (el modelo está en {model}). {cur3} no existe en BC: créala en Currencies o cambia la divisa.',
   'Currency {cur} (from the PDF): this vendor has no previous invoices in {cur2} (the model is in {model}).': 'Divisa {cur} (la del PDF): no hay facturas anteriores de este proveedor en {cur2} (el modelo está en {model}).',
   'The invoice is in {cur} and vendor {vendor} in {vcur}: is it another vendor (e.g. the card in {cur2})?': 'La factura está en {cur} y el proveedor {vendor} en {vcur}: ¿es otro proveedor (p. ej. la ficha en {cur2})?',
@@ -585,5 +585,9 @@ const es: Record<string, string> = {
   'Vendor invoices': 'Fact. Proveedores',
   'Recurring payments': 'Pagos recurrentes',
   'Syncing {comp} · {label}…': 'Sincronizando {comp} · {label}…',
+  'OCR: purchase credit memo created in BC': 'OCR: abono de compra creado en BC',
+  'Description 2 could not be set on the credit memo lines, enter it in BC.': 'No se ha podido poner la Description 2 en las líneas del abono; ponla en BC.',
+  'Description 2 could not be set ({error}), enter it in BC.': 'No se ha podido poner la Description 2 ({error}); ponla en BC.',
+  'vendor {vendor}, credit memo {invoice}': 'proveedor {vendor} · abono {invoice}',
 };
 export default es;

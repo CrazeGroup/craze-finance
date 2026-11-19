@@ -27,12 +27,13 @@ export async function POST(req: Request) {
 
     const ctx = await getBcContext(company);
     const invoiceNo = body.invoiceNo.trim();
-    const existing = await existingFor(ctx, body.vendor, invoiceNo);
+    const credit = body.documentType === 'credit_note';
+    const existing = await existingFor(ctx, body.vendor, invoiceNo, credit);
     if (existing.length && !body.force) return NextResponse.json({ error: `Already exists in BC: ${existing.map(e => e.no).join(', ')}`, existing }, { status: 409 });
 
     const result = await createOcrInvoice(ctx, { ...body, invoiceNo }, pdf);
     await learnVendor(ctx.companyName, body.ids || [], body.vendor).catch(() => {});
-    await logAction('OCR: purchase invoice created in BC', `${result.no} · vendor ${body.vendor}, invoice ${invoiceNo} · ${result.net ?? ''} ${result.currency}${body.force ? ' (already existed)' : ''}`);
+    await logAction(credit ? 'OCR: purchase credit memo created in BC' : 'OCR: purchase invoice created in BC', `${result.no} · vendor ${body.vendor}, ${credit ? 'credit memo' : 'invoice'} ${invoiceNo} · ${result.net ?? ''} ${result.currency}${body.force ? ' (already existed)' : ''}`);
     return NextResponse.json(result);
   } catch (error: any) {
     console.error('OCR create:', error);

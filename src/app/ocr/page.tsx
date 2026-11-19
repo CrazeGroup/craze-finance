@@ -23,7 +23,7 @@ type Doc = {
 };
 // Valores editables de cada factura antes de crearla (importes como texto, formato es-ES)
 type FormLine = Omit<Line, 'quantity' | 'unitCost'> & { quantity: string; unitCost: string };
-type Form = { invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string; postingDescription: string; vatBusPostingGroup: string; currency: string; lines: FormLine[] };
+type Form = { documentType: 'invoice' | 'credit_note'; invoiceNo: string; invoiceDate: string; postingDate: string; dueDate: string; postingDescription: string; vatBusPostingGroup: string; currency: string; lines: FormLine[] };
 type Status = { saving?: boolean; created?: { id: string; no: string; net: number | null; total: number | null; currency: string }; warnings?: string[]; error?: string | null };
 
 // Importes mostrados en el idioma de la app (los campos editables siguen en formato es-ES, ver toNum/toText)
@@ -46,7 +46,7 @@ function formChanges(detected: string | undefined, d: Doc, sent: Form): string[]
   const out: string[] = [];
   if (detected !== undefined && detected !== (d.vendor?.number || '')) out.push(`Proveedor: propuesto ${detected || '(ninguno)'} → enviado ${d.vendor?.number} ${d.vendor?.name}`);
   const p = toForm(d.suggestion);
-  const fields: [keyof Form, string][] = [['invoiceNo', 'Nº factura'], ['invoiceDate', 'Fecha factura'], ['dueDate', 'Vencimiento'], ['vatBusPostingGroup', 'VAT Bus. Posting Group'], ['currency', 'Divisa']];
+  const fields: [keyof Form, string][] = [['documentType', 'Tipo de documento'], ['invoiceNo', 'Nº factura'], ['invoiceDate', 'Fecha factura'], ['dueDate', 'Vencimiento'], ['vatBusPostingGroup', 'VAT Bus. Posting Group'], ['currency', 'Divisa']];
   for (const [k, label] of fields) if (String(p[k] || '').trim() !== String(sent[k] || '').trim()) out.push(`${label}: propuesto "${p[k] || ''}" → enviado "${sent[k] || ''}"`);
   const fmtLine = (l: FormLine) => `${l.lineType} ${l.number || '—'} · ${toNum(l.quantity)} × ${toNum(l.unitCost)} · ${l.taxCode || '—'}`;
   const n = Math.max(p.lines.length, sent.lines.length);
@@ -60,6 +60,7 @@ function formChanges(detected: string | undefined, d: Doc, sent: Form): string[]
 }
 
 const toForm = (s: Suggestion | null): Form => ({
+  documentType: s?.documentType === 'credit_note' ? 'credit_note' : 'invoice',
   invoiceNo: s?.invoiceNo || '', invoiceDate: s?.invoiceDate || '', postingDate: s?.postingDate || '', dueDate: s?.dueDate || '',
   postingDescription: s?.postingDescription || '', vatBusPostingGroup: s?.vatBusPostingGroup || '', currency: s?.currency || '',
   lines: (s?.lines || []).map(l => ({ ...l, quantity: toText(l.quantity), unitCost: toText(l.unitCost) })),
@@ -112,7 +113,7 @@ export default function OcrPage() {
       setDocs(l => l.map(d => (d.file === file.name ? { ...json, file: file.name, loading: false } : d)));
       setForms(f => ({ ...f, [file.name]: toForm(json.suggestion) }));
       setStatus(s => ({ ...s, [file.name]: {} }));
-      if (json.vendor && json.suggestion?.documentType !== 'credit_note') setSelected(prev => new Set(prev).add(file.name));
+      if (json.vendor) setSelected(prev => new Set(prev).add(file.name));
     } catch (e: any) {
       setDocs(l => l.map(d => (d.file === file.name ? { ...d, loading: false, error: e.message } : d)));
     }
@@ -217,7 +218,7 @@ export default function OcrPage() {
     try {
       const form = new FormData();
       form.append('data', JSON.stringify({
-        vendor: d.vendor.number, invoiceNo: f.invoiceNo.trim(), invoiceDate: f.invoiceDate, postingDate: f.postingDate, dueDate: f.dueDate,
+        vendor: d.vendor.number, documentType: f.documentType, invoiceNo: f.invoiceNo.trim(), invoiceDate: f.invoiceDate, postingDate: f.postingDate, dueDate: f.dueDate,
         postingDescription: f.postingDescription, vatBusPostingGroup: f.vatBusPostingGroup, currency: f.currency, ids: d.ids, force,
         lines: f.lines.map(l => ({ ...l, quantity: toNum(l.quantity), unitCost: toNum(l.unitCost) })),
       }));
@@ -433,7 +434,14 @@ function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRem
       <div className="p-4 space-y-3">
         <VendorPicker d={d} onVendor={onVendor} />
         <div className="flex flex-wrap gap-3 items-end">
-          <label className="text-xs font-semibold text-gray-500">{t('Vendor Invoice No.')}
+          <label className="text-xs font-semibold text-gray-500">{t('Document type')}
+            <select value={f.documentType} onChange={e => setField('documentType', e.target.value)}
+              className={`${input} block mt-1 ${f.documentType === 'credit_note' ? 'border-amber-400 bg-amber-50 font-semibold text-amber-800' : ''}`}>
+              <option value="invoice">{t('Purchase Invoice')}</option>
+              <option value="credit_note">{t('Purchase Credit Memo')}</option>
+            </select>
+          </label>
+          <label className="text-xs font-semibold text-gray-500">{f.documentType === 'credit_note' ? t('Vendor Cr. Memo No.') : t('Vendor Invoice No.')}
             <input value={f.invoiceNo} onChange={e => setField('invoiceNo', e.target.value)} className={`${input} block mt-1 w-64 font-mono`} />
           </label>
           <label className="text-xs font-semibold text-gray-500">{t('Invoice date')}

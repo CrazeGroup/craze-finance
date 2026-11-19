@@ -88,5 +88,8 @@ const es: Record<string, string> = {
   "Email «{subject}»: no PDF attachments": "Correo «{subject}»: no tiene PDFs adjuntos",
   "{file}: not a PDF or an email, skipped": "{file}: no es un PDF ni un correo, no se usa",
   "{file}: could not be read ({error})": "{file}: no se ha podido leer ({error})",
+  'Purchase Invoice': 'Purchase Invoice',
+  'Purchase Credit Memo': 'Purchase Credit Memo',
+  'Vendor Cr. Memo No.': 'Vendor Cr. Memo No.',
 };
 export default es;
