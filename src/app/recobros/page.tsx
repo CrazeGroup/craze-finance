@@ -654,7 +654,7 @@ function CollectionsSummary({ invoices, loading, commentsFor, onComment }: {
       <p className="text-xs text-gray-500">{t('{n} invoices', { n })}</p>
     </div>
   );
-  const filters: [ActionFilter, string][] = [['all', t('All')], ['none', t('No action yet')], ['reminded', t('Reminded')], ['called', t('Called')], ['commented', t('With comments')]];
+  const filters: [ActionFilter, string][] = [['all', t('All')], ['none', t('No action yet')], ['reminded', t('Reminded')], ['called', t('With calls')], ['commented', t('With comments')]];
 
   if (loading && !invoices.length) return <p className="text-sm text-gray-500">{t('Loading…')}</p>;
   return (
@@ -703,9 +703,9 @@ function CollectionsSummary({ invoices, loading, commentsFor, onComment }: {
                   <td className={td}><span className="inline-flex items-center gap-1">{open.has(g.key) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}<span className="text-gray-500">{g.no}</span> {g.name} <span className="text-xs font-normal text-gray-500">· {t('{n} invoices', { n: g.rows.length })}</span></span></td>
                   <td className={`${td} text-right tabular-nums`}>{money(g.amount)}</td>
                   <td className={`${td} text-right tabular-nums`}>{t('up to {n} days', { n: g.maxDays })}</td>
-                  <td className={td}>{g.reminded ? <span className="text-amber-700">{t('{n} of {m}', { n: g.reminded, m: g.rows.length })} · {date(g.lastReminder)}</span> : <span className="text-gray-400">—</span>}</td>
-                  <td className={td}>{g.called ? <span className="text-violet-700">{t('{n} of {m}', { n: g.called, m: g.rows.length })} · {date(g.lastCall)}</span> : <span className="text-gray-400">—</span>}</td>
-                  <td className={td}>{g.commented ? <span className="text-sky-700">{t('{n} of {m}', { n: g.commented, m: g.rows.length })}</span> : <span className="text-gray-400">—</span>}</td>
+                  <td className={td}>{g.reminded ? <span className="text-amber-700">{t('{n} of {m} invoices', { n: g.reminded, m: g.rows.length })} · {date(g.lastReminder)}</span> : <span className="text-gray-400">—</span>}</td>
+                  <td className={td}>{g.called ? <span className="text-violet-700">{t('{n} of {m} invoices', { n: g.called, m: g.rows.length })} · {date(g.lastCall)}</span> : <span className="text-gray-400">—</span>}</td>
+                  <td className={td}>{g.commented ? <span className="text-sky-700">{t('{n} of {m} invoices', { n: g.commented, m: g.rows.length })}</span> : <span className="text-gray-400">—</span>}</td>
                   <td className={td}>{g.lastAction ? date(g.lastAction) : <span className="text-red-700 text-xs font-bold uppercase">{t('No action yet')}</span>}</td>
                 </tr>
                 {open.has(g.key) && [...g.rows].sort((a, b) => (b.inv.daysOverdue || 0) - (a.inv.daysOverdue || 0)).map(r => (

@@ -69,5 +69,7 @@ const es: Record<string, string> = {
   'up to {n} days': 'hasta {n} días',
   'due {date}': 'vence {date}',
   'Overdue invoices of every customer except Amazon, without a Confirmed Payment Date. Reminders and calls are the same as in Cashflow; comments include those of the invoice and of its Cashflow line.': 'Facturas vencidas de todos los clientes salvo Amazon, sin Confirmed Payment Date. Las reclamaciones y llamadas son las mismas que en Cashflow; los comentarios incluyen los de la factura y los de su línea de Cashflow.',
+  '{n} of {m} invoices': '{n} de {m} facturas',
+  'With calls': 'Con llamada',
 };
 export default es;
