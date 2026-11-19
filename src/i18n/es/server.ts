@@ -589,5 +589,17 @@ const es: Record<string, string> = {
   'Description 2 could not be set on the credit memo lines, enter it in BC.': 'No se ha podido poner la Description 2 en las líneas del abono; ponla en BC.',
   'Description 2 could not be set ({error}), enter it in BC.': 'No se ha podido poner la Description 2 ({error}); ponla en BC.',
   'vendor {vendor}, credit memo {invoice}': 'proveedor {vendor} · abono {invoice}',
+  '{user} has no e-mail in Business Central (Approval User Setup / User Card).': '{user} no tiene correo en Business Central (Approval User Setup / ficha de usuario).',
+  'Hello {name},': 'Hola {name}:',
+  'The following vendor invoices of {company} are still pending your approval in Business Central. Please review and approve them so they can be included in the next payment run.': 'Las siguientes facturas de proveedor de {company} siguen pendientes de tu aprobación en Business Central. Por favor, revísalas y apruébalas para que entren en el próximo pago.',
+  'Vendor invoice no.': 'Nº factura proveedor',
+  '% approved': '% aprobado',
+  'Total: {total}': 'Total: {total}',
+  'Thank you,': 'Gracias,',
+  'Accounting': 'Contabilidad',
+  'Pending invoice approvals – {company} ({n})': 'Facturas pendientes de aprobación – {company} ({n})',
+  'Payment Proposal: approval reminder sent': 'Payment Proposal: recordatorio de aprobación enviado',
+  'No approver or document selected.': 'No hay ningún aprobador ni documento seleccionado.',
+  'At most 30 approvers at a time.': 'Como máximo 30 aprobadores a la vez.',
 };
 export default es;

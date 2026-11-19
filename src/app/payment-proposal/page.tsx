@@ -2,7 +2,8 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { BellRing, ChevronDown, ChevronRight, Download, RefreshCw } from 'lucide-react';
+import { BellRing, ChevronDown, ChevronRight, Download, Mail, RefreshCw } from 'lucide-react';
+import ApproverReminderDialog from './ApproverReminderDialog';
 import DocPdfLink, { purchasePdfKind } from '@/components/DocPdfLink';
 import { useCompany } from '@/contexts/CompanyContext';
 import { useT } from '@/contexts/LanguageContext';
@@ -75,6 +76,8 @@ export default function PaymentProposalPage() {
   // Divisas en columnas: la local primero
   const currencies = useMemo(() => Array.from(new Set(entries.map(e => e.currency))).sort((a, b) => (a === lcy ? -1 : b === lcy ? 1 : a.localeCompare(b))), [entries, lcy]);
   const reminders = data?.reminders || [];
+  // Recordatorio a aprobadores: null = cerrado; si no, lo que viene marcado al abrir
+  const [remind, setRemind] = useState<{ users?: string[]; entryNos?: number[] } | null>(null);
   const approved = entries.filter(e => e.approvalPct >= APPROVED_PCT);
   const pending = entries.filter(e => e.approvalPct < APPROVED_PCT);
 
@@ -152,7 +155,8 @@ export default function PaymentProposalPage() {
                 <details className="mt-1 text-xs"><summary className="cursor-pointer">{t('Fields returned by the API')}</summary><p className="font-mono break-words mt-1">{data.apiKeys.join(', ')}</p></details>
               </div>
             )}
-            <ProposalTable title="Pending Approval" subtitle={`% Payment Approval < ${APPROVED_PCT} · ${t('grouped by Pending Users')}`} entries={pending} currencies={currencies} lcy={lcy} groupByPending />
+            <ProposalTable title="Pending Approval" subtitle={`% Payment Approval < ${APPROVED_PCT} · ${t('grouped by Pending Users')}`} entries={pending} currencies={currencies} lcy={lcy} groupByPending onRemind={setRemind} />
+            {remind && <ApproverReminderDialog docs={pending} preset={remind} lcy={lcy} onClose={() => setRemind(null)} />}
 
             <details className="text-xs text-gray-500" open={!data.usersSource.startsWith('odata:') || data.unmatched > 0}>
               <summary className="cursor-pointer">
@@ -184,8 +188,9 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
   );
 }
 
-function ProposalTable({ title, subtitle, entries, currencies, lcy, groupByPending }: {
+function ProposalTable({ title, subtitle, entries, currencies, lcy, groupByPending, onRemind }: {
   title: string; subtitle: string; entries: Entry[]; currencies: string[]; lcy: string; groupByPending?: boolean;
+  onRemind?: (preset: { users?: string[]; entryNos?: number[] }) => void;
 }) {
   const { t, locale } = useT();
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -209,6 +214,11 @@ function ProposalTable({ title, subtitle, entries, currencies, lcy, groupByPendi
       <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap items-baseline gap-x-3">
         <h2 className="text-sm font-bold text-gray-900">{title}</h2>
         <span className="text-xs text-gray-500">{subtitle} · {t('click a vendor to see its invoices')}</span>
+        {onRemind && entries.length > 0 && (
+          <button onClick={() => onRemind({})} className="ml-auto flex items-center gap-1.5 bg-gray-900 text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-black">
+            <Mail size={13} /> {t('Remind approvers')}
+          </button>
+        )}
       </div>
       <div className="table-scroll">
         <table className="w-full text-sm">
@@ -225,7 +235,16 @@ function ProposalTable({ title, subtitle, entries, currencies, lcy, groupByPendi
               <React.Fragment key={pendingUsers || '-'}>
                 {groupByPending && (
                   <tr className="border-t border-gray-200 bg-indigo-50/60 text-gray-900">
-                    <td className="px-3 py-2 font-bold">{pendingUsers || t('(no pending users)')}</td>
+                    <td className="px-3 py-2 font-bold">
+                      <span className="inline-flex items-center gap-2">{pendingUsers || t('(no pending users)')}
+                        {onRemind && pendingUsers && (
+                          <button onClick={() => onRemind({ users: pendingUsers.split('|').filter(Boolean), entryNos: list.map(e => e.entryNo) })} title={t('Send a reminder to these approvers')}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 border border-indigo-200 bg-white rounded px-1.5 py-0.5 hover:bg-indigo-100">
+                            <Mail size={11} /> {t('Remind')}
+                          </button>
+                        )}
+                      </span>
+                    </td>
                     {amountCells(list, true)}
                   </tr>
                 )}
@@ -277,7 +296,11 @@ function ProposalTable({ title, subtitle, entries, currencies, lcy, groupByPendi
                                     <td className="py-1 pr-3 whitespace-nowrap">{dateEs(d.dueDate)}</td>
                                     <td className="py-1 pr-3 text-right tabular-nums">{d.approvalPct}</td>
                                     <td className="py-1 pr-3">{d.approvedUsers || '—'}</td>
-                                    {groupByPending && <td className="py-1 pr-3">{d.pendingUsers || '—'}</td>}
+                                    {groupByPending && <td className="py-1 pr-3 whitespace-nowrap">{d.pendingUsers || '—'}
+                                      {onRemind && d.pendingUsers && (
+                                        <button onClick={() => onRemind({ users: d.pendingUsers.split('|').filter(Boolean), entryNos: [d.entryNo] })} title={t('Remind the approvers of this document')}
+                                          className="ml-1.5 align-middle text-indigo-600 hover:text-indigo-900"><Mail size={12} /></button>
+                                      )}</td>}
                                     <td className="py-1 pr-3 text-right tabular-nums whitespace-nowrap">{money(d.remaining, locale)} {d.currency}</td>
                                     <td className="py-1 text-right tabular-nums">{money(d.remainingLCY, locale)}</td>
                                   </tr>
