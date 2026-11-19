@@ -51,6 +51,8 @@ export default function ApproverReminderDialog({ docs, preset, lcy, onClose }: {
   const [sending, setSending] = useState(false);
   const [results, setResults] = useState<{ user: string; ok: boolean; email?: string; error?: string }[] | null>(null);
 
+  // Correo de un usuario de BC (sin distinguir mayúsculas); undefined mientras no se han cargado los correos
+  const approverOf = (u: string) => info?.approvers[u.toUpperCase()] || info?.approvers[u];
   const toggleUser = (u: string) => setUsers(p => { const n = new Set(p); if (n.has(u)) n.delete(u); else n.add(u); return n; });
   const isOn = (u: string, d: PendingDoc) => !off.has(`${u}|${d.entryNo}`);
   const setDocs = (u: string, list: PendingDoc[], on: boolean) => setOff(p => {
@@ -61,7 +63,8 @@ export default function ApproverReminderDialog({ docs, preset, lcy, onClose }: {
   const chosen = byUser.filter(([u]) => users.has(u)).map(([u, list]) => ({ user: u, docs: list.filter(d => isOn(u, d)) })).filter(r => r.docs.length);
 
   const send = async () => {
-    const noMail = chosen.filter(r => !info?.approvers[r.user]?.email).map(r => r.user);
+    // Solo se avisa si los correos se han cargado y ese usuario no tiene; si no se han podido cargar, decide el servidor
+    const noMail = info ? chosen.filter(r => !approverOf(r.user)?.email).map(r => r.user) : [];
     if (noMail.length && !confirm(t('{list} have no e-mail in BC and will be skipped. Continue?', { list: noMail.join(', ') }))) return;
     if (!confirm(t('Send {n} reminder e-mail(s) to the approvers from invoice@?', { n: chosen.length }))) return;
     setSending(true);
@@ -94,7 +97,7 @@ export default function ApproverReminderDialog({ docs, preset, lcy, onClose }: {
             {loadError && <p className="text-xs text-red-700 mb-2">{tx(loadError)}</p>}
             <div className="space-y-1 max-h-[60vh] overflow-y-auto pr-1">
               {byUser.map(([u, list]) => {
-                const a = info?.approvers[u];
+                const a = approverOf(u);
                 const last = info?.log[u];
                 return (
                   <label key={u} className={`flex items-start gap-2 rounded-lg px-2 py-1.5 cursor-pointer ${users.has(u) ? 'bg-indigo-50' : 'hover:bg-gray-50'}`}>
@@ -122,7 +125,7 @@ export default function ApproverReminderDialog({ docs, preset, lcy, onClose }: {
                   return (
                     <div key={u} className="border border-gray-200 rounded-xl">
                       <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-gray-50 border-b border-gray-200 rounded-t-xl">
-                        <p className="font-semibold text-gray-900">{info?.approvers[u]?.name || u}</p>
+                        <p className="font-semibold text-gray-900">{approverOf(u)?.name || u}</p>
                         <span className="text-xs text-gray-500">{t('{n} of {m} documents selected', { n: count, m: list.length })}</span>
                         <span className="ml-auto flex gap-2 text-xs">
                           <button onClick={() => setDocs(u, list, true)} className="underline text-gray-600 hover:text-black">{t('Select all')}</button>
@@ -152,7 +155,7 @@ export default function ApproverReminderDialog({ docs, preset, lcy, onClose }: {
                                       <td className="px-2 py-1">{d.extDocNo}</td>
                                       <td className="px-2 py-1 whitespace-nowrap">{t('due {date}', { date: dateFmt(d.dueDate) })}</td>
                                       <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">{money(d.remaining)} {d.currency}</td>
-                                      <td className="px-2 py-1 text-[11px] text-indigo-700">{others.length ? t('also pending: {list}', { list: others.map(x => info?.approvers[x]?.name || x).join(', ') }) : ''}</td>
+                                      <td className="px-2 py-1 text-[11px] text-indigo-700">{others.length ? t('also pending: {list}', { list: others.map(x => approverOf(x)?.name || x).join(', ') }) : ''}</td>
                                     </tr>
                                   );
                                 })}
@@ -177,7 +180,7 @@ export default function ApproverReminderDialog({ docs, preset, lcy, onClose }: {
             {results.map((r, i) => (
               <p key={i} className={`text-sm flex items-center gap-2 ${r.ok ? 'text-emerald-700' : 'text-red-700'}`}>
                 {r.ok ? <CheckCircle size={14} /> : <X size={14} />}
-                {r.ok ? t('Sent to {user} ({email})', { user: info?.approvers[r.user]?.name || r.user, email: r.email || '' }) : `${r.user ? `${r.user}: ` : ''}${tx(r.error || '')}`}
+                {r.ok ? t('Sent to {user} ({email})', { user: approverOf(r.user)?.name || r.user, email: r.email || '' }) : `${r.user ? `${r.user}: ` : ''}${tx(r.error || '')}`}
               </p>
             ))}
           </div>
@@ -186,7 +189,7 @@ export default function ApproverReminderDialog({ docs, preset, lcy, onClose }: {
         <div className="flex flex-wrap items-center justify-end gap-3 px-5 py-4 border-t border-gray-200">
           <span className="mr-auto text-xs text-gray-500">{t('One e-mail per approver from {mailbox}, with the selected documents.', { mailbox: 'invoice@craze-group.com' })}</span>
           <button onClick={onClose} className="px-4 py-2 rounded-lg border border-gray-300 text-sm font-semibold">{t('Close')}</button>
-          <button onClick={send} disabled={sending || !chosen.length}
+          <button onClick={send} disabled={sending || !chosen.length || (!info && !loadError)} title={!info && !loadError ? t('Loading the approvers\' e-mails from BC…') : undefined}
             className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-black disabled:opacity-40">
             <Send size={15} /> {sending ? t('Sending…') : t('Send {n} e-mail(s)', { n: chosen.length })}
           </button>

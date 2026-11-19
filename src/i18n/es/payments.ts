@@ -140,5 +140,6 @@ const es: Record<string, string> = {
   'Send a reminder to these approvers': 'Enviar un recordatorio a estos aprobadores',
   'Remind': 'Recordar',
   'Remind the approvers of this document': 'Recordar a los aprobadores de este documento',
+  "Loading the approvers' e-mails from BC…": 'Cargando los correos de los aprobadores de BC…',
 };
 export default es;
