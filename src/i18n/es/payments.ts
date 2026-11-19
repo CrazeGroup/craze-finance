@@ -112,5 +112,16 @@ const es: Record<string, string> = {
   'Read by {by} on {date}': 'Leída por {by} el {date}',
   'Mark this note as read': 'Marcar como leída',
   'Read': 'Leída',
+  'Vendor invoices with Reminder': 'Facturas de proveedor con Reminder',
+  'Last reminder': 'Último reminder',
+  'Reminder comment': 'Comentario del reminder',
+  'In the proposal': 'En la propuesta',
+  'Has invoices with Reminder': 'Tiene facturas con Reminder',
+  'The vendor has sent a payment reminder{date}{comment}': 'El proveedor ha reclamado el pago{date}{comment}',
+  'Open invoices with the Reminder check in Vendor Ledger Entries (any due date and payment method) · {docs} documents · {vendors} vendors · {amount} {lcy}': 'Facturas abiertas con el check Reminder en Vendor Ledger Entries (cualquier vencimiento y forma de pago) · {docs} documentos · {vendors} proveedores · {amount} {lcy}',
+  'Max. days overdue': 'Máx. días vencida',
+  'No open vendor invoice has the Reminder check.': 'Ninguna factura de proveedor abierta tiene el check Reminder.',
+  'No Payment': 'No Payment',
+  'Outside the proposal dates / method': 'Fuera de las fechas / forma de pago de la propuesta',
 };
 export default es;

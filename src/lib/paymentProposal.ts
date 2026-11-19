@@ -15,6 +15,12 @@ export type ProposalEntry = {
   description: string; postingDate: string; dueDate: string;
   remaining: number; remainingLCY: number | null; currency: string;
   approvalPct: number; approvedUsers: string; pendingUsers: string;
+  reminder: boolean; lastReminderDate: string; reminderComment: string;
+};
+// Facturas de proveedor con el check Reminder marcado en Vendor Ledger Entries (reminderBCT): el proveedor ya nos ha
+// reclamado el pago. Todas las abiertas, sin el filtro de vencimiento ni de forma de pago de la propuesta.
+export type ReminderEntry = Omit<ProposalEntry, 'approvedUsers' | 'pendingUsers'> & {
+  paymentMethod: string; noPayment: boolean; onHold: string; inProposal: boolean;
 };
 
 const pick = (r: any, keys: string[]) => keys.map(k => r[k]).find(v => v !== undefined && v !== null);
@@ -129,11 +135,36 @@ export async function paymentProposal(ctx: BcContext, company: string, from: str
         approvalPct: num(pick(r, ['paymentApprovalCRZ', 'percentagePaymentApproval'])),
         approvedUsers: joinUsers(approved),
         pendingUsers: joinUsers(pending),
+        reminder: isTrue(r.reminderBCT), lastReminderDate: realDate(r.lastReminderDateBCT), reminderComment: str(r.reminderCommentBCT),
       };
     })
     .sort((a, b) => a.vendorName.localeCompare(b.vendorName) || a.dueDate.localeCompare(b.dueDate));
 
   // Documentos cuyo nº de movimiento no aparece en la página OData (se quedan sin usuarios de ahí)
   const unmatched = byEntry ? entries.filter(e => !byEntry!.has(e.entryNo)).length : 0;
-  return { company, from, to, lcy, fields, usersSource, usersTried, unmatched, apiKeys, entries };
+
+  // Reminder: abiertas con el check, cualquier vencimiento y forma de pago
+  const inProposal = new Set(entries.map(e => e.entryNo));
+  const reminderRows = await bcFetchAll(odataUrl(`${ctx.customApiBase}/vendorLedgerEntries`, {
+    $filter: 'open eq true and reminderBCT eq true',
+  }), ctx.token).catch(() => [] as any[]);
+  const reminders: ReminderEntry[] = reminderRows
+    .filter(r => VENDOR_INVOICE_TYPES.includes(str(r.documentType).replace(/_x0020_/g, ' ')))
+    .map(r => {
+      const currency = str(r.currencyCode) || lcy;
+      const remaining = num(r.remainingAmount);
+      const lcyRaw = pick(r, ['remainingAmtLCY', 'remainingAmountLCY', 'remainingAmtLcy']);
+      return {
+        entryNo: num(r.entryNo), vendorNo: str(r.vendorNo), vendorName: str(r.vendorName),
+        docType: str(r.documentType).replace(/_x0020_/g, ' '), docNo: str(r.documentNo), extDocNo: str(r.externalDocumentNo),
+        description: str(r.description), postingDate: realDate(r.postingDate), dueDate: realDate(r.dueDate),
+        remaining, remainingLCY: lcyRaw !== undefined ? num(lcyRaw) : currency === lcy ? remaining : null, currency,
+        approvalPct: num(pick(r, ['paymentApprovalCRZ', 'percentagePaymentApproval'])),
+        reminder: true, lastReminderDate: realDate(r.lastReminderDateBCT), reminderComment: str(r.reminderCommentBCT),
+        paymentMethod: str(r.paymentMethodCode), noPayment: isTrue(pick(r, ['noPaymentBCT', 'noPayment'])), onHold: str(r.onHold),
+        inProposal: inProposal.has(num(r.entryNo)),
+      };
+    })
+    .sort((a, b) => a.vendorName.localeCompare(b.vendorName) || a.dueDate.localeCompare(b.dueDate));
+  return { company, from, to, lcy, fields, usersSource, usersTried, unmatched, apiKeys, entries, reminders };
 }
