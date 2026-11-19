@@ -315,7 +315,7 @@ function RemindersTable({ entries, lcy }: { entries: ReminderEntry[]; lcy: strin
   const today = new Date().toISOString().substring(0, 10);
   const days = (d: string) => (d && d < today ? Math.round((Date.parse(today) - Date.parse(d)) / 86400000) : 0);
   const groups = Array.from(entries.reduce((m, e) => m.set(e.vendorName, [...(m.get(e.vendorName) || []), e]), new Map<string, ReminderEntry[]>()).entries())
-    .sort((a, b) => sum(b[1], e => e.remainingLCY) - sum(a[1], e => e.remainingLCY));
+    .sort((a, b) => Math.abs(sum(b[1], e => e.remainingLCY)) - Math.abs(sum(a[1], e => e.remainingLCY)));
   return (
     <section className="bg-white rounded-xl border border-red-200 overflow-hidden">
       <div className="px-4 py-3 border-b border-red-200 bg-red-50/60 flex flex-wrap items-baseline gap-x-3">
