@@ -52,11 +52,27 @@ export async function GET(req: Request) {
       const get = async (url: string) => { const r = await fetch(url, { headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json' } }); return r.ok ? (await r.json()).value?.[0] : null; };
       const before = await get(listUrl);
       if (!before) return NextResponse.json({ company: ctx.companyName, error: 'Sin movimiento de prueba' });
-      const res = await fetch(`${base}(${before.entryNo})`, {
+      const patch = (value: string) => fetch(`${base}(${before.entryNo})`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json', 'Content-Type': 'application/json', 'If-Match': '*' },
-        body: JSON.stringify({ scheduledPaymentDateBCT: before.scheduledPaymentDateBCT }),
+        body: JSON.stringify({ scheduledPaymentDateBCT: value }),
       });
+      // &mode=clear: vacía la fecha, la relee y vuelve a poner la original (cambio real, deshecho al momento)
+      if (searchParams.get('mode') === 'clear') {
+        const clear = await patch('0001-01-01');
+        const clearText = await clear.text();
+        const cleared = await get(`${base}?$filter=entryNo eq ${before.entryNo}&${sel}`);
+        const restore = clear.ok ? await patch(before.scheduledPaymentDateBCT) : null;
+        const restoreText = restore ? await restore.text() : '';
+        const after = await get(`${base}?$filter=entryNo eq ${before.entryNo}&${sel}`);
+        return NextResponse.json({
+          company: ctx.companyName, before,
+          clear: { status: clear.status, ok: clear.ok, response: clear.ok ? undefined : clearText.substring(0, 1000) }, cleared,
+          restore: restore ? { status: restore.status, ok: restore.ok, response: restore.ok ? undefined : restoreText.substring(0, 1000) } : null,
+          after, restoredOk: after?.scheduledPaymentDateBCT === before.scheduledPaymentDateBCT,
+        });
+      }
+      const res = await patch(before.scheduledPaymentDateBCT);
       const text = await res.text();
       const after = await get(`${base}?$filter=entryNo eq ${before.entryNo}&${sel}`);
       return NextResponse.json({ company: ctx.companyName, status: res.status, ok: res.ok, before, after, response: res.ok ? undefined : text.substring(0, 1000) });
