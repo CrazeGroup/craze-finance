@@ -42,6 +42,25 @@ export async function GET(req: Request) {
       try { body = JSON.parse(text); } catch { body = { error: text.substring(0, 2000) }; }
       return NextResponse.json({ company: ctx.companyName, status: res.status, rows: body.value ?? body });
     }
+    // ?writeTest=scheduledPaymentDate[&entryNo=]: ¿se puede modificar Scheduled Payment Date de un movimiento de proveedor
+    // (API custom vendorLedgerEntries)? Se reenvía el MISMO valor que ya tiene (no cambia nada) y se relee.
+    if (searchParams.get('writeTest') === 'scheduledPaymentDate') {
+      const base = `${ctx.customApiBase}/vendorLedgerEntries`;
+      const sel = '$select=entryNo,vendorNo,vendorName,documentNo,scheduledPaymentDateBCT';
+      const entryNo = searchParams.get('entryNo');
+      const listUrl = entryNo ? `${base}?$filter=entryNo eq ${Number(entryNo)}&${sel}` : `${base}?$filter=open eq true and scheduledPaymentDateBCT gt 0001-01-01&$top=1&${sel}`;
+      const get = async (url: string) => { const r = await fetch(url, { headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json' } }); return r.ok ? (await r.json()).value?.[0] : null; };
+      const before = await get(listUrl);
+      if (!before) return NextResponse.json({ company: ctx.companyName, error: 'Sin movimiento de prueba' });
+      const res = await fetch(`${base}(${before.entryNo})`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json', 'Content-Type': 'application/json', 'If-Match': '*' },
+        body: JSON.stringify({ scheduledPaymentDateBCT: before.scheduledPaymentDateBCT }),
+      });
+      const text = await res.text();
+      const after = await get(`${base}?$filter=entryNo eq ${before.entryNo}&${sel}`);
+      return NextResponse.json({ company: ctx.companyName, status: res.status, ok: res.ok, before, after, response: res.ok ? undefined : text.substring(0, 1000) });
+    }
     // ?metadata=<entidad>[&api=custom|v2]: definición $metadata de la entidad (clave, campos y si se puede insertar/modificar)
     const metadata = searchParams.get('metadata');
     // ?metadata=<servicio>&api=odata: campos de un servicio web OData (páginas publicadas), aunque no tenga filas
