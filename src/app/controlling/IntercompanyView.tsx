@@ -157,7 +157,8 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
           <th className={th}>{t('Item')}</th><th className={th}>{t('Description')}</th>
           <th className={`${th} text-right`}>{t('Sale {company}', { company: r.source })}<span className={sub}>{t('pcs.')}</span></th><th className={`${th} text-right`}>{t('Sale {company}', { company: r.source })}<span className={sub}>{t('amount {cur}', { cur: r.currency })}</span></th>
           <th className={`${th} text-right`}>{t('Unit Cost {company}', { company: r.source })}<span className={sub}>LCY</span></th>
-          <th className={`${th} text-right`}>{t('Unit Price {company}', { company: r.source })}<span className={sub}>{t('expected: cost + {pct} %', { pct: num(markup * 100, markup * 100 % 1 ? 1 : 0) })}</span></th>
+          <th className={`${th} text-right`}>{t('Unit Price {company}', { company: r.source })}<span className={sub}>LCY</span></th>
+          <th className={`${th} text-right`}>{t('Markup')}<span className={sub}>{t('check: cost + {pct} %', { pct: num(markup * 100, markup * 100 % 1 ? 1 : 0) })}</span></th>
           <th className={`${th} text-right`}>{t('Purchase {company}', { company: r.target })}<span className={sub}>{t('pcs.')}</span></th><th className={`${th} text-right`}>{t('Purchase {company}', { company: r.target })}<span className={sub}>{t('amount {cur}', { cur: pCur })}</span></th>
           {r.final && <><th className={`${th} text-right`}>{t('Final sale {company}', { company: r.target })}<span className={sub}>{t('pcs.')}</span></th><th className={`${th} text-right`}>{t('Final sale {company}', { company: r.target })}<span className={sub}>{t('amount {cur}', { cur: fCur })}</span></th></>}
         </tr></thead>
@@ -183,6 +184,17 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
                     </td>
                   );
                 })()}
+                {(() => {
+                  // % realmente aplicado = Unit Price / Unit Cost − 1, validado contra el recargo de la Intercompany Setup
+                  if (x.unitCost === undefined || x.unitPrice === undefined || !(x.unitCost > 0)) return <td className={`${td} text-right`}>–</td>;
+                  const expected = Math.round(x.unitCost * (1 + markup) * 10000) / 10000;
+                  const bad = Math.abs(x.unitPrice - expected) > Math.max(0.01, expected * 0.005);
+                  return (
+                    <td className={`${td} text-right font-mono whitespace-nowrap ${bad ? red : 'text-green-700'}`}>
+                      {num((x.unitPrice / x.unitCost - 1) * 100, 1)} % {bad ? '✗' : '✓'}
+                    </td>
+                  );
+                })()}
                 <td className={`${td} text-right font-mono ${qtyBad ? red : ''}`}>{r.purchase ? num(x.purch) : '–'}</td>
                 <td className={`${td} text-right font-mono ${amtBad ? red : ''}`}>{r.purchase ? num(x.purchAmt, 2) : '–'}</td>
                 {r.final && <td className={`${td} text-right font-mono ${finBad ? red : ''}`}>{r.final.found ? num(x.fin) : '–'}</td>}
@@ -193,7 +205,7 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
           <tr className="bg-gray-50 font-semibold">
             <td className={td} colSpan={2}>{t('Total')}</td>
             <td className={td} /><td className={`${td} text-right font-mono`}>{num(sum('saleAmt'), 2)}</td>
-            <td className={td} /><td className={td} />
+            <td className={td} /><td className={td} /><td className={td} />
             <td className={td} /><td className={`${td} text-right font-mono ${r.purchase && Math.abs(sum('saleAmt') - sum('purchAmt')) > 0.05 ? red : ''}`}>{r.purchase ? num(sum('purchAmt'), 2) : '–'}</td>
             {r.final && <><td className={td} /><td className={`${td} text-right font-mono`}>{r.final.found ? num(sum('finAmt'), 2) : '–'}</td></>}
           </tr>

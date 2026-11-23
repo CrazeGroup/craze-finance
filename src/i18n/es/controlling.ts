@@ -374,7 +374,8 @@ const es: Record<string, string> = {
   'Final sale date': 'Fecha venta final',
   'Unit Cost {company}': 'Unit Cost {company}',
   'Unit Price {company}': 'Unit Price {company}',
-  'expected: cost + {pct} %': 'esperado: coste + {pct} %',
+  'Markup': 'Recargo',
+  'check: cost + {pct} %': 'control: coste + {pct} %',
   'Expected {price} (Unit Cost + {pct} %)': 'Esperado {price} (Unit Cost + {pct} %)',
   'expected {price}': 'esperado {price}',
 };
