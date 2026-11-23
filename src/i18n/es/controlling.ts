@@ -371,5 +371,11 @@ const es: Record<string, string> = {
   'This is not a DATEV Jahresübersicht: the "Konto" column is missing.': 'No es una Jahresübersicht de DATEV: no se encuentra la columna "Konto".',
   'No month columns found (Jan/2025, Feb/2025…).': 'No se encuentran columnas de mes (Jan/2025, Feb/2025…).',
   'The Excel file has no account rows (6-digit numbers).': 'El Excel no tiene filas de cuenta (nº de 6 cifras).',
+  'Final sale date': 'Fecha venta final',
+  'Unit Cost {company}': 'Unit Cost {company}',
+  'Unit Price {company}': 'Unit Price {company}',
+  'expected: cost + {pct} %': 'esperado: coste + {pct} %',
+  'Expected {price} (Unit Cost + {pct} %)': 'Esperado {price} (Unit Cost + {pct} %)',
+  'expected {price}': 'esperado {price}',
 };
 export default es;

@@ -44,7 +44,7 @@ jobs:
           # Controlling (CRAZE GmbH, la empresa que abren por defecto)
           out.append(('CRAZE', f'controlling/purchase-items?company=CRAZE&from={y}-01-01&to={iso(t)}'))
           out.append(('CRAZE', f'controlling/consumed-provisions?from={y}-01-01&to={iso(prev_month_end)}'))
-          for c in GROUP: out.append((c, f'controlling/intercompany?company={c}&from={y}-01-01&to={iso(t)}'))
+          for c in GROUP: out.append((c, f'controlling/intercompany?company={c}&from={t.strftime("%Y-%m")}-01&to={iso(t)}'))
           for yy in range(prev_month_end.year - 2, prev_month_end.year + 1):
               out.append(('CRAZE', f'controlling/license-sales?company=CRAZE&from={yy}-01-01&to={iso(same_day(yy, prev_month_end))}'))
           for yy in range(y - 2, y + 1):

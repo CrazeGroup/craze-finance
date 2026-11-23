@@ -11,7 +11,7 @@ import { useT } from '@/contexts/LanguageContext';
 // Controlling · Intercompany: facturas de venta entre empresas del grupo frente a su factura de compra en la otra
 // empresa (mismo nº, importe, divisa, fecha, artículos y cantidades) y, en las ventas de CRAZE GmbH a UK / Group AG
 // (drop shipment), la factura de venta final al cliente. Datos: /api/controlling/intercompany (una petición por empresa).
-type Cmp = { no: string; description: string; a: number; b: number; aAmount?: number; bAmount?: number; equivalent?: string };
+type Cmp = { no: string; description: string; a: number; b: number; aAmount?: number; bAmount?: number; equivalent?: string; aUnitCost?: number; aUnitPrice?: number };
 type Row = {
   source: string; target: string; invoiceNo: string; postingDate: string; invoiceDate: string; customer: string; currency: string; amount: number; externalDocNo: string;
   purchase: null | { no: string; vendorInvoiceNo: string; postingDate: string; invoiceDate: string; vendor: string; currency: string; amount: number };
@@ -25,7 +25,7 @@ type Validation = { by?: string; at: string };
 const rowKey = (r: Row) => `${r.source}|${r.invoiceNo}`;
 type Orphan = { target: string; no: string; vendorInvoiceNo: string; postingDate: string; invoiceDate: string; vendor: string; currency: string; amount: number; source?: string };
 type Excluded = { invoiceNo: string; creditMemoNo: string; target: string; postingDate: string; externalDocNo: string; creditMemoAmount: number; source?: string };
-type Data = { rows: Row[]; orphanPurchases: Orphan[]; excludedCredited?: Excluded[]; warnings: string[] };
+type Data = { rows: Row[]; orphanPurchases: Orphan[]; excludedCredited?: Excluded[]; warnings: string[]; markupPct?: number };
 
 const GROUPINGS = [
   { id: 'none', label: 'No grouping' },
@@ -43,10 +43,11 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
   const { t, tx } = useT();
   const { num, date } = fmt;
   const [company, setCompany] = useReportCompany(globalCompany);
-  const [from, setFrom] = useState(() => `${new Date().getFullYear()}-01-01`);
+  // Por defecto el mes en curso (del día 1 a hoy), agrupado por empresa origen → destino
+  const [from, setFrom] = useState(() => `${new Date().toISOString().substring(0, 7)}-01`);
   const [to, setTo] = useState(() => new Date().toISOString().substring(0, 10));
   const [onlyIssues, setOnlyIssues] = useState(false);
-  const [grouping, setGrouping] = useState<Grouping>('none');
+  const [grouping, setGrouping] = useState<Grouping>('pair');
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [reload, setReload] = useState({ n: 0, force: false });
@@ -92,7 +93,7 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
         const parts = settled.flatMap(r => (r.status === 'fulfilled' ? [r.value] : []));
         const failed = settled.flatMap(r => (r.status === 'rejected' ? [t('Not included: {msg}', { msg: tx(String(r.reason?.message || r.reason)) })] : []));
         if (!parts.length) throw new Error(failed.join(' · '));
-        return { rows: parts.flatMap(p => p.rows), orphanPurchases: parts.flatMap(p => p.orphanPurchases), excludedCredited: parts.flatMap(p => p.excludedCredited || []), warnings: [...failed, ...parts.flatMap(p => p.warnings)] };
+        return { markupPct: parts[0].markupPct, rows: parts.flatMap(p => p.rows), orphanPurchases: parts.flatMap(p => p.orphanPurchases), excludedCredited: parts.flatMap(p => p.excludedCredited || []), warnings: [...failed, ...parts.flatMap(p => p.warnings)] };
       })
       : one(company);
     load.then(data => !cancelled && setState({ data, loading: false, error: null }))
@@ -123,7 +124,7 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
       [t('Inv. currency')]: r.currency, [t('Amount excl. VAT')]: r.amount, 'External Document No.': r.externalDocNo,
       [t('Purchase invoice')]: r.purchase?.no || '', 'Vendor Invoice No.': r.purchase?.vendorInvoiceNo || '', [t('Purchase date')]: r.purchase?.invoiceDate || '',
       [t('Purchase currency')]: r.purchase?.currency || '', [t('Purchase amount')]: r.purchase?.amount ?? '',
-      [t('Final sale')]: r.final?.found ? r.final.no : '', [t('Final customer')]: r.final?.customer || '', [t('Issues')]: r.issues.map(tx).join(' · ') || t('Correct'), [t('Corrected')]: r.corrected?.map(tx).join(' · ') || '',
+      [t('Final sale')]: r.final?.found ? r.final.no : '', [t('Final sale date')]: r.final?.found ? r.final.postingDate || '' : '', [t('Final customer')]: r.final?.customer || '', [t('Issues')]: r.issues.map(tx).join(' · ') || t('Correct'), [t('Corrected')]: r.corrected?.map(tx).join(' · ') || '',
       [t('Validated')]: validated[rowKey(r)] ? `${validated[rowKey(r)].by || t('Yes')} ${validated[rowKey(r)].at.substring(0, 10)}` : '',
     }));
     const orphans = (d?.orphanPurchases || []).map(o => ({ [t('Company (purchase)')]: o.target, [t('Vendor')]: o.vendor, [t('Purchase invoice')]: o.no, 'Vendor Invoice No.': o.vendorInvoiceNo, [t('Date')]: o.invoiceDate, [t('Inv. currency')]: o.currency, [t('Amount')]: o.amount }));
@@ -135,12 +136,15 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
 
   // Líneas por artículo: unidades e importe sin IVA de la venta, la compra y (drop shipment) la venta final
   const LinesTable = ({ r }: { r: Row }) => {
+    // Precio intercompañía esperado = Unit Cost × (1 + recargo de la Intercompany Setup)
+    const markup = (state.data?.markupPct ?? 10) / 100;
     const items = Array.from(new Set([...r.lines.map(l => l.no), ...(r.final?.lines || []).map(l => l.no)])).sort();
     const pCur = r.purchase?.currency || r.target, fCur = r.final?.currency || '';
     const rowsData = items.map(no => {
       const l = r.lines.find(x => x.no === no), f = r.final?.lines.find(x => x.no === no);
       return {
         no, l, f, eq: l?.equivalent, description: l?.description || f?.description || '',
+        unitCost: l?.aUnitCost, unitPrice: l?.aUnitPrice,
         sale: l?.a ?? f?.a ?? 0, saleAmt: l?.aAmount ?? f?.aAmount ?? 0, purch: l?.b ?? 0, purchAmt: l?.bAmount ?? 0, fin: f?.b ?? 0, finAmt: f?.bAmount ?? 0,
       };
     });
@@ -152,6 +156,8 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
         <thead><tr className="border-b border-gray-200 bg-gray-50">
           <th className={th}>{t('Item')}</th><th className={th}>{t('Description')}</th>
           <th className={`${th} text-right`}>{t('Sale {company}', { company: r.source })}<span className={sub}>{t('pcs.')}</span></th><th className={`${th} text-right`}>{t('Sale {company}', { company: r.source })}<span className={sub}>{t('amount {cur}', { cur: r.currency })}</span></th>
+          <th className={`${th} text-right`}>{t('Unit Cost {company}', { company: r.source })}<span className={sub}>LCY</span></th>
+          <th className={`${th} text-right`}>{t('Unit Price {company}', { company: r.source })}<span className={sub}>{t('expected: cost + {pct} %', { pct: num(markup * 100, markup * 100 % 1 ? 1 : 0) })}</span></th>
           <th className={`${th} text-right`}>{t('Purchase {company}', { company: r.target })}<span className={sub}>{t('pcs.')}</span></th><th className={`${th} text-right`}>{t('Purchase {company}', { company: r.target })}<span className={sub}>{t('amount {cur}', { cur: pCur })}</span></th>
           {r.final && <><th className={`${th} text-right`}>{t('Final sale {company}', { company: r.target })}<span className={sub}>{t('pcs.')}</span></th><th className={`${th} text-right`}>{t('Final sale {company}', { company: r.target })}<span className={sub}>{t('amount {cur}', { cur: fCur })}</span></th></>}
         </tr></thead>
@@ -166,6 +172,17 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
                 <td className={td}>{x.description}{x.eq && <span className="ml-2 text-[11px] text-emerald-700 font-semibold">✓ {x.eq}</span>}</td>
                 <td className={`${td} text-right font-mono`}>{num(x.sale)}</td>
                 <td className={`${td} text-right font-mono`}>{num(x.saleAmt, 2)}</td>
+                <td className={`${td} text-right font-mono`}>{x.unitCost !== undefined ? num(x.unitCost, 4) : '–'}</td>
+                {(() => {
+                  const expected = x.unitCost !== undefined ? Math.round(x.unitCost * (1 + markup) * 10000) / 10000 : undefined;
+                  const bad = expected !== undefined && x.unitPrice !== undefined && x.unitCost! > 0 && Math.abs(x.unitPrice - expected) > Math.max(0.01, expected * 0.005);
+                  return (
+                    <td className={`${td} text-right font-mono ${bad ? red : ''}`} title={expected !== undefined ? t('Expected {price} (Unit Cost + {pct} %)', { price: num(expected, 4), pct: num(markup * 100, markup * 100 % 1 ? 1 : 0) }) : undefined}>
+                      {x.unitPrice !== undefined ? num(x.unitPrice, 4) : '–'}
+                      {bad && <span className="block text-[10px] font-normal">{t('expected {price}', { price: num(expected!, 4) })}</span>}
+                    </td>
+                  );
+                })()}
                 <td className={`${td} text-right font-mono ${qtyBad ? red : ''}`}>{r.purchase ? num(x.purch) : '–'}</td>
                 <td className={`${td} text-right font-mono ${amtBad ? red : ''}`}>{r.purchase ? num(x.purchAmt, 2) : '–'}</td>
                 {r.final && <td className={`${td} text-right font-mono ${finBad ? red : ''}`}>{r.final.found ? num(x.fin) : '–'}</td>}
@@ -176,6 +193,7 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
           <tr className="bg-gray-50 font-semibold">
             <td className={td} colSpan={2}>{t('Total')}</td>
             <td className={td} /><td className={`${td} text-right font-mono`}>{num(sum('saleAmt'), 2)}</td>
+            <td className={td} /><td className={td} />
             <td className={td} /><td className={`${td} text-right font-mono ${r.purchase && Math.abs(sum('saleAmt') - sum('purchAmt')) > 0.05 ? red : ''}`}>{r.purchase ? num(sum('purchAmt'), 2) : '–'}</td>
             {r.final && <><td className={td} /><td className={`${td} text-right font-mono`}>{r.final.found ? num(sum('finAmt'), 2) : '–'}</td></>}
           </tr>
@@ -189,7 +207,7 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
       <thead><tr className="border-b border-gray-200 bg-gray-50">
         <th className={th} /><th className={th}>{t('Source → target')}</th><th className={th}>{t('Sales invoice')}</th><th className={th}>{t('Date')}</th>
         <th className={`${th} text-right`}>{t('Amount')}</th><th className={th}>{t('Purchase invoice')}</th><th className={th}>Vendor Inv. No.</th><th className={th}>{t('Purchase date')}</th>
-        <th className={`${th} text-right`}>{t('Purchase amount')}</th><th className={th}>{t('Final sale (drop shipment)')}</th><th className={th}>{t('Issues')}</th>
+        <th className={`${th} text-right`}>{t('Purchase amount')}</th><th className={th}>{t('Final sale (drop shipment)')}</th><th className={th}>{t('Final sale date')}</th><th className={th}>{t('Issues')}</th>
       </tr></thead>
       <tbody>
         {list.map(r => {
@@ -207,6 +225,7 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
                 <td className={`${td} font-mono`}>{r.purchase ? date(r.purchase.invoiceDate) : '–'}</td>
                 <td className={`${td} text-right font-mono`}>{r.purchase ? money(r.purchase.amount, r.purchase.currency) : '–'}</td>
                 <td className={td}>{r.final ? (r.final.found ? <span className="font-mono">{r.final.no} <span className="text-gray-500 font-sans">{r.final.customer}</span></span> : <span className="text-gray-400">{r.externalDocNo || '–'}</span>) : <span className="text-gray-300">n/a</span>}</td>
+                <td className={`${td} font-mono`}>{r.final?.found && r.final.postingDate ? date(r.final.postingDate) : '–'}</td>
                 <td className="py-1.5 px-2 text-[11px] min-w-[240px]">
                   {r.corrected?.length ? <span className="block mb-0.5 text-sky-800 font-semibold">{t('Corrected:')} <span className="font-normal">{r.corrected.map(tx).join(' · ')}</span></span> : null}
                   {canValidate && (
@@ -218,7 +237,7 @@ export default function IntercompanyView({ fmt, company: globalCompany }: { fmt:
                   <span className={r.corrected?.length || v ? 'text-gray-500' : 'text-[#C0392B]'}>{r.issues.map(tx).join(' · ') || <span className="text-emerald-700">{t('Correct')}</span>}</span>
                 </td>
               </tr>
-              {open[k] && <tr><td /><td colSpan={10} className="py-2 pr-2"><LinesTable r={r} /></td></tr>}
+              {open[k] && <tr><td /><td colSpan={11} className="py-2 pr-2"><LinesTable r={r} /></td></tr>}
             </Fragment>
           );
         })}

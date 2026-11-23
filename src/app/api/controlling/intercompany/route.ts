@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { readSetting } from '@/lib/reporting/cache';
 import { intercompanyReport, IC_COMPANIES } from '@/lib/controlling/intercompany';
 
 export const dynamic = 'force-dynamic';
@@ -14,7 +15,9 @@ export async function GET(req: Request) {
     const company = searchParams.get('company') || 'CRAZE';
     const from = searchParams.get('from'), to = searchParams.get('to');
     if (!IC_COMPANIES.some(c => c.name === company) || !isDate(from) || !isDate(to) || from > to) return NextResponse.json({ error: 'Invalid parameters' }, { status: 400 });
-    return NextResponse.json(await intercompanyReport(company, from, to, searchParams.get('force') === '1'));
+    // Recargo intercompañía sobre el Unit Cost (Intercompany Setup de BC, que no está publicada: ajuste de la app, 10 % por defecto)
+    const markupPct = await readSetting<number>('intercompanyMarkupPct', 10);
+    return NextResponse.json({ ...(await intercompanyReport(company, from, to, searchParams.get('force') === '1')), markupPct });
   } catch (error: any) {
     console.error('Intercompany:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });

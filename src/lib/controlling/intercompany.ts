@@ -30,7 +30,7 @@ const norm = (v: any) => s(v).toUpperCase().replace(/[\s.,;]+$/g, '').replace(/^
 const shift = (date: string, days: number) => { const d = new Date(`${date}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().substring(0, 10); };
 const chunk = <T,>(list: T[], size: number) => Array.from({ length: Math.ceil(list.length / size) }, (_, i) => list.slice(i * size, i * size + size));
 
-type Line = { no: string; description: string; quantity: number; amount: number };
+type Line = { no: string; description: string; quantity: number; amount: number; unitCost?: number; unitPrice?: number };
 // Líneas de varios documentos (filtro por nº en bloques), agrupadas por documento
 async function linesOf(ctx: BcContext, entity: 'salesInvoiceLines' | 'purchInvLines' | 'salesCrMemoLines', docs: string[]) {
   const out = new Map<string, Line[]>();
@@ -38,12 +38,12 @@ async function linesOf(ctx: BcContext, entity: 'salesInvoiceLines' | 'purchInvLi
   for (let i = 0; i < parts.length; i += 6) {
     const res = await Promise.all(parts.slice(i, i + 6).map(c => bcFetchAll(odataUrl(`${ctx.customApiBase}/${entity}`, {
       $filter: c.map(d => `documentNo eq '${q(d)}'`).join(' or '),
-      $select: 'documentNo,type,no,description,quantity,amount',
+      $select: entity === 'purchInvLines' ? 'documentNo,type,no,description,quantity,amount' : 'documentNo,type,no,description,quantity,amount,unitCostLCY,unitPrice',
     }), ctx.token)));
     for (const l of res.flat()) {
       if (!s(l.no) || !n(l.quantity)) continue;
       const list = out.get(s(l.documentNo)) || [];
-      list.push({ no: s(l.no), description: s(l.description), quantity: n(l.quantity), amount: n(l.amount) });
+      list.push({ no: s(l.no), description: s(l.description), quantity: n(l.quantity), amount: n(l.amount), unitCost: n(l.unitCostLCY), unitPrice: n(l.unitPrice) });
       out.set(s(l.documentNo), list);
     }
   }
@@ -59,12 +59,18 @@ const FOILBAG_ITEM = 'AA-00049';
 function compareLines(a: Line[] = [], b: Line[] = [], allowFoilbag = false) {
   const qa = qtyByItem(a), qb = qtyByItem(b);
   const amt = (lines: Line[], no: string) => Math.round(lines.filter(l => l.no === no).reduce((t, l) => t + l.amount, 0) * 100) / 100;
+  // Unit Cost (LCY) y Unit Price de la venta del origen, media ponderada por cantidad si el artículo va en varias líneas
+  const unit = (lines: Line[], no: string, k: 'unitCost' | 'unitPrice') => {
+    const ls = lines.filter(l => l.no === no && l[k] !== undefined);
+    const q = ls.reduce((t, l) => t + Math.abs(l.quantity), 0);
+    return ls.length ? Math.round((q ? ls.reduce((t, l) => t + (l[k] || 0) * Math.abs(l.quantity), 0) / q : ls[0][k] || 0) * 10000) / 10000 : undefined;
+  };
   const items = Array.from(new Set([...qa.keys(), ...qb.keys()])).sort();
   const foilbagEquivalent = allowFoilbag && qb.has(FOILBAG_ITEM) && a.some(l => FOILBAG.test(l.description) && !qb.has(l.no));
   const rows = items.map(no => {
     const description = (a.find(l => l.no === no) || b.find(l => l.no === no))?.description || '';
     const equivalent = foilbagEquivalent && (no === FOILBAG_ITEM || (FOILBAG.test(description) && !qb.has(no)));
-    return { no, description, a: qa.get(no) || 0, b: qb.get(no) || 0, aAmount: amt(a, no), bAmount: amt(b, no), ...(equivalent ? { equivalent: `Foilbag = ${FOILBAG_ITEM}` } : {}) };
+    return { no, description, a: qa.get(no) || 0, b: qb.get(no) || 0, aAmount: amt(a, no), bAmount: amt(b, no), aUnitCost: unit(a, no, 'unitCost'), aUnitPrice: unit(a, no, 'unitPrice'), ...(equivalent ? { equivalent: `Foilbag = ${FOILBAG_ITEM}` } : {}) };
   });
   return { rows, ok: rows.every(r => r.equivalent || Math.abs(r.a - r.b) < 0.0001) };
 }
@@ -74,7 +80,7 @@ export type IcRow = {
   source: string; target: string; invoiceNo: string; postingDate: string; invoiceDate: string; customer: string;
   currency: string; amount: number; externalDocNo: string;
   purchase: null | { no: string; vendorInvoiceNo: string; postingDate: string; invoiceDate: string; vendor: string; currency: string; amount: number };
-  lines: { no: string; description: string; a: number; b: number; aAmount: number; bAmount: number; equivalent?: string }[];
+  lines: { no: string; description: string; a: number; b: number; aAmount: number; bAmount: number; aUnitCost?: number; aUnitPrice?: number; equivalent?: string }[];
   final: null | { no: string; customer: string; postingDate: string; currency: string; amount: number; found: boolean; lines: { no: string; description: string; a: number; b: number; aAmount: number; bAmount: number }[] };
   issues: string[];
   // Incidencias ya subsanadas con abonos y facturas nuevas (se mantienen las incidencias como comentario)
@@ -89,7 +95,7 @@ export async function intercompanyReport(source: string, from: string, requested
   const to = open ? today() : requestedTo;
   const old = to < shift(today(), -60);
   const maxAge = old ? 30 * 24 * HOUR : open ? HOUR : 12 * HOUR;
-  return cached(`intercompany13:${source}:${from}:${open ? 'hoy' : to}`, maxAge, async () => {
+  return cached(`intercompany14:${source}:${from}:${open ? 'hoy' : to}`, maxAge, async () => {
     const ctx = await getBcContext(source);
     const sales = (await bcFetchAll(odataUrl(`${ctx.apiBase}/salesInvoices`, {
       $filter: `postingDate ge ${from} and postingDate le ${to}`,
