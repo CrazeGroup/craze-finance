@@ -1,5 +1,5 @@
 import { bcFetchAll, BcContext, odataUrl } from '@/lib/bcClient';
-import { cached, HOUR } from '@/lib/reporting/cache';
+import { cached, HOUR, readSetting } from '@/lib/reporting/cache';
 import { InvAttrs, itemCatalog } from '@/lib/reporting/inventoryAnalysis';
 
 // Amazon (/amazon): margen de cada cliente Amazon por año, línea a línea de las facturas y abonos de venta registrados.
@@ -40,7 +40,7 @@ const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) 
 
 export type AmazonCustomer = { no: string; name: string; country: string };
 // docs: [nº, 0 factura | 1 abono, fecha, índice de cliente, nº de pedido]
-// lines: [índice de documento, índice de artículo, cantidad, venta, coste, logística, ads, deducciones]
+// lines: [índice de documento, índice de artículo, cantidad, venta, coste, logística, ads, deducciones, agencia]
 export type AmazonYear = {
   year: number; from: string; to: string; computedAt: string;
   customers: AmazonCustomer[]; items: InvAttrs[]; rawDesc: Record<string, string>;
@@ -48,6 +48,7 @@ export type AmazonYear = {
   lines: number[][];
   ads: { country: string; month: string; amount: number; assigned: number }[];
   ded: { country: string; month: string; amount: number; assigned: number }[];
+  agency?: { country: string; month: string; amount: number; assigned: number }[];
   logistic: { assigned: number; unassigned: number; unassignedRows: number };
 };
 
@@ -70,7 +71,7 @@ export async function byMonths(ctx: BcContext, base: string, dateField: string, 
 export async function amazonYear(ctx: BcContext, company: string, year: number, force = false): Promise<AmazonYear> {
   const today = new Date().toISOString().substring(0, 10);
   const closed = `${year}-12-31` < today;
-  return cached(`amazonMargin4:${company}:${year}`, closed ? 7 * 24 * HOUR : HOUR, () => compute(ctx, company, year, today), force,
+  return cached(`amazonMargin5:${company}:${year}`, closed ? 7 * 24 * HOUR : HOUR, () => compute(ctx, company, year, today), force,
     { refreshAfterMs: closed ? 7 * 24 * HOUR : HOUR });
 }
 
@@ -111,6 +112,15 @@ async function compute(ctx: BcContext, company: string, year: number, today: str
   const [dedInv, dedCr] = dedFilter ? await Promise.all([
     byMonths(ctx, `${ctx.customApiBase}/purchInvLines`, 'postingDate', from, to, DED, dedFilter),
     byMonths(ctx, `${ctx.customApiBase}/purchCrMemoLines`, 'postingDate', from, to, DED, dedFilter).catch(() => [] as any[]),
+  ]) : [[], []];
+
+  // Agencia: facturas/abonos de compra de las agencias que gestionan Amazon (B2MARKETPLACE ECOMMERCE 7300559 → Amazon DE),
+  // todas sus líneas sin IVA; setting amazonAgencyVendors = { nº proveedor: país de Amazon al que se imputa }
+  const agencyVendors = await readSetting<Record<string, string>>('amazonAgencyVendors', { '7300559': 'DE' });
+  const agFilter = Object.keys(agencyVendors).length ? `(${Object.keys(agencyVendors).map(v => `buyFromVendorNo eq '${v.replace(/'/g, "''")}'`).join(' or ')})` : '';
+  const [agInv, agCr] = agFilter ? await Promise.all([
+    byMonths(ctx, `${ctx.customApiBase}/purchInvLines`, 'postingDate', from, to, DED, agFilter),
+    byMonths(ctx, `${ctx.customApiBase}/purchCrMemoLines`, 'postingDate', from, to, DED, agFilter).catch(() => [] as any[]),
   ]) : [[], []];
 
   // Clientes Amazon (Sell-to)
@@ -170,7 +180,7 @@ async function compute(ctx: BcContext, company: string, year: number, today: str
     const f = factor.get(doc) ?? 1;
     const sign = kind === 0 ? 1 : -1;
     const li = lines.length;
-    lines.push([di, itemOf(l), sign * (Number(l.quantity) || 0), sign * sales * Math.abs(f), sign * cost, 0, 0, 0]);
+    lines.push([di, itemOf(l), sign * (Number(l.quantity) || 0), sign * sales * Math.abs(f), sign * cost, 0, 0, 0, 0]);
     linesByDoc.set(doc, [...(linesByDoc.get(doc) || []), li]);
   };
   for (const l of invLines) addLine(l, 0);
@@ -222,6 +232,7 @@ async function compute(ctx: BcContext, company: string, year: number, today: str
   // Amazon Ads y deducciones por país (del proveedor) y mes
   const vendorCountry = new Map<string, string>();
   for (const v of vendorRows) if (isAmazon(s(v.displayName))) vendorCountry.set(s(v.number), ADS_COUNTRY[s(v.country)] || s(v.country));
+  for (const [v, c] of Object.entries(agencyVendors)) vendorCountry.set(v, c);
   const byCountryMonth = (inv: any[], cr: any[], keep: (l: any) => boolean = () => true) => {
     const by = new Map<string, number>();
     const add = (l: any, sign: number) => {
@@ -260,10 +271,12 @@ async function compute(ctx: BcContext, company: string, year: number, today: str
   const ignore = DED_IGNORE[company] || [];
   const ded = allocate(byCountryMonth(dedInv, dedCr, l => isDeductionLine(l) && !ignore.includes(vendorCountry.get(s(l.buyFromVendorNo)) || '')), 7);
 
-  for (const l of lines) for (let c = 2; c < 8; c++) l[c] = r2(l[c]);
+  const agency = allocate(byCountryMonth(agInv, agCr), 8);
+
+  for (const l of lines) for (let c = 2; c < 9; c++) l[c] = r2(l[c] || 0);
   return {
     year, from, to, computedAt: new Date().toISOString(),
-    customers, items, rawDesc: catalog.rawDescs(items), docs, lines, ads, ded,
+    customers, items, rawDesc: catalog.rawDescs(items), docs, lines, ads, ded, agency,
     logistic: { assigned: r2(logistic.assigned), unassigned: r2(logistic.unassigned), unassignedRows: logistic.unassignedRows },
   };
 }

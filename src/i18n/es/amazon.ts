@@ -15,7 +15,7 @@ const es: Record<string, string> = {
   "Margin": "Margen",
   "{list} estimated": "{list} estimados",
   "Amazon margin by month": "Margen Amazon por mes",
-  "Margin = sales − Product cost (quantity × the line's Unit Cost) − logistics cost − Amazon Ads − Amazon deductions. The previous year's cumulative goes up to the same day; in the chart its months are complete.": "Margen = venta − Product cost (cantidad × Unit Cost de la línea) − coste logístico − Amazon Ads − deducciones Amazon. El acumulado del año anterior llega hasta el mismo día; en el gráfico sus meses son completos.",
+  "Margin = sales − Product cost (quantity × the line's Unit Cost) − logistics cost − Amazon Ads − Amazon deductions − agency. The previous year's cumulative goes up to the same day; in the chart its months are complete.": "Margen = venta − Product cost (cantidad × Unit Cost de la línea) − coste logístico − Amazon Ads − deducciones Amazon − agencia. El acumulado del año anterior llega hasta el mismo día; en el gráfico sus meses son completos.",
   "Detail by Amazon customer": "Detalle por cliente Amazon",
   "customer → month → invoice → lines": "cliente → mes → factura → líneas",
   "compared with {year} up to {date}": "comparado con {year} hasta el {date}",
@@ -107,5 +107,7 @@ const es: Record<string, string> = {
   "List price {price}": "Precio de tarifa {price}",
   "Margin = net sales − product cost − logistics − Skonto − Conditions out of invoice − Bonus − Marketing fee − Accounting Partner (Markant).": "Margen = venta neta − coste del producto − logística − Skonto − Conditions out of invoice − Bonus − Marketing fee − Accounting Partner (Markant).",
   "The conditions are the ones BC calculates on each line with the group's Conditions %; logistics, each invoice's Total Charges (Logistic Cost).": "Las condiciones son las que BC calcula en cada línea con los % de Conditions del grupo; la logística, el Total Charges de cada factura (Logistic Cost).",
+  "Agency": "Agencia",
+  "Agency = lines excluding VAT of the purchase invoices/credit memos from the agency that manages Amazon (B2MARKETPLACE ECOMMERCE, vendor 7300559), charged to Amazon Germany: by month, spread over the Amazon DE sales in proportion to sales.": "Agencia = líneas sin IVA de las facturas/abonos de compra de la agencia que gestiona Amazon (B2MARKETPLACE ECOMMERCE, proveedor 7300559), imputadas a Amazon Alemania: por mes, repartidas sobre las ventas de Amazon DE en proporción a la venta.",
 };
 export default es;

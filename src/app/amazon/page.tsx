@@ -17,9 +17,10 @@ type Year = {
   year: number; from: string; to: string; computedAt: string;
   customers: Customer[]; items: InvAttrs[]; rawDesc: Record<string, string>;
   docs: [string, number, string, number, string][];
-  lines: number[][];                      // [doc, artículo, cantidad, venta, coste, logística, ads, deducciones]
+  lines: number[][];                      // [doc, artículo, cantidad, venta, coste, logística, ads, deducciones, agencia]
   ads: { country: string; month: string; amount: number; assigned: number }[];
   ded?: { country: string; month: string; amount: number; assigned: number }[];
+  agency?: { country: string; month: string; amount: number; assigned: number }[];
   logistic: { assigned: number; unassigned: number; unassignedRows: number };
 };
 type Data = { cur: Year; prev: Year | null };
@@ -28,11 +29,12 @@ const FIRST_YEAR = 2025;
 const DIMS: Dim[] = ['bu', 'line', 'range', 'cat', 'pmc', 'license', 'royalty'];
 const TABLE_KEY = 'amazon:tabla-abierta';
 
-type Agg = { s: number; c: number; l: number; a: number; d: number };
-const zero = (): Agg => ({ s: 0, c: 0, l: 0, a: 0, d: 0 });
-const addTo = (g: Agg, l: number[]) => { g.s += l[3]; g.c += l[4]; g.l += l[5]; g.a += l[6]; g.d += l[7] || 0; };
-const margin = (g: Agg) => g.s - g.c - g.l - g.a - g.d;
-const lineMargin = (l: number[]) => l[3] - l[4] - l[5] - l[6] - (l[7] || 0);
+// g = agencia (B2MARKETPLACE, facturas de la agencia que gestiona Amazon DE)
+type Agg = { s: number; c: number; l: number; a: number; d: number; g: number };
+const zero = (): Agg => ({ s: 0, c: 0, l: 0, a: 0, d: 0, g: 0 });
+const addTo = (g: Agg, l: number[]) => { g.s += l[3]; g.c += l[4]; g.l += l[5]; g.a += l[6]; g.d += l[7] || 0; g.g += l[8] || 0; };
+const margin = (g: Agg) => g.s - g.c - g.l - g.a - g.d - g.g;
+const lineMargin = (l: number[]) => l[3] - l[4] - l[5] - l[6] - (l[7] || 0) - (l[8] || 0);
 const sameDay = (iso: string, year: number) => `${year}${iso.substring(4, 10)}`;
 
 const store = {
@@ -86,6 +88,7 @@ export default function AmazonPage() {
       <td className={td}>{eur(g.l)}</td>
       <td className={td}>{eur(g.a)}</td>
       <td className={td}>{eur(g.d)}</td>
+      <td className={td}>{eur(g.g)}</td>
       <td className={`${td} font-semibold ${margin(g) < 0 ? 'text-[#C0392B]' : ''}`}>{eur(margin(g))}</td>
       <td className={td}>{pctOf(g)}</td>
       <td className={`${td} text-gray-500`}>{ly ? eur(ly.s) : ''}</td>
@@ -129,7 +132,7 @@ export default function AmazonPage() {
             <>
               <Section title={`Amazon ${data.cur.year}`} source={`${t('Posted sales invoices and credit memos · logistics (Logistic Costs) · Amazon Ads (AA-00015) and Amazon EU deductions by country')}${data.prev ? ` · ${t('vs same period {year}', { year: data.prev.year })}` : ''}`}>
                 <Grid cols={3}>
-                  {([['Sales', 's'], ['Product cost', 'c'], ['Logistics cost', 'l'], ['Amazon Ads', 'a'], ['Amazon deductions', 'd']] as const).map(([label, k]) => (
+                  {([['Sales', 's'], ['Product cost', 'c'], ['Logistics cost', 'l'], ['Amazon Ads', 'a'], ['Amazon deductions', 'd'], ['Agency', 'g']] as const).map(([label, k]) => (
                     <Kpi key={k} label={k === 'c' ? label : t(label)} value={eur(view.total[k])}
                       sub={view.totalLy && k !== 'a' && k !== 'd' ? `${data.prev!.year}: ${eur(view.totalLy[k])}${k !== 's' && view.total.s ? ` · ${t('{pct} of sales', { pct: pct((view.total[k] / view.total.s) * 100) })}` : ''}` : k !== 's' && view.total.s ? t('{pct} of sales', { pct: pct((view.total[k] / view.total.s) * 100) }) : undefined}
                       extra={view.totalLy && k !== 'a' && k !== 'd' ? <span className="text-xs font-semibold"><Delta fmt={fmt} cur={view.total[k]} prev={view.totalLy[k]} invert={k !== 's'} /></span> : undefined} />
@@ -140,7 +143,7 @@ export default function AmazonPage() {
                 </Grid>
                 <InventoryBreakdown fmt={fmt} an={view.analysis} kind="flow" opts={{
                   title: t('Amazon margin by month'), dims: DIMS, sameDayLy: true,
-                  note: t("Margin = sales − Product cost (quantity × the line's Unit Cost) − logistics cost − Amazon Ads − Amazon deductions. The previous year's cumulative goes up to the same day; in the chart its months are complete.") + estNote(view.prevEst) + estNote(view.curEst),
+                  note: t("Margin = sales − Product cost (quantity × the line's Unit Cost) − logistics cost − Amazon Ads − Amazon deductions − agency. The previous year's cumulative goes up to the same day; in the chart its months are complete.") + estNote(view.prevEst) + estNote(view.curEst),
                 }} />
               </Section>
 
@@ -163,6 +166,7 @@ export default function AmazonPage() {
                             <th className="py-2 px-2 text-right">{t('Logistics')}</th>
                             <th className="py-2 px-2 text-right">Ads</th>
                             <th className="py-2 px-2 text-right">{t('Deductions')}</th>
+                            <th className="py-2 px-2 text-right">{t('Agency')}</th>
                             <th className="py-2 px-2 text-right">{t('Margin')}</th>
                             <th className="py-2 px-2 text-right">{t('% margin')}</th>
                             <th className="py-2 px-2 text-right">{data.prev ? t('Sales {year}', { year: data.prev.year }) : ''}</th>
@@ -223,7 +227,7 @@ export default function AmazonPage() {
                           })}
                           {view.open.map(a => (
                             <tr key={`${a.kind}:${a.country}`} className="border-b border-gray-100 text-[#B7791F]">
-                              <td className="py-1.5 px-2">{t('{kind} with no sales to Amazon customers in the country ({months})', { kind: a.kind === 'a' ? 'Amazon Ads' : t('Amazon deductions'), months: a.months.join(', ') })}</td>
+                              <td className="py-1.5 px-2">{t('{kind} with no sales to Amazon customers in the country ({months})', { kind: a.kind === 'a' ? 'Amazon Ads' : a.kind === 'g' ? t('Agency') : t('Amazon deductions'), months: a.months.join(', ') })}</td>
                               <td className="py-1.5 px-2">{a.country || t('(no country)')}</td>
                               {cells({ ...zero(), [a.kind]: a.amount })}
                             </tr>
@@ -242,6 +246,7 @@ export default function AmazonPage() {
                         {data.cur.logistic.unassigned ? ` ${t('Shipments to Amazon not invoiced yet (or not linked): {amount} in {n} shipments, not included.', { amount: eur(data.cur.logistic.unassigned), n: data.cur.logistic.unassignedRows })}` : ''}</p>
                       <p>{t("Amazon Ads = item AA-00015 on purchase invoices/credit memos from Amazon vendors, by vendor country (Poland together with Germany) and month, spread over that country's Amazon customers in proportion to the month's sales.")}{estNote(view.prevEst)}{estNote(view.curEst)}</p>
                       <p>{t('Amazon deductions = lines excluding VAT of the purchase invoices/credit memos from «Amazon EU …» vendors (agreements, co-op, damage allowance, rebates, chargebacks, Amazon Promotions…), without Ads (AA-00015), «OPERATING» costs or UK Branch (there are no sales to Amazon UK); by vendor country and month, spread like the Ads. If a country has no sales that month (e.g. LU), they go to its sales of the year.')}</p>
+                      <p>{t('Agency = lines excluding VAT of the purchase invoices/credit memos from the agency that manages Amazon (B2MARKETPLACE ECOMMERCE, vendor 7300559), charged to Amazon Germany: by month, spread over the Amazon DE sales in proportion to sales.')}</p>
                     </div>
                   </Card>
                 )}
@@ -386,10 +391,11 @@ function build({ cur, prev }: Data) {
     for (const e of prevE!.ests) for (const a of listOf(prev, e.kind)) {
       if (!a.assigned && a.month <= lyTo.substring(0, 7) && a.month >= e.first) totalLy[e.kind] += a.amount;
     }
+    for (const a of prev.agency || []) if (!a.assigned && a.month <= lyTo.substring(0, 7)) totalLy.g += a.amount;
   }
   // Ads y deducciones sin clientes en su país y mes: se suman al total (margen) pero aparte de los clientes
-  const openBy = new Map<string, { kind: 'a' | 'd'; country: string; amount: number; months: string[] }>();
-  for (const [kind, list] of [['a', cur.ads], ['d', cur.ded || []]] as const) {
+  const openBy = new Map<string, { kind: 'a' | 'd' | 'g'; country: string; amount: number; months: string[] }>();
+  for (const [kind, list] of [['a', cur.ads], ['d', cur.ded || []], ['g', cur.agency || []]] as const) {
     for (const a of list) {
       const first = curE.ests.find(e => e.kind === kind)?.first || '';
       if (a.assigned || !a.amount || a.month < first) continue;
