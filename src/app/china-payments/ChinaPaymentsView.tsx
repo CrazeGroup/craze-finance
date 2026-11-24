@@ -104,19 +104,38 @@ export default function ChinaPaymentsView() {
   const dateLabel = (d: string) => d ? fmtDate(d) : t('To be confirmed');
   const dateClass = (d: string) => !d ? 'text-gray-700' : d <= today ? 'text-red-600' : 'text-gray-900';
 
-  // Selector de fecha + vaciar, para un pago (todas sus facturas) o una factura
-  const DateEditor = ({ list, value, k }: { list: Entry[]; value: string; k: string }) => (
+  // Selector de fecha + vaciar, para un pago (todas sus facturas) o una factura. "Change date" abre un campo de
+  // fecha visible con OK (un input de fecha invisible encima del botón no abre el calendario en Chrome).
+  const [editing, setEditing] = useState<{ k: string; value: string } | null>(null);
+  const renderDateEditor = (list: Entry[], value: string, k: string) => (
     <span className="inline-flex items-center gap-1" onClick={e => e.stopPropagation()}>
-      <label className={`relative inline-flex items-center gap-1 px-2 py-1 rounded border text-xs font-semibold cursor-pointer ${saving === k ? 'opacity-50' : 'hover:bg-indigo-50 border-indigo-200 text-indigo-800'}`} title={t('Change the Scheduled Payment Date in BC')}>
-        <Calendar size={12} /> {saving === k ? t('Saving…') : t('Change date')}
-        <input type="date" value={value} disabled={saving !== null}
-          onChange={e => { if (e.target.value && e.target.value !== value) setDate(list, e.target.value, k); }}
-          className="absolute inset-0 opacity-0 cursor-pointer" />
-      </label>
-      {value && (
-        <button disabled={saving !== null} onClick={() => setDate(list, null, k)} className="p-1 rounded text-gray-500 hover:text-red-600 hover:bg-red-50" title={t('Clear the date (To be confirmed)')}>
-          <X size={12} />
-        </button>
+      {editing?.k === k ? (
+        <>
+          <input type="date" autoFocus value={editing.value}
+            onChange={e => setEditing({ k, value: e.target.value })}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && editing.value && editing.value !== value) { setEditing(null); setDate(list, editing.value, k); }
+              if (e.key === 'Escape') setEditing(null);
+            }}
+            className="border border-indigo-300 rounded px-1.5 py-0.5 text-xs text-gray-900" />
+          <button disabled={!editing.value || editing.value === value}
+            onClick={() => { const v = editing.value; setEditing(null); setDate(list, v, k); }}
+            className="px-2 py-0.5 rounded bg-indigo-600 text-white text-xs font-bold disabled:opacity-40">OK</button>
+          <button onClick={() => setEditing(null)} className="p-1 rounded text-gray-500 hover:bg-gray-100" title={t('Cancel')}><X size={12} /></button>
+        </>
+      ) : (
+        <>
+          <button disabled={saving !== null} onClick={() => setEditing({ k, value: value || today })}
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-xs font-semibold ${saving === k ? 'opacity-50' : 'hover:bg-indigo-50 border-indigo-200 text-indigo-800'}`}
+            title={t('Change the Scheduled Payment Date in BC')}>
+            <Calendar size={12} /> {saving === k ? t('Saving…') : t('Change date')}
+          </button>
+          {value && (
+            <button disabled={saving !== null} onClick={() => setDate(list, null, k)} className="p-1 rounded text-gray-500 hover:text-red-600 hover:bg-red-50" title={t('Clear the date (To be confirmed)')}>
+              <X size={12} />
+            </button>
+          )}
+        </>
       )}
     </span>
   );
@@ -190,7 +209,7 @@ export default function ChinaPaymentsView() {
                               </span>
                             </td>
                             <td className={`p-3 text-right font-bold ${dateClass(p.date)}`}>{eur(p.total)}</td>
-                            <td className="p-3"><DateEditor list={p.list} value={p.date} k={pk} /></td>
+                            <td className="p-3">{renderDateEditor(p.list, p.date, pk)}</td>
                           </tr>
                           {pOpen && p.list.map(e => (
                             <tr key={e.entryNo} className="border-b border-gray-100 bg-gray-50/60 text-gray-800">
@@ -203,7 +222,7 @@ export default function ChinaPaymentsView() {
                               <td className="py-2 px-3">{e.dueDate ? fmtDate(e.dueDate) : '-'}</td>
                               <td className="py-2 px-3 text-right">{e.currencyCode ? `${e.currencyCode} ${e.remainingAmount.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}</td>
                               <td className="py-2 px-3 text-right font-semibold">{eur(e.remainingAmtLCY)}</td>
-                              <td className="py-2 px-3"><DateEditor list={[e]} value={e.scheduledDate || ''} k={`e${e.entryNo}`} /></td>
+                              <td className="py-2 px-3">{renderDateEditor([e], e.scheduledDate || '', `e${e.entryNo}`)}</td>
                             </tr>
                           ))}
                         </React.Fragment>
