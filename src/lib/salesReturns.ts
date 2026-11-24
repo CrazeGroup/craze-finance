@@ -4,9 +4,8 @@ import { readSetting } from '@/lib/reporting/cache';
 
 // Sales Return Orders (SRO): todas las abiertas de BC (API custom salesHeaders, documentType Return Order) con
 // Assigned User ID, Campaign No. y XML Status (campo AIT), más sus comentarios:
-// - BC: Sales Comment Line (tabla 44, "Comments" de la SRO). No está en la API estándar: se lee de la API custom
-//   (entidad salesCommentLines, o la de la setting salesCommentEntity) o de un servicio OData cuyo nombre case con
-//   /sales.?comment/i. Si BC no la publica, el informe lo avisa (commentsError) y sigue con los de la app.
+// - BC: las Notes de la SRO (Record Links, API custom recordLinks, ver bcComments). Si BC no las publica, el informe
+//   lo avisa (commentsError) y sigue con los de la app.
 // - App: CashflowComment con clave "sro:<no>" (añadidos desde este informe).
 
 export type SroComment = { source: 'bc' | 'app'; id?: number; date: string; text: string; author: string; lineNo?: number };
@@ -38,35 +37,32 @@ async function headers(ctx: BcContext): Promise<Omit<SalesReturn, 'company' | 'c
   }));
 }
 
-// Comentarios de BC de las Return Orders: Map no → comentarios. Lanza un error legible si BC no los publica.
+// Notes de BC de las Return Orders (FactBox "Notes" = Record Links de tipo Note, tabla 2000000068, texto en un BLOB):
+// la misma entidad de la API custom que Notas de compra (recordLinks, setting purchaseNotesEntity). Record ID
+// "Sales Header: Return Order,CRZ-RO26-00026". Map no → notas. Lanza un error legible si BC no la publica.
 async function bcComments(ctx: BcContext): Promise<Map<string, SroComment[]>> {
-  const entity = await readSetting('salesCommentEntity', 'salesCommentLines');
-  let rows: any[] | null = null;
+  const entity = await readSetting('purchaseNotesEntity', 'recordLinks');
+  let rows: any[];
   try {
     rows = await bcFetchAll(odataUrl(`${ctx.customApiBase}/${entity}`, {}), ctx.token);
   } catch (e: any) {
-    if (!/404|not found|ResourceNotFound|No HTTP resource/i.test(e.message || '')) throw e;
-  }
-  if (!rows) {
-    // Servicio OData publicado a mano (p. ej. página 67 "Sales Comment Sheet")
-    const list = await fetch(`${ctx.odataCompanyBase.replace(/\/Company\(.*$/, '')}`, { headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json' } })
-      .then(r => (r.ok ? r.json() : { value: [] })).catch(() => ({ value: [] }));
-    const service = (list.value || []).map((x: any) => x.name || x.url).find((n: string) => /sales.?comment/i.test(n || ''));
-    if (!service) throw new Error('BC does not publish the Sales Comment Lines (table 44) yet: ask to publish them in the custom API as "salesCommentLines".');
-    rows = await bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/${encodeURIComponent(service)}`, {}), ctx.token);
+    if (/404|not found|ResourceNotFound|No HTTP resource/i.test(e.message || '')) {
+      throw new Error(`BC does not publish the Notes (Record Links) yet: they must be published in the custom API as "${entity}".`);
+    }
+    throw e;
   }
   const out = new Map<string, SroComment[]>();
   for (const r of rows) {
-    const type = enumText(pick(r, 'documentType', 'Document_Type'));
-    if (type && !/return/i.test(type)) continue;
-    const no = s(pick(r, 'no', 'documentNo', 'No'));
-    const text = s(pick(r, 'comment', 'Comment'));
-    if (!no || !text) continue;
-    const created = s(pick(r, 'systemCreatedAt', 'SystemCreatedAt'));
-    const date = dateOnly(pick(r, 'date', 'Date')) || created.slice(0, 10);
-    const list = out.get(no) || [];
-    list.push({ source: 'bc', date: created && created.slice(0, 10) === date ? created : date, text, author: s(pick(r, 'systemCreatedBy', 'userId', 'code', 'Code')), lineNo: Number(pick(r, 'lineNo', 'Line_No')) || undefined });
-    out.set(no, list);
+    const type = enumText(pick(r, 'type', 'linkType'));
+    if (type && !/note/i.test(type)) continue;
+    const company = s(r.company);
+    if (company && company.toLowerCase() !== ctx.companyName.toLowerCase()) continue;
+    const m = s(pick(r, 'recordIdText', 'recordId', 'recordID')).match(/^sales header:\s*return order,\s*(.+)$/i);
+    if (!m) continue;
+    const text = s(pick(r, 'noteText', 'note', 'description'));
+    if (!text) continue;
+    const no = m[1].trim();
+    out.set(no, [...(out.get(no) || []), { source: 'bc', date: s(pick(r, 'created', 'createdAt')), text, author: s(pick(r, 'userId', 'createdBy')) }]);
   }
   return out;
 }

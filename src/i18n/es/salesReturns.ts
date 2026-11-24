@@ -27,7 +27,7 @@ const salesReturns: Record<string, string> = {
   '{n} new': '{n} nuevos',
   'Add a comment…': 'Añadir un comentario…',
   'Until then only the comments added here in the app are counted.': 'Mientras tanto solo se cuentan los comentarios añadidos aquí en la app.',
-  'BC does not publish the Sales Comment Lines (table 44) yet: ask to publish them in the custom API as "salesCommentLines".': 'BC todavía no publica los comentarios de venta (Sales Comment Line, tabla 44): hay que pedir que los publiquen en la API custom como "salesCommentLines".',
+  'BC does not publish the Notes (Record Links) yet: they must be published in the custom API as "{entity}".': 'BC todavía no publica las Notes (Record Links): hay que publicarlas en la API custom como "{entity}".',
   'Sales Return Order comment': 'Comentario en Sales Return Order',
 };
 export default salesReturns;
