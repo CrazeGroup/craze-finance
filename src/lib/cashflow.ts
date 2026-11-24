@@ -1,3 +1,4 @@
+import { chinaCashflowLines } from '@/lib/chinaPayments';
 import prisma from '@/lib/prisma';
 import { CUSTOMER_INVOICE_TYPES } from '@/lib/documentTypes';
 
@@ -152,9 +153,18 @@ export async function getCashflow(companyId: string, currency: string, showArchi
     }
   }
 
+  // 4.6 Pagos a China programados (China Payments: CHINA TRF por Scheduled Payment Date, en directo de BC), en la
+  // cuenta de la divisa local; si BC falla, Cashflow sale sin ellos (y lo indica)
+  let chinaEntries: any[] = [];
+  let chinaError: string | undefined;
+  const localCurrency = companyId === 'CRAZE Group AG' ? 'CHF' : 'EUR';
+  if (!showArchived && companyId !== 'ALL' && currency === localCurrency) {
+    try { chinaEntries = await chinaCashflowLines(companyId); } catch (e: any) { chinaError = e.message || String(e); }
+  }
+
   // 5. Combine and sort
   // NOTA: Markant excluido a petición del usuario.
-  const allEntries = [...transferEntries, ...manualEntries, ...recurringEntries];
+  const allEntries = [...transferEntries, ...manualEntries, ...recurringEntries, ...chinaEntries];
   
   // Sort oldest to newest
   allEntries.sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -177,6 +187,7 @@ export async function getCashflow(companyId: string, currency: string, showArchi
   return {
     initialBalance: INITIAL_BALANCE,
     initialBalanceDate: INITIAL_BALANCE_DATE,
+    chinaError,
     entries: finalEntries
   };
 }

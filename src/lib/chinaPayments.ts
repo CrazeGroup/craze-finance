@@ -21,6 +21,16 @@ const toEntry = (r: any): ChinaEntry => ({
   remainingAmount: Number(r.remainingAmount) || 0, remainingAmtLCY: Number(r.remainingAmtLCY) || 0, scheduledDate: realDate(r.scheduledPaymentDateBCT),
 });
 
+// Caché corta en memoria (la usa también Cashflow en cada carga); se vacía al cambiar una fecha
+const cache = new Map<string, { at: number; entries: ChinaEntry[] }>();
+export async function chinaPaymentsCached(company: string, maxAgeMs = 2 * 60_000): Promise<ChinaEntry[]> {
+  const hit = cache.get(company);
+  if (hit && Date.now() - hit.at < maxAgeMs) return hit.entries;
+  const entries = await chinaPayments(company);
+  cache.set(company, { at: Date.now(), entries });
+  return entries;
+}
+
 export async function chinaPayments(company: string): Promise<ChinaEntry[]> {
   const ctx = await getBcContext(company);
   const rows = await bcFetchAll(odataUrl(base(ctx.customApiBase), { $filter: `open eq true and paymentMethodCode eq '${CHINA_PM}'`, $select: FIELDS }), ctx.token);
@@ -31,6 +41,7 @@ export async function chinaPayments(company: string): Promise<ChinaEntry[]> {
 // También la copia en la tabla local (PurchaseInvoice.schedulePaymentDate) para que Cashflow/Pagos la vean ya.
 export async function setScheduledDate(company: string, entryNos: number[], date: string | null) {
   const ctx = await getBcContext(company);
+  cache.delete(company);
   const results: { entryNo: number; ok: boolean; error?: string; entry?: ChinaEntry }[] = [];
   for (const entryNo of entryNos) {
     const res = await fetch(`${base(ctx.customApiBase)}(${entryNo})`, {
@@ -55,4 +66,29 @@ export async function setScheduledDate(company: string, entryNos: number[], date
     }
   }
   return results;
+}
+
+// Líneas de Cashflow: un pago por proveedor y Scheduled Payment Date (las "To be confirmed" no tienen fecha y no
+// entran), en la cuenta de la divisa local de la empresa (importes en LCY)
+export async function chinaCashflowLines(company: string) {
+  const entries = await chinaPaymentsCached(company);
+  const map = new Map<string, { vendorNo: string; vendorName: string; date: string; amount: number; docs: string[] }>();
+  for (const e of entries) {
+    if (!e.scheduledDate) continue;
+    const key = `${e.vendorNo}|${e.scheduledDate}`;
+    if (!map.has(key)) map.set(key, { vendorNo: e.vendorNo, vendorName: e.vendorName, date: e.scheduledDate, amount: 0, docs: [] });
+    const p = map.get(key)!;
+    p.amount += e.remainingAmtLCY;
+    p.docs.push(e.externalDocumentNo || e.documentNo);
+  }
+  return Array.from(map.values()).map(p => ({
+    id: `china-${p.vendorNo}-${p.date}`,
+    date: new Date(`${p.date}T00:00:00Z`),
+    description: `China payment · ${p.vendorName}`,
+    amount: p.amount,
+    isManual: false,
+    isGroup: false,
+    isChina: true,
+    chinaDocs: p.docs,
+  }));
 }

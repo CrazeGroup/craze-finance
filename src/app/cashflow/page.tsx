@@ -40,6 +40,8 @@ export default function CashflowPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState('');
   // Vista: líneas (tabla normal) o resumen por semanas / meses con el saldo de cada periodo (localStorage)
+  // Error al leer de BC los pagos de China Payments (Cashflow sale sin ellos)
+  const [chinaError, setChinaError] = useState('');
   const [periodView, setPeriodView] = useState<'none' | 'week' | 'month'>('none');
   const [openPeriods, setOpenPeriods] = useState<Record<string, boolean>>({});
   useEffect(() => {
@@ -114,6 +116,7 @@ export default function CashflowPage() {
       if (res.ok) {
         const data = await res.json();
         setEntries(data.entries || []);
+        setChinaError(data.chinaError || '');
         setInitialBalance(data.initialBalance || 0);
         if (data.initialBalanceDate) {
           setInitialBalanceDate(new Date(data.initialBalanceDate).toLocaleDateString('es-ES'));
@@ -369,6 +372,8 @@ export default function CashflowPage() {
   };
 
   const handleDragStart = (e: React.DragEvent, entry: any) => {
+    // Las líneas de China Payments se mueven allí (cambian la Scheduled Payment Date en BC)
+    if (entry.isChina) { e.preventDefault(); return; }
     setDraggedItem(entry);
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', entry.id);
@@ -376,7 +381,7 @@ export default function CashflowPage() {
 
   const handleDrop = async (e: React.DragEvent, targetEntry: any) => {
     e.preventDefault();
-    if (!draggedItem || draggedItem.id === targetEntry.id) return;
+    if (!draggedItem || draggedItem.id === targetEntry.id || draggedItem.isChina) return;
     
     const confirmMsg = t('Move "{from}" to the date of "{to}" ({date})?', { from: tx(draggedItem.description), to: tx(targetEntry.description), date: new Date(targetEntry.date).toLocaleDateString(locale) });
     if (!confirm(confirmMsg)) return;
@@ -992,6 +997,12 @@ export default function CashflowPage() {
           </div>
         </div>
 
+        {chinaError && (
+          <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <AlertTriangle size={18} className="shrink-0 mt-0.5" />
+            <span>{t('The scheduled China payments could not be read from BC, so they are not in this cashflow: {error}', { error: chinaError })}</span>
+          </div>
+        )}
         {minBalance && (consolidatedBelowMin || firstBelowMin) && (
           <div className="flex items-start gap-3 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
             <AlertTriangle size={18} className="mt-0.5 shrink-0" />
@@ -1128,7 +1139,7 @@ export default function CashflowPage() {
                     visibleEntries.map((entry, idx) => (
                       <React.Fragment key={entry.id}>
                         <tr 
-                          draggable={true}
+                          draggable={!entry.isChina}
                           onDragStart={(e) => handleDragStart(e, entry)}
                           onDragOver={(e) => e.preventDefault()}
                           onDrop={(e) => handleDrop(e, entry)}
@@ -1162,6 +1173,8 @@ export default function CashflowPage() {
                               )}
                               {entry.isManual ? (
                                 <span className="bg-blue-500/20 text-blue-700 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-blue-500/30">Manual</span>
+                              ) : entry.isChina ? (
+                                <a href="/china-payments" onClick={e => e.stopPropagation()} className="bg-red-500/15 text-red-700 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-red-500/30 hover:bg-red-500/25" title={t('Scheduled payment from China Payments (Scheduled Payment Date in BC). Change it there.')}>China</a>
                               ) : entry.isRecurring ? (
                                 <span className="bg-indigo-500/20 text-indigo-700 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-indigo-500/30">{t('Recurring')}</span>
                               ) : (
@@ -1169,6 +1182,7 @@ export default function CashflowPage() {
                               )}
                               <span className="text-gray-900">{tx(entry.description)}</span>
                               {entry.isGroup && <span className="text-xs text-slate-500">({t('{n} invoices', { n: entry.invoices?.length })})</span>}
+                              {entry.isChina && <span className="text-xs text-slate-500" title={(entry.chinaDocs || []).join(', ')}>({t('{n} invoices', { n: entry.chinaDocs?.length || 0 })})</span>}
                               {claimedInvoices(entry).length > 0 && (() => {
                                 const claimed = claimedInvoices(entry);
                                 const last = claimed.map((i: any) => i.lastReminderDate).sort().pop();
@@ -1220,7 +1234,7 @@ export default function CashflowPage() {
                               <button onClick={(e) => openComments(e, lineKey(entry), entry.description)} className={`p-1.5 rounded-md transition-colors hover:bg-sky-400/20 ${commentsFor(lineKey(entry)).length ? 'text-sky-700' : 'text-black'}`} title={t('Line comments')}>
                                 <MessageSquare size={14} />
                               </button>
-                              {!entry.isRecurring && (
+                              {!entry.isRecurring && !entry.isChina && (
                                 <>
                                   <button onClick={(e) => { e.stopPropagation(); openEditModal(entry); }} className="p-1.5 text-black hover:bg-blue-400/20 rounded-md transition-colors" title={t('Edit Date/Entry')}>
                                     <Edit2 size={14} />
