@@ -39,6 +39,17 @@ export default function CashflowPage() {
   const [filterType, setFilterType] = useState<'ALL' | 'AUTO' | 'MANUAL'>('ALL');
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState('');
+  // Vista: líneas (tabla normal) o resumen por semanas / meses con el saldo de cada periodo (localStorage)
+  const [periodView, setPeriodView] = useState<'none' | 'week' | 'month'>('none');
+  const [openPeriods, setOpenPeriods] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    try { const v = localStorage.getItem('cashflow:periodView'); if (v === 'week' || v === 'month') setPeriodView(v); } catch { /* sin storage */ }
+  }, []);
+  const changePeriodView = (v: 'none' | 'week' | 'month') => {
+    setPeriodView(v);
+    setOpenPeriods({});
+    try { localStorage.setItem('cashflow:periodView', v); } catch { /* sin storage */ }
+  };
   const [excludeClaimed, setExcludeClaimed] = useState(false);
   // Menú del botón de reclamar en facturas ya reclamadas: otra reclamación o quitarla
   const [claimMenu, setClaimMenu] = useState<{ x: number; y: number; invoiceIds: number[]; next: number } | null>(null);
@@ -737,6 +748,42 @@ export default function CashflowPage() {
       .some(t => t && String(t).toLowerCase().includes(searchTerm)))
   );
 
+  // Resumen por periodo (semana lunes-domingo o mes) de las líneas visibles: entradas, salidas, neto,
+  // saldo más bajo y saldo al cierre (el de la última línea del periodo)
+  const periodOf = (date: string) => {
+    const d = new Date(date);
+    if (periodView === 'month') {
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      return { key, label: d.toLocaleDateString(locale, { month: 'long', year: 'numeric' }) };
+    }
+    const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7));
+    const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+    // Nº de semana ISO (el jueves de la semana decide el año)
+    const thursday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 3);
+    const week = Math.ceil(((thursday.getTime() - new Date(thursday.getFullYear(), 0, 1).getTime()) / 86400000 + 1) / 7);
+    const fmt = (x: Date) => x.toLocaleDateString(locale, { day: '2-digit', month: '2-digit' });
+    return {
+      key: `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-${String(monday.getDate()).padStart(2, '0')}`,
+      label: t('Week {n} · {from} – {to}', { n: week, from: fmt(monday), to: `${fmt(sunday)}/${sunday.getFullYear()}` }),
+    };
+  };
+  const periods: { key: string; label: string; entries: any[]; inflow: number; outflow: number; lowest: number; closing: number; belowMin: number }[] = [];
+  if (periodView !== 'none') {
+    for (const e of visibleEntries) {
+      const { key, label } = periodOf(e.date);
+      let p = periods[periods.length - 1];
+      if (!p || p.key !== key) { p = { key, label, entries: [], inflow: 0, outflow: 0, lowest: Infinity, closing: 0, belowMin: 0 }; periods.push(p); }
+      const amount = e.amount - (e.excludedAmount || 0);
+      if (amount >= 0) p.inflow += amount; else p.outflow += amount;
+      p.entries.push(e);
+      p.lowest = Math.min(p.lowest, e.balance);
+      p.closing = e.balance;
+      if (belowMin(e)) p.belowMin++;
+    }
+  }
+  const money = (v: number) => `${getCurrencySymbol(currentCurrency)}${v.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const balanceClass = (v: number) => v <= -1000000 ? 'text-purple-600 font-black' : v < 0 ? 'text-red-600 font-bold' : 'text-emerald-600 font-bold';
+
   // Total reclamado de las líneas visibles (lo que sale del saldo con "Excluir reclamadas")
   const claimedTotal = visibleEntries.reduce((acc, e) => acc + claimedInvoices(e).reduce((a: number, i: any) => a + i.amount, 0), 0);
 
@@ -766,6 +813,11 @@ export default function CashflowPage() {
                 <button onClick={() => setShowArchived(!showArchived)} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${showArchived ? 'bg-purple-500/30 text-purple-700 font-bold border border-purple-500/50' : 'text-gray-900 font-bold hover:text-purple-700 font-bold hover:bg-purple-500/10'}`}>
                   {showArchived ? t('Hide Archived') : t('Show Archived')}
                 </button>
+              </div>
+              <div className="flex bg-white rounded-lg p-1 border border-gray-200 items-center whitespace-nowrap" title={t('Group the cashflow by week or month to see the balance of each period')}>
+                {([['none', t('By line')], ['week', t('By week')], ['month', t('By month')]] as const).map(([v, label]) => (
+                  <button key={v} onClick={() => changePeriodView(v)} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${periodView === v ? 'bg-indigo-500/20 text-indigo-800 font-bold' : 'text-gray-900 font-bold hover:bg-gray-50'}`}>{label}</button>
+                ))}
               </div>
               <div className="relative">
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -960,6 +1012,66 @@ export default function CashflowPage() {
           {loading ? (
             <div className="flex justify-center items-center h-64">
               <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-teal-400"></div>
+            </div>
+          ) : periodView !== 'none' ? (
+            <div className="table-scroll">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-gray-200 text-sm font-medium text-gray-700 font-semibold bg-gray-50">
+                    <th className="p-4">{periodView === 'week' ? t('Week') : t('Month')}</th>
+                    <th className="p-4 text-right">{t('Lines')}</th>
+                    <th className="p-4 text-right">{t('Inflows')}</th>
+                    <th className="p-4 text-right">{t('Outflows')}</th>
+                    <th className="p-4 text-right">{t('Net')}</th>
+                    <th className="p-4 text-right">{t('Lowest balance')}</th>
+                    <th className="p-4 text-right">{t('Closing balance')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  <tr className="bg-gray-50/50 font-medium">
+                    <td className="p-4 text-gray-700 font-semibold" colSpan={6}>{t('Opening Balance ({date})', { date: initialBalanceDate })}</td>
+                    <td className={`p-4 text-right ${balanceClass(initialBalance)}`}>{money(initialBalance)}</td>
+                  </tr>
+                  {periods.length === 0 ? (
+                    <tr><td colSpan={7} className="p-8 text-center text-gray-700 font-semibold">{t('No lines match these filters')}</td></tr>
+                  ) : periods.map(p => (
+                    <React.Fragment key={p.key}>
+                      <tr className="bg-white hover:bg-gray-50 cursor-pointer" onClick={() => setOpenPeriods(o => ({ ...o, [p.key]: !o[p.key] }))}>
+                        <td className="p-4 font-bold text-gray-900">
+                          <span className="inline-flex items-center gap-2">
+                            {openPeriods[p.key] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                            <span className={periodView === 'month' ? 'capitalize' : ''}>{p.label}</span>
+                            {p.belowMin > 0 && (
+                              <span className="inline-flex items-center gap-1 bg-red-500/15 text-red-700 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase border border-red-500/30" title={t('{n} transaction(s) below the minimum consolidated balance', { n: p.belowMin })}>
+                                <AlertTriangle size={11} /> {t('Below minimum')}
+                              </span>
+                            )}
+                          </span>
+                        </td>
+                        <td className="p-4 text-right text-gray-700 font-semibold">{p.entries.length}</td>
+                        <td className="p-4 text-right text-emerald-600 font-bold">{p.inflow ? `+${money(p.inflow)}` : '-'}</td>
+                        <td className="p-4 text-right text-red-600 font-bold">{p.outflow ? money(p.outflow) : '-'}</td>
+                        <td className={`p-4 text-right font-bold ${p.inflow + p.outflow >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{p.inflow + p.outflow > 0 ? '+' : ''}{money(p.inflow + p.outflow)}</td>
+                        <td className={`p-4 text-right ${balanceClass(p.lowest)}`}>{money(p.lowest)}</td>
+                        <td className={`p-4 text-right text-base ${balanceClass(p.closing)}`}>{money(p.closing)}</td>
+                      </tr>
+                      {openPeriods[p.key] && p.entries.map((e: any) => (
+                        <tr key={e.id} className={`text-sm ${belowMin(e) ? 'bg-red-50' : 'bg-gray-50/60'}`}>
+                          <td className="py-2 px-4 pl-10 text-gray-700" colSpan={2}>
+                            <span className="font-semibold mr-3">{new Date(e.date).toLocaleDateString(locale)}</span>
+                            {e.description}{e.isGroup ? <span className="text-xs text-slate-500 ml-1">({t('{n} invoices', { n: e.invoices?.length || 0 })})</span> : null}
+                          </td>
+                          <td className="py-2 px-4 text-right text-emerald-600 font-semibold">{e.amount - (e.excludedAmount || 0) >= 0 ? `+${money(e.amount - (e.excludedAmount || 0))}` : ''}</td>
+                          <td className="py-2 px-4 text-right text-red-600 font-semibold">{e.amount - (e.excludedAmount || 0) < 0 ? money(e.amount - (e.excludedAmount || 0)) : ''}</td>
+                          <td />
+                          <td />
+                          <td className={`py-2 px-4 text-right ${balanceClass(e.balance)}`}>{money(e.balance)}</td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
             </div>
           ) : (
             <div className="table-scroll">
