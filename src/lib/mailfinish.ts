@@ -221,13 +221,16 @@ async function assemblyService(ctx: BcContext) {
 // Las líneas que BC copia de la lista de materiales del gadget se quitan antes.
 export async function createAssemblyOrder(ctx: BcContext, o: OrderInput) {
   const svc = await assemblyService(ctx);
-  const head = await bcRequest('POST', svc.head, ctx.token, { Item_No: o.output, Posting_Date: o.date });
+  const head = await bcRequest('POST', svc.head, ctx.token, { Item_No: o.output });
   const no: string = head.No;
   const docType = encodeURIComponent(String(head.Document_Type || 'Order').replace(/'/g, "''"));
   const headUrl = `${svc.head}(Document_Type='${docType}',No='${encodeURIComponent(q(no))}')`;
   try {
     // La location y la cantidad después del artículo (al validarlas BC recalcula las líneas y las fechas)
-    await bcRequest('PATCH', headUrl, ctx.token, { Location_Code: o.location, Quantity: o.quantity, Due_Date: o.date });
+    await bcRequest('PATCH', headUrl, ctx.token, { Location_Code: o.location, Quantity: o.quantity });
+    // Las fechas al final: al validar artículo/location/cantidad BC pone la fecha de trabajo (hoy) en algunas fechas
+    await bcRequest('PATCH', headUrl, ctx.token, { Posting_Date: o.date });
+    await bcRequest('PATCH', headUrl, ctx.token, { Due_Date: o.date }).catch(() => {});
     const auto = await bcRequest('GET', odataUrl(svc.lines, { $filter: `Document_No eq '${q(no)}'`, $select: 'Document_Type,Document_No,Line_No' }), ctx.token);
     for (const l of auto?.value || []) {
       await bcRequest('DELETE', `${svc.lines}(Document_Type='${encodeURIComponent(l.Document_Type)}',Document_No='${encodeURIComponent(q(no))}',Line_No=${l.Line_No})`, ctx.token);
@@ -236,10 +239,14 @@ export async function createAssemblyOrder(ctx: BcContext, o: OrderInput) {
       Document_Type: head.Document_Type || 'Order', Document_No: no, Type: 'Item', No: o.input, Location_Code: o.inputLocation, Quantity_per: 1,
     });
     // Comprobar que la orden ha quedado en BC como se pidió (cabecera + una línea con la revista), por el mismo servicio
-    const h = await bcRequest('GET', headUrl, ctx.token);
+    let h = await bcRequest('GET', headUrl, ctx.token);
+    if (h?.Posting_Date && h.Posting_Date !== o.date) {
+      await bcRequest('PATCH', headUrl, ctx.token, { Posting_Date: o.date });
+      h = await bcRequest('GET', headUrl, ctx.token);
+    }
     const ls = await bcRequest('GET', odataUrl(svc.lines, { $filter: `Document_No eq '${q(no)}'` }), ctx.token);
     const problem = orderProblem({
-      no, state: h?.No ? 'open' : 'missing', item: h?.Item_No, location: h?.Location_Code, quantity: Number(h?.Quantity),
+      no, state: h?.No ? 'open' : 'missing', item: h?.Item_No, location: h?.Location_Code, quantity: Number(h?.Quantity), postingDate: h?.Posting_Date,
       lines: (ls?.value || []).filter((l: any) => l.No).map((l: any) => ({ item: l.No, location: l.Location_Code, quantityPer: Number(l.Quantity_per) || 0, quantity: Number(l.Quantity) || 0 })),
     }, o);
     if (problem) throw new Error(problem);
@@ -298,6 +305,7 @@ export function orderProblem(c: OrderCheck | undefined, o: OrderInput) {
   if (c.item !== o.output) issues.push(`item ${c.item} instead of ${o.output}`);
   if (c.location !== o.location) issues.push(`location ${c.location} instead of ${o.location}`);
   if (Number(c.quantity) !== o.quantity) issues.push(`quantity ${c.quantity} instead of ${o.quantity}`);
+  if (c.postingDate && c.postingDate !== o.date) issues.push(`posting date ${c.postingDate} instead of ${o.date}`);
   const mag = (c.lines || []).filter(l => l.item === o.input);
   if (!mag.length) issues.push(`no line with the magazine ${o.input}`);
   else if (mag[0].location !== o.inputLocation) issues.push(`magazine line in ${mag[0].location} instead of ${o.inputLocation}`);

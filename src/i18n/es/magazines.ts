@@ -234,6 +234,7 @@ const es: Record<string, string> = {
   "item {got} instead of {want}": "artículo {got} en vez de {want}",
   "location {got} instead of {want}": "location {got} en vez de {want}",
   "quantity {got} instead of {want}": "cantidad {got} en vez de {want}",
+  "posting date {got} instead of {want}": "fecha de registro {got} en vez de {want}",
   "no line with the magazine {item}": "sin línea con la revista {item}",
   "{n} of {total} orders are not in BC as created: see the BC column.": "{n} de {total} órdenes no están en BC como se crearon: mira la columna BC.",
   "All {n} orders are in BC as created.": "Las {n} órdenes están en BC tal como se crearon.",

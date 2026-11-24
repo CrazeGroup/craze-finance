@@ -134,6 +134,7 @@ export default function MailfinishView() {
           if (c.item !== r.output) issues.push(t('item {got} instead of {want}', { got: c.item, want: r.output }));
           if (c.location !== r.location) issues.push(t('location {got} instead of {want}', { got: c.location, want: r.location }));
           if (Number(c.quantity) !== r.quantity) issues.push(t('quantity {got} instead of {want}', { got: c.quantity, want: r.quantity }));
+          if (c.postingDate && c.postingDate !== date) issues.push(t('posting date {got} instead of {want}', { got: dmy(c.postingDate), want: dmy(date) }));
           if (!(c.lines || []).some((l: any) => l.item === r.input)) issues.push(t('no line with the magazine {item}', { item: r.input }));
         }
         if (!issues.length) return { ...r, status: { ...r.status, verified: 'open' } };
