@@ -18,14 +18,21 @@ export async function GET(req: Request) {
     let items = await inventoryCheck(ctx, date, only);
     const total = { value: 0, target: 0 };
     for (const i of items) { total.value += i.value; total.target += i.target; }
-    if (searchParams.get('all') !== '1') items = items.filter(i => Math.abs(i.diff) >= 1);
+    if (searchParams.get('all') !== '1') items = items.filter(i => Math.abs(i.diff) >= 1 && (searchParams.get('types') === 'all' || i.type === 'Inventory'));
     items.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
     const nos = items.map(i => i.no);
     const [methods, open] = await Promise.all([costingMethods(ctx, nos), openEntries(ctx, nos)]);
     for (const i of items) {
       i.costing = methods[i.no];
       i.open = open.filter((e: any) => e.Item_No === i.no)
-        .map((e: any) => ({ entryNo: e.Entry_No, location: e.Location_Code, remaining: e.Remaining_Quantity, date: e.Posting_Date, type: e.Entry_Type }));
+        .map((e: any) => {
+          const value = Math.round((i.byEntry?.[e.Entry_No] || 0) * 100) / 100;
+          return { entryNo: e.Entry_No, location: e.Location_Code, remaining: e.Remaining_Quantity, quantity: e.Quantity, date: e.Posting_Date, type: e.Entry_Type, value,
+            remainingValue: Math.round((e.Quantity ? value * e.Remaining_Quantity / e.Quantity : 0) * 100) / 100 };
+        });
+      // Valor que no está en los movimientos abiertos (queda en movimientos cerrados: coste sin ajustar)
+      i.residue = Math.round((i.value - i.open.reduce((t, o) => t + o.remainingValue, 0)) * 100) / 100;
+      delete i.byEntry;
     }
     return NextResponse.json({ company, date, total: { value: Math.round(total.value * 100) / 100, target: Math.round(total.target * 100) / 100 }, items });
   } catch (error: any) {
