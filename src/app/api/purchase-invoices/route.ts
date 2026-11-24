@@ -13,7 +13,10 @@ async function postingDates(company: string): Promise<Map<string, string>> {
   const hit = postingCache.get(company);
   if (hit && Date.now() - hit.at < 10 * 60_000) return hit.dates;
   const ctx = await getBcContext(company);
-  const rows = await bcFetchAll(odataUrl(`${ctx.customApiBase}/vendorLedgerEntries`, { $filter: 'open eq true', $select: 'documentNo,postingDate' }), ctx.token);
+  // Abiertos + cerrados en los últimos 30 días (documentos pagados en BC que la sincronización aún no ha cerrado)
+  const since = new Date(Date.now() - 30 * 86400000).toISOString().substring(0, 10);
+  const url = (filter: string) => odataUrl(`${ctx.customApiBase}/vendorLedgerEntries`, { $filter: filter, $select: 'documentNo,postingDate' });
+  const rows = (await Promise.all([bcFetchAll(url('open eq true'), ctx.token), bcFetchAll(url(`closedAtDate ge ${since}`), ctx.token)])).flat();
   const dates = new Map<string, string>();
   for (const r of rows) if (r.documentNo && r.postingDate && !dates.has(r.documentNo)) dates.set(String(r.documentNo), r.postingDate);
   postingCache.set(company, { at: Date.now(), dates });
