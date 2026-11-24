@@ -22,6 +22,7 @@ const MODULES = [
   { id: 'royalties', label: 'Royalties' },
   { id: 'commercial', label: 'Commercial Analysis' },
   { id: 'amazon', label: 'Amazon (margin per customer)' },
+  { id: 'sales_returns', label: 'Sales Return Orders (follow-up and comments)' },
   { id: 'logistic_cost', label: 'Logistic Cost (CRAZE GmbH)' },
   { id: 'customer_margin', label: 'Customer Margin (CRAZE GmbH)' },
   { id: 'intercompany', label: 'Intercompany' },

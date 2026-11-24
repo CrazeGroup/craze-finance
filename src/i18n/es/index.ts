@@ -18,12 +18,13 @@ import customs from './customs';
 import ocr from './ocr';
 import magazines from './magazines';
 import documents from './documents';
+import salesReturns from './salesReturns';
 import settings from './settings';
 import server from './server';
 
 const ES: Record<string, string> = {
   ...common, ...menu, ...dashboard, ...collections, ...cashflow, ...openEntries, ...payments, ...banco, ...closing,
-  ...inventory, ...controlling, ...royalties, ...commercial, ...amazon, ...customs, ...ocr, ...magazines, ...documents,
+  ...inventory, ...controlling, ...royalties, ...commercial, ...amazon, ...customs, ...ocr, ...magazines, ...documents, ...salesReturns,
   ...settings, ...server,
 };
 export default ES;

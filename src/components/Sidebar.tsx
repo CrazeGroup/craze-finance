@@ -106,6 +106,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
     { href: '/royalties', label: 'Royalties', module: 'royalties' },
     { href: '/commercial', label: 'Commercial Analysis', module: 'commercial' },
     { href: '/amazon', label: 'Amazon', module: 'amazon' },
+    { href: '/sales-returns', label: 'Sales Return Orders', module: 'sales_returns' },
     // Solo para CRAZE GmbH
     ...(selectedCompany === 'CRAZE' ? [{ href: '/logistic-cost', label: 'Logistic Cost', module: 'logistic_cost' }, { href: '/customer-margin', label: 'Customer Margin', module: 'customer_margin' }] : []),
     { href: '/intercompany', label: 'Intercompany', module: 'intercompany' },
