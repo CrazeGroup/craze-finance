@@ -255,6 +255,7 @@ export async function createAssemblyOrder(ctx: BcContext, o: OrderInput) {
 export type OrderCheck = {
   no: string; state: 'open' | 'posted' | 'missing';
   item?: string; location?: string; quantity?: number; postingDate?: string;
+  dates?: Record<string, string>;         // todas las fechas de la cabecera (página 900: Posting/Due/Starting/Ending Date…)
   lines?: { item: string; location: string; quantityPer: number; quantity: number }[];
 };
 export async function checkOrders(ctx: BcContext, nos: string[]): Promise<OrderCheck[]> {
@@ -262,7 +263,7 @@ export async function checkOrders(ctx: BcContext, nos: string[]): Promise<OrderC
   for (let i = 0; i < nos.length; i += 15) {
     const part = nos.slice(i, i + 15);
     const f = (field: string) => part.map(n => `${field} eq '${q(n)}'`).join(' or ');
-    const [open, openLines, posted] = await Promise.all([
+    const [open, openLines, posted, heads] = await Promise.all([
       bcFetchAll(odataUrl(`${ctx.apiBase}/assemblyOrders`, { $filter: f('number'), $select: 'number,itemNumber,locationCode,quantity,postingDate' }), ctx.token),
       assemblyService(ctx).then(svc => bcFetchAll(odataUrl(svc.lines, { $filter: f('Document_No') }), ctx.token))
         .then(rows => rows.map((l: any) => ({ documentNumber: l.Document_No, lineObjectNumber: l.No, locationCode: l.Location_Code, quantityPer: l.Quantity_per, quantity: l.Quantity }))),
@@ -270,12 +271,14 @@ export async function checkOrders(ctx: BcContext, nos: string[]): Promise<OrderC
       bcFetchAll(odataUrl(`${ctx.apiBase}/postedAssemblyOrders`, { $filter: f('assemblyOrderNumber') }), ctx.token)
         .catch(() => bcFetchAll(odataUrl(`${ctx.apiBase}/postedAssemblyOrders`, { $filter: f('orderNumber') }), ctx.token))
         .catch(() => [] as any[]),
+      assemblyService(ctx).then(svc => bcFetchAll(odataUrl(svc.head, { $filter: f('No') }), ctx.token)).catch(() => [] as any[]),
     ]);
     for (const no of part) {
       const h = open.find((x: any) => x.number === no);
       if (h) {
         out.push({
           no, state: 'open', item: h.itemNumber, location: h.locationCode, quantity: h.quantity, postingDate: h.postingDate,
+          dates: Object.fromEntries(Object.entries(heads.find((x: any) => x.No === no) || {}).filter(([k, v]) => /date/i.test(k) && typeof v === 'string').map(([k, v]) => [k, String(v)])),
           lines: openLines.filter((l: any) => l.documentNumber === no && l.lineObjectNumber)
             .map((l: any) => ({ item: l.lineObjectNumber, location: l.locationCode, quantityPer: Number(l.quantityPer) || 0, quantity: Number(l.quantity) || 0 })),
         });
