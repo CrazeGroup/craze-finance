@@ -2,8 +2,23 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import prisma from '@/lib/prisma';
 import { VENDOR_INVOICE_TYPES } from '@/lib/documentTypes';
+import { getBcContext, bcFetchAll, odataUrl } from '@/lib/bcClient';
 
 export const dynamic = 'force-dynamic';
+
+// Posting Date de los movimientos de proveedor abiertos, leído en directo de BC (custom vendorLedgerEntries; la tabla
+// local no lo guarda). Caché en memoria 10 min por empresa; si BC falla, la página sale sin Posting Date.
+const postingCache = new Map<string, { at: number; dates: Map<string, string> }>();
+async function postingDates(company: string): Promise<Map<string, string>> {
+  const hit = postingCache.get(company);
+  if (hit && Date.now() - hit.at < 10 * 60_000) return hit.dates;
+  const ctx = await getBcContext(company);
+  const rows = await bcFetchAll(odataUrl(`${ctx.customApiBase}/vendorLedgerEntries`, { $filter: 'open eq true', $select: 'documentNo,postingDate' }), ctx.token);
+  const dates = new Map<string, string>();
+  for (const r of rows) if (r.documentNo && r.postingDate && !dates.has(r.documentNo)) dates.set(String(r.documentNo), r.postingDate);
+  postingCache.set(company, { at: Date.now(), dates });
+  return dates;
+}
 
 export async function GET() {
   try {
@@ -18,6 +33,8 @@ export async function GET() {
       },
     });
 
+    const posting = await postingDates(companyId).catch(e => { console.warn('Posting Date from BC failed:', e.message); return new Map<string, string>(); });
+
     const enrichedInvoices = invoices.map(inv => {
       const isOverdue = inv.status === 'Overdue';
       const daysOverdue = isOverdue ? Math.floor((new Date().getTime() - new Date(inv.dueDate).getTime()) / (1000 * 60 * 60 * 24)) : 0;
@@ -29,6 +46,8 @@ export async function GET() {
       
       return {
         ...inv,
+        // bcId = nº de documento (o "nº|tipo|movimiento" para tipos no clásicos)
+        postingDate: posting.get(String(inv.bcId || '').split('|')[0]) || null,
         isOverdue,
         daysOverdue,
         totalApprovals,

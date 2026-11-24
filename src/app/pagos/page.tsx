@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { Fragment, useEffect, useState, useMemo } from 'react';
 import { tabCompany } from '@/contexts/CompanyContext';
 import { useT } from '@/contexts/LanguageContext';
 import { syncFromBc } from '@/lib/syncClient';
@@ -20,6 +20,30 @@ export default function PagosPage() {
   const [vendorSortBy, setVendorSortBy] = useState<'amtOpen' | 'amtOverdue'>('amtOverdue');
   const [invoiceSortBy, setInvoiceSortBy] = useState<'daysOverdue' | 'amount'>('daysOverdue');
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  // Agrupar las facturas de cada proveedor por mes de la Posting Date o del vencimiento (localStorage)
+  const [groupBy, setGroupBy] = useState<'none' | 'posting' | 'due'>('none');
+  useEffect(() => {
+    try { const v = localStorage.getItem('pagos:groupBy'); if (v === 'posting' || v === 'due') setGroupBy(v); } catch { /* sin storage */ }
+  }, []);
+  const changeGroupBy = (v: 'none' | 'posting' | 'due') => {
+    setGroupBy(v);
+    try { localStorage.setItem('pagos:groupBy', v); } catch { /* sin storage */ }
+  };
+  // Bloques por mes (yyyy-mm, del más antiguo al más reciente; sin fecha al final)
+  const monthBlocks = (invoices: any[]) => {
+    if (groupBy === 'none') return [{ key: '', invoices }];
+    const map = new Map<string, any[]>();
+    for (const inv of invoices) {
+      const d = groupBy === 'posting' ? inv.postingDate : inv.dueDate;
+      const key = d ? String(d).substring(0, 7) : '';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(inv);
+    }
+    return Array.from(map.entries()).sort(([a], [b]) => (a || '9999') < (b || '9999') ? -1 : 1).map(([key, invoices]) => ({ key, invoices }));
+  };
+  const monthLabel = (key: string) => key
+    ? new Date(`${key}-01T00:00:00`).toLocaleDateString(locale, { month: 'long', year: 'numeric' })
+    : t('No date');
 
   const availablePaymentMethods = useMemo(() => {
     const methods = new Set<string>();
@@ -209,6 +233,18 @@ export default function PagosPage() {
               <option value="amount">{t('Highest amount')}</option>
             </select>
           </div>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-gray-800 font-medium">{t('Group invoices by:')}</span>
+            <select
+              className="bg-white border border-gray-300 text-sm text-gray-900 rounded-lg px-3 py-1.5 outline-none"
+              value={groupBy}
+              onChange={(e) => changeGroupBy(e.target.value as any)}
+            >
+              <option value="none">{t('No grouping')}</option>
+              <option value="posting">{t('Posting Date month')}</option>
+              <option value="due">{t('Due Date month')}</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -309,6 +345,7 @@ export default function PagosPage() {
                             <th className="pb-2 font-medium">{t('Currency')}</th>
                             <th className="pb-2 font-medium">{t('Orig. Amt.')}</th>
                             <th className="pb-2 font-medium">{t('Rem. Amt.')}</th>
+                            <th className="pb-2 font-medium">{t('Posting Date')}</th>
                             <th className="pb-2 font-medium">{t('Due Date')}</th>
                             <th className="pb-2 font-medium">{t('Scheduled Payment Date')}</th>
                             <th className="pb-2 font-medium">{t('Approval')}</th>
@@ -320,7 +357,19 @@ export default function PagosPage() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
-                          {group.invoices.map((inv: any) => {
+                          {monthBlocks(group.invoices).map(block => (
+                          <Fragment key={block.key || 'none'}>
+                          {groupBy !== 'none' && (
+                            <tr className="bg-indigo-50/70">
+                              <td colSpan={15} className="py-1.5 px-2 text-xs font-bold text-indigo-900">
+                                <span className="capitalize">{monthLabel(block.key)}</span>
+                                <span className="font-semibold text-indigo-700 ml-3">
+                                  {t('{n} documents', { n: block.invoices.length })} · €{block.invoices.reduce((a: number, i: any) => a + (i.amount || 0), 0).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                              </td>
+                            </tr>
+                          )}
+                          {block.invoices.map((inv: any) => {
                             const assignedList = inv.approvalUsers ? inv.approvalUsers.split('|').filter(Boolean) : [];
                             const approvedList = inv.approvedUsers ? inv.approvedUsers.split('|').filter(Boolean) : [];
                             const rejectedList = inv.rejectedUsers ? inv.rejectedUsers.split('|').filter(Boolean) : [];
@@ -343,6 +392,9 @@ export default function PagosPage() {
                                 <td className="py-2 text-gray-900 font-bold">€{(inv.originalAmount || 0).toLocaleString(locale)}</td>
                                 <td className="py-2 font-semibold">
                                   <span className={inv.amount > 0 ? "text-gray-900 font-bold" : inv.amount < 0 ? "text-gray-700 font-semibold font-bold" : "text-gray-900"}>€{inv.amount.toLocaleString(locale)}</span>
+                                </td>
+                                <td className="py-2 text-gray-700 font-semibold">
+                                  {inv.postingDate ? new Date(inv.postingDate).toLocaleDateString(locale) : <span className="text-slate-600">-</span>}
                                 </td>
                                 <td className="py-2 text-gray-700 font-semibold">
                                   <div className="flex items-center gap-2">
@@ -406,6 +458,8 @@ export default function PagosPage() {
                               </tr>
                             )
                           })}
+                          </Fragment>
+                          ))}
                         </tbody>
                       </table>
                     </div>
