@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getBcContext } from '@/lib/bcClient';
+import { bcFetchAll, getBcContext, odataUrl } from '@/lib/bcClient';
 import { DFORCE_COMPANY } from '@/lib/dforce';
 import { costingMethods, inventoryCheck, openEntries } from '@/lib/inventoryCheck';
 
@@ -15,6 +15,21 @@ export async function GET(req: Request) {
     const company = searchParams.get('company') || DFORCE_COMPANY;
     const only = (searchParams.get('items') || '').split(',').map(s => s.trim()).filter(Boolean);
     const ctx = await getBcContext(company);
+    // ?detail=<artículo>: todos sus movimientos de producto con el valor de sus Value Entries hasta la fecha
+    const detail = searchParams.get('detail');
+    if (detail) {
+      const [ile, ve] = await Promise.all([
+        bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Item_Ledger_Entries_Excel`, { $filter: `Item_No eq '${detail.replace(/'/g, "''")}' and Posting_Date le ${date}` }), ctx.token),
+        bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/ValueEntries`, { $filter: `Item_No eq '${detail.replace(/'/g, "''")}' and Posting_Date le ${date}` }), ctx.token),
+      ]);
+      const val: Record<string, number> = {}, n: Record<string, number> = {};
+      for (const v of ve) { val[v.Item_Ledger_Entry_No] = (val[v.Item_Ledger_Entry_No] || 0) + (Number(v.Cost_Amount_Actual) || 0) + (Number(v.Cost_Amount_Expected) || 0); n[v.Item_Ledger_Entry_No] = (n[v.Item_Ledger_Entry_No] || 0) + 1; }
+      return NextResponse.json({ entries: ile.map((e: any) => ({
+        entryNo: e.Entry_No, date: e.Posting_Date, type: e.Entry_Type, doc: e.Document_No, docType: e.Document_Type, location: e.Location_Code,
+        qty: e.Quantity, remaining: e.Remaining_Quantity, open: e.Open, value: Math.round((val[e.Entry_No] || 0) * 100) / 100, valueEntries: n[e.Entry_No] || 0,
+        appliesTo: e.Applies_to_Entry, description: e.Description,
+      })) });
+    }
     let items = await inventoryCheck(ctx, date, only);
     const total = { value: 0, target: 0 };
     for (const i of items) { total.value += i.value; total.target += i.target; }
