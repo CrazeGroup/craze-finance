@@ -110,6 +110,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
     ...(selectedCompany === 'CRAZE' ? [{ href: '/logistic-cost', label: 'Logistic Cost', module: 'logistic_cost' }, { href: '/customer-margin', label: 'Customer Margin', module: 'customer_margin' }] : []),
     { href: '/intercompany', label: 'Intercompany', module: 'intercompany' },
     { href: '/payment-proposal', label: 'Payment Proposal', module: 'payment_proposal' },
+    { href: '/china-payments', label: 'China Payments', module: 'china_payments' },
     { href: '/notas-compra', label: 'Purchase Notes', module: 'notas_compra' },
     { href: '/aduanas', label: 'Customs', module: 'aduanas' },
     { href: '/ocr', label: 'OCR', module: 'ocr' },

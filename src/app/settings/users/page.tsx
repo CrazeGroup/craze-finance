@@ -26,6 +26,7 @@ const MODULES = [
   { id: 'customer_margin', label: 'Customer Margin (CRAZE GmbH)' },
   { id: 'intercompany', label: 'Intercompany' },
   { id: 'payment_proposal', label: 'Payment Proposal' },
+  { id: 'china_payments', label: 'China Payments (CHINA TRF forecast)' },
   { id: 'notas_compra', label: 'Purchase Notes' },
   { id: 'aduanas', label: 'Customs' },
   { id: 'ocr', label: 'OCR' },

@@ -52,7 +52,7 @@ const es: Record<string, string> = {
   'Cash flow based on collections and manual entries.': 'Flujo de caja basado en cobros y entradas manuales.',
   'All lines': 'Todos',
   'By line': 'Por línea',
-  'China payments': 'Pagos China',
+  'China Payments (CHINA TRF forecast)': 'Pagos China (previsión CHINA TRF)',
   'Payment forecast to China vendors (CHINA TRF)': 'Previsión de pagos a proveedores de China (CHINA TRF)',
   'Open vendor entries with payment method CHINA TRF, grouped by Scheduled Payment Date (live from BC). Changing a date updates it in Vendor Ledger Entries.': 'Movimientos de proveedor abiertos con forma de pago CHINA TRF, agrupados por Scheduled Payment Date (en directo de BC). Cambiar una fecha la actualiza en Vendor Ledger Entries.',
   'Reload from BC': 'Recargar de BC',

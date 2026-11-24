@@ -26,6 +26,7 @@ const es: Record<string, string> = {
   'Collections': 'Recobros',
   'Open Entries': 'Mov. Abiertos',
   'Payments to Vendors': 'Pagos a Prov.',
+  'China Payments': 'Pagos China',
   'BANK': 'BANCO',
   'Month-End Close Tracking': 'Tracking Cierre Mensual',
   'Inventory (Closing)': 'Inventario (Cierre)',

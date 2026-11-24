@@ -3,7 +3,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Save, X, ChevronRight, ChevronDown, Download, Upload, Archive, Send, Calendar, Search, MailCheck, AlertTriangle, MessageSquare, PhoneCall } from 'lucide-react';
 import ReminderDialog from '@/components/ReminderDialog';
 import MailConnectNotice from '@/components/MailConnectNotice';
-import ChinaPaymentsView from './ChinaPaymentsView';
 import { lineKey, matchComments } from '@/components/InvoiceComments';
 import * as XLSX from 'xlsx';
 import { useCompany } from '@/contexts/CompanyContext';
@@ -41,8 +40,6 @@ export default function CashflowPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState('');
   // Vista: líneas (tabla normal) o resumen por semanas / meses con el saldo de cada periodo (localStorage)
-  // Pestaña "China": previsión de pagos CHINA TRF (en lugar de las cuentas)
-  const [showChina, setShowChina] = useState(false);
   const [periodView, setPeriodView] = useState<'none' | 'week' | 'month'>('none');
   const [openPeriods, setOpenPeriods] = useState<Record<string, boolean>>({});
   useEffect(() => {
@@ -926,9 +923,9 @@ export default function CashflowPage() {
             {availableCurrencies.map(curr => (
               <button
                 key={curr}
-                onClick={() => { setCurrentCurrency(curr); setShowChina(false); }}
+                onClick={() => setCurrentCurrency(curr)}
                 className={`px-6 py-2 rounded-lg font-bold transition-all border ${
-                  currentCurrency === curr && !showChina 
+                  currentCurrency === curr 
                     ? 'bg-black text-white border-black shadow-lg' 
                     : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
                 }`}
@@ -941,16 +938,8 @@ export default function CashflowPage() {
                 )}
               </button>
             ))}
-            <button
-              onClick={() => setShowChina(true)}
-              className={`px-6 py-2 rounded-lg font-bold transition-all border ${showChina ? 'bg-red-700 text-white border-red-700 shadow-lg' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}
-              title={t('Payment forecast to China vendors (CHINA TRF)')}
-            >
-              {t('China payments')}
-            </button>
           </div>
           
-          {!showChina && (
           <div className="flex flex-wrap items-center gap-3">
           <div className="flex flex-col items-end gap-1">
             <button onClick={() => setExcludeClaimed(!excludeClaimed)} className={`flex items-center gap-2 whitespace-nowrap px-4 py-2 rounded-lg border text-sm font-bold transition-all ${excludeClaimed ? 'bg-amber-500/20 text-amber-800 border-amber-500/50' : 'bg-white text-gray-900 border-gray-200 hover:bg-amber-500/10 hover:text-amber-800'}`} title={t('Include or exclude from the balance the receipts already claimed from the customer')}>
@@ -1001,10 +990,8 @@ export default function CashflowPage() {
             )}
           </div>
           </div>
-          )}
         </div>
 
-        {showChina ? <ChinaPaymentsView /> : (<>
         {minBalance && (consolidatedBelowMin || firstBelowMin) && (
           <div className="flex items-start gap-3 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
             <AlertTriangle size={18} className="mt-0.5 shrink-0" />
@@ -1341,7 +1328,6 @@ export default function CashflowPage() {
             </div>
           )}
         </div>
-        </>)}
 
         {/* Menú de reclamación (factura o línea ya reclamada) */}
         {claimMenu && (

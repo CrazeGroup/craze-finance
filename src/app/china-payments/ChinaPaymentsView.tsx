@@ -27,7 +27,7 @@ export default function ChinaPaymentsView() {
   const load = async () => {
     setLoading(true); setError('');
     try {
-      const res = await fetch('/api/cashflow/china', { cache: 'no-store' });
+      const res = await fetch('/api/china-payments', { cache: 'no-store' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setEntries(data.entries || []); setCompany(data.company || '');
@@ -73,7 +73,7 @@ export default function ChinaPaymentsView() {
     if (!confirm(msg)) return;
     setSaving(key);
     try {
-      const res = await fetch('/api/cashflow/china', {
+      const res = await fetch('/api/china-payments', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ entryNos: list.map(e => e.entryNo), date, docs: list.map(e => e.documentNo) }),
       });
