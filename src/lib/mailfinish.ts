@@ -235,10 +235,69 @@ export async function createAssemblyOrder(ctx: BcContext, o: OrderInput) {
     await bcRequest('POST', svc.lines, ctx.token, {
       Document_Type: head.Document_Type || 'Order', Document_No: no, Type: 'Item', No: o.input, Location_Code: o.inputLocation, Quantity_per: 1,
     });
+    // Comprobar que la orden ha quedado en BC como se pidió (cabecera + una línea con la revista), por el mismo servicio
+    const h = await bcRequest('GET', headUrl, ctx.token);
+    const ls = await bcRequest('GET', odataUrl(svc.lines, { $filter: `Document_No eq '${q(no)}'` }), ctx.token);
+    const problem = orderProblem({
+      no, state: h?.No ? 'open' : 'missing', item: h?.Item_No, location: h?.Location_Code, quantity: Number(h?.Quantity),
+      lines: (ls?.value || []).filter((l: any) => l.No).map((l: any) => ({ item: l.No, location: l.Location_Code, quantityPer: Number(l.Quantity_per) || 0, quantity: Number(l.Quantity) || 0 })),
+    }, o);
+    if (problem) throw new Error(problem);
   } catch (e) {
     // No dejar una orden a medias
     await bcRequest('DELETE', headUrl, ctx.token).catch(() => {});
     throw e;
   }
   return { id: String(head.SystemId || ''), no };
+}
+
+// Estado en BC de Assembly Orders creadas desde la app: abierta (con sus líneas), registrada o no encontrada
+export type OrderCheck = {
+  no: string; state: 'open' | 'posted' | 'missing';
+  item?: string; location?: string; quantity?: number; postingDate?: string;
+  lines?: { item: string; location: string; quantityPer: number; quantity: number }[];
+};
+export async function checkOrders(ctx: BcContext, nos: string[]): Promise<OrderCheck[]> {
+  const out: OrderCheck[] = [];
+  for (let i = 0; i < nos.length; i += 15) {
+    const part = nos.slice(i, i + 15);
+    const f = (field: string) => part.map(n => `${field} eq '${q(n)}'`).join(' or ');
+    const [open, openLines, posted] = await Promise.all([
+      bcFetchAll(odataUrl(`${ctx.apiBase}/assemblyOrders`, { $filter: f('number'), $select: 'number,itemNumber,locationCode,quantity,postingDate' }), ctx.token),
+      assemblyService(ctx).then(svc => bcFetchAll(odataUrl(svc.lines, { $filter: f('Document_No') }), ctx.token))
+        .then(rows => rows.map((l: any) => ({ documentNumber: l.Document_No, lineObjectNumber: l.No, locationCode: l.Location_Code, quantityPer: l.Quantity_per, quantity: l.Quantity }))),
+      // La registrada guarda el nº de la orden en Order No. (OData Posted_Assembly_Orders…); en v2 no siempre está publicado
+      bcFetchAll(odataUrl(`${ctx.apiBase}/postedAssemblyOrders`, { $filter: f('assemblyOrderNumber') }), ctx.token)
+        .catch(() => bcFetchAll(odataUrl(`${ctx.apiBase}/postedAssemblyOrders`, { $filter: f('orderNumber') }), ctx.token))
+        .catch(() => [] as any[]),
+    ]);
+    for (const no of part) {
+      const h = open.find((x: any) => x.number === no);
+      if (h) {
+        out.push({
+          no, state: 'open', item: h.itemNumber, location: h.locationCode, quantity: h.quantity, postingDate: h.postingDate,
+          lines: openLines.filter((l: any) => l.documentNumber === no && l.lineObjectNumber)
+            .map((l: any) => ({ item: l.lineObjectNumber, location: l.locationCode, quantityPer: Number(l.quantityPer) || 0, quantity: Number(l.quantity) || 0 })),
+        });
+        continue;
+      }
+      const p = posted.find((x: any) => x.assemblyOrderNumber === no || x.orderNumber === no);
+      out.push(p ? { no, state: 'posted', item: p.itemNumber, location: p.locationCode, quantity: p.quantity, postingDate: p.postingDate } : { no, state: 'missing' });
+    }
+  }
+  return out;
+}
+// Qué no cuadra entre la orden de BC y lo pedido ('' = está bien)
+export function orderProblem(c: OrderCheck | undefined, o: OrderInput) {
+  if (!c || c.state === 'missing') return 'The Assembly Order was not found in BC after creating it.';
+  if (c.state === 'posted') return '';
+  const issues: string[] = [];
+  if (c.item !== o.output) issues.push(`item ${c.item} instead of ${o.output}`);
+  if (c.location !== o.location) issues.push(`location ${c.location} instead of ${o.location}`);
+  if (Number(c.quantity) !== o.quantity) issues.push(`quantity ${c.quantity} instead of ${o.quantity}`);
+  const mag = (c.lines || []).filter(l => l.item === o.input);
+  if (!mag.length) issues.push(`no line with the magazine ${o.input}`);
+  else if (mag[0].location !== o.inputLocation) issues.push(`magazine line in ${mag[0].location} instead of ${o.inputLocation}`);
+  if ((c.lines || []).length > 1) issues.push(`${c.lines!.length} lines instead of 1`);
+  return issues.length ? `The Assembly Order was created in BC but does not match: ${issues.join(', ')}.` : '';
 }

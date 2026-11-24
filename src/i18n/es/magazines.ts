@@ -228,5 +228,18 @@ const es: Record<string, string> = {
   "PROFIT": "BENEFICIO",
   "% returned": "% devol.",
   "No D-FORCE sales or returns.": "Sin ventas ni devoluciones de D-FORCE.",
+  "Check in BC": "Comprobar en BC",
+  "Read the created orders again in BC and flag the ones that are missing or different": "Vuelve a leer en BC las órdenes creadas y marca las que no están o no coinciden",
+  "{no} is not in BC (deleted?)": "{no} no está en BC (¿borrada?)",
+  "item {got} instead of {want}": "artículo {got} en vez de {want}",
+  "location {got} instead of {want}": "location {got} en vez de {want}",
+  "quantity {got} instead of {want}": "cantidad {got} en vez de {want}",
+  "no line with the magazine {item}": "sin línea con la revista {item}",
+  "{n} of {total} orders are not in BC as created: see the BC column.": "{n} de {total} órdenes no están en BC como se crearon: mira la columna BC.",
+  "All {n} orders are in BC as created.": "Las {n} órdenes están en BC tal como se crearon.",
+  "posted": "registrada",
+  "checked": "comprobada",
+  "The Assembly Order was not found in BC after creating it.": "La Assembly Order no se encuentra en BC después de crearla.",
+  "The Assembly Order was created in BC but does not match: {issues}.": "La Assembly Order se ha creado en BC pero no coincide: {issues}.",
 };
 export default es;

@@ -17,7 +17,7 @@ type Result = {
   file: string; date: string; gadgets: { code: string; sku: string; good: number; damaged: number }[];
   suggestions: Suggestion[]; stock: Stock[]; open: OpenOrder[]; warnings: string[];
 };
-type Row = Suggestion & { include: boolean; status?: { saving?: boolean; no?: string; error?: string } };
+type Row = Suggestion & { include: boolean; status?: { saving?: boolean; no?: string; error?: string; verified?: 'open' | 'posted' } };
 
 const LOC_GOOD = 'MAILFINISH';
 const dmy = (d: string) => (d ? d.split('-').reverse().join('/') : '');
@@ -110,6 +110,47 @@ export default function MailfinishView() {
   const total = (loc: string) => rows.filter(r => r.location === loc).reduce((s, r) => s + r.quantity, 0);
   const shortRows = rows.filter(r => r.include && r.input && restOf(`${r.input}|${r.inputLocation}`) < 0);
   const created = rows.filter(r => r.status?.no).length;
+  const [checking, setChecking] = useState(false);
+  const [checkMsg, setCheckMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // Vuelve a leer en BC las órdenes creadas: las que no están (o no cuadran) se desbloquean con el error para crearlas de nuevo
+  const checkInBc = async () => {
+    const mine = rows.filter(r => r.status?.no);
+    if (!mine.length) return;
+    setChecking(true); setCheckMsg(null);
+    try {
+      const res = await fetch('/api/mailfinish/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nos: mine.map(r => r.status!.no) }) });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || `Error ${res.status}`);
+      const by = new Map<string, any>((json.orders || []).map((o: any) => [o.no, o]));
+      let bad = 0;
+      setRows(rs => rs.map(r => {
+        const c = r.status?.no ? by.get(r.status.no) : null;
+        if (!c) return r;
+        if (c.state === 'posted') return { ...r, status: { ...r.status, verified: 'posted' } };
+        const issues: string[] = [];
+        if (c.state === 'missing') issues.push(t('{no} is not in BC (deleted?)', { no: r.status!.no! }));
+        else {
+          if (c.item !== r.output) issues.push(t('item {got} instead of {want}', { got: c.item, want: r.output }));
+          if (c.location !== r.location) issues.push(t('location {got} instead of {want}', { got: c.location, want: r.location }));
+          if (Number(c.quantity) !== r.quantity) issues.push(t('quantity {got} instead of {want}', { got: c.quantity, want: r.quantity }));
+          if (!(c.lines || []).some((l: any) => l.item === r.input)) issues.push(t('no line with the magazine {item}', { item: r.input }));
+        }
+        if (!issues.length) return { ...r, status: { ...r.status, verified: 'open' } };
+        bad++;
+        // Sin la orden en BC: se puede volver a crear; si existe pero no cuadra, se queda bloqueada con el aviso
+        return c.state === 'missing'
+          ? { ...r, include: true, status: { error: issues.join('; ') } }
+          : { ...r, status: { ...r.status, error: issues.join('; ') } };
+      }));
+      setCheckMsg(bad ? { ok: false, text: t('{n} of {total} orders are not in BC as created: see the BC column.', { n: bad, total: mine.length }) }
+        : { ok: true, text: t('All {n} orders are in BC as created.', { n: mine.length }) });
+    } catch (e: any) {
+      setCheckMsg({ ok: false, text: e.message });
+    } finally {
+      setChecking(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -120,12 +161,20 @@ export default function MailfinishView() {
             {t('Gadgets recovered from magazines (Mailfinish report) → unposted Assembly Orders: I. Wahl in {good}, II. Wahl (damaged) in DESTR MAIL, with the magazine of the latest recoveries in stock on the file date', { good: LOC_GOOD })}
           </p>
         </div>
+        {created > 0 && (
+          <button onClick={checkInBc} disabled={checking || sending} title={t('Read the created orders again in BC and flag the ones that are missing or different')}
+            className="flex items-center gap-2 border border-gray-300 bg-white text-gray-800 text-sm font-semibold px-3 py-2 rounded-lg hover:bg-gray-50 disabled:opacity-40">
+            <RefreshCw size={16} className={checking ? 'animate-spin' : ''} /> {t('Check in BC')}
+          </button>
+        )}
         <button onClick={sendAll} disabled={!toSend.length || sending || !date}
           className="flex items-center gap-2 bg-indigo-600 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-40">
           <Send size={16} className={sending ? 'animate-pulse' : ''} /> {sending ? t('Creating in BC…') : t('Create {n} Assembly Orders in BC', { n: toSend.length })}
         </button>
       </div>
 
+      {checkMsg && <p className={`bg-white border rounded-xl p-3 text-sm flex items-center gap-2 ${checkMsg.ok ? 'border-green-200 text-green-700' : 'border-red-200 text-red-700'}`}>
+        {checkMsg.ok ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />} {tx(checkMsg.text)}</p>}
       <section className="bg-white rounded-xl border border-gray-200 p-4 flex flex-wrap items-end gap-4">
         <label className="text-xs text-gray-500 flex flex-col gap-1 cursor-pointer">
           {t('Mailfinish Excel')}
@@ -244,7 +293,8 @@ export default function MailfinishView() {
                           {cand?.lastOrder ? <>{cand.lastOrder} · {dmy(cand.lastDate)}</> : r.source === 'description' ? t('magazine from the description') : r.input ? t('chosen by hand') : '—'}
                         </td>
                         <td className={`${td} text-xs`}>
-                          {r.status?.no ? <span className="text-green-700 font-semibold flex items-center gap-1"><CheckCircle2 size={13} /> {r.status.no}</span>
+                          {r.status?.no && r.status.error ? <span className="text-red-700" title={tx(r.status.error)}><span className="font-semibold">{r.status.no}</span> · {tx(r.status.error).substring(0, 90)}</span>
+                            : r.status?.no ? <span className="text-green-700 font-semibold flex items-center gap-1"><CheckCircle2 size={13} /> {r.status.no}{r.status.verified && <span className="font-normal text-[10px] text-gray-500">{r.status.verified === 'posted' ? t('posted') : t('checked')}</span>}</span>
                             : r.status?.saving ? <span className="text-gray-500">{t('Creating…')}</span>
                             : r.status?.error ? <span className="text-red-700" title={tx(r.status.error)}>Error: {tx(r.status.error).substring(0, 80)}</span>
                             : open.length ? <span className="text-amber-700" title={open.map(o => t('{no}: {qty} units, {date}', { no: o.no, qty: o.quantity, date: dmy(o.postingDate) })).join('\n')}>{t('Already open: {orders}', { orders: open.map(o => o.no).join(', ') })}</span>
