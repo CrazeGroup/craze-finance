@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, RefreshCw, X, Calendar, Download } from 'lucide-react';
+import { ChevronDown, ChevronRight, RefreshCw, X, Calendar, Download, Plus } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useT } from '@/contexts/LanguageContext';
 import DocPdfLink, { purchasePdfKind } from '@/components/DocPdfLink';
@@ -64,13 +64,13 @@ export default function ChinaPaymentsView() {
     return Array.from(m.entries()).sort(([a], [b]) => (a === TBC ? -1 : b === TBC ? 1 : a < b ? -1 : 1));
   }, [entries]);
 
-  // Escribe la fecha en BC para esas facturas (null = vaciar → To be confirmed)
-  const setDate = async (list: Entry[], date: string | null, key: string) => {
+  // Escribe la fecha en BC para esas facturas (null = vaciar → To be confirmed); true si todas se cambiaron
+  const setDate = async (list: Entry[], date: string | null, key: string): Promise<boolean> => {
     const what = list.length === 1 ? (list[0].externalDocumentNo || list[0].documentNo) : t('{n} invoices', { n: list.length });
     const msg = date
       ? t('Set the Scheduled Payment Date of {what} to {date} in Business Central?', { what, date: fmtDate(date) })
       : t('Clear the Scheduled Payment Date of {what} in Business Central (To be confirmed)?', { what });
-    if (!confirm(msg)) return;
+    if (!confirm(msg)) return false;
     setSaving(key);
     try {
       const res = await fetch('/api/china-payments', {
@@ -83,9 +83,23 @@ export default function ChinaPaymentsView() {
       if (failed.length) alert(t('{n} could not be changed in BC:', { n: failed.length }) + '\n' + failed.map((r: any) => `${list.find(e => e.entryNo === r.entryNo)?.documentNo}: ${r.error}`).join('\n'));
       const okIds = new Set((data.results || []).filter((r: any) => r.ok).map((r: any) => r.entryNo));
       setEntries(prev => prev.map(e => okIds.has(e.entryNo) ? { ...e, scheduledDate: date } : e));
+      return failed.length === 0;
     } catch (e: any) {
       alert(t('Could not change the date: {error}', { error: e.message || e }));
+      return false;
     } finally { setSaving(null); }
+  };
+
+  // "Add payment": proveedor + fecha + facturas sin Scheduled Payment Date (To be confirmed) → un pago nuevo
+  const [adding, setAdding] = useState<{ vendorNo: string; date: string; selected: Record<number, boolean> } | null>(null);
+  const vendorList = useMemo(() => Array.from(new Map(entries.map(e => [e.vendorNo, e.vendorName])).entries())
+    .map(([vendorNo, name]) => ({ vendorNo, name })).sort((a, b) => a.name.localeCompare(b.name)), [entries]);
+  const addCandidates = adding ? entries.filter(e => e.vendorNo === adding.vendorNo && !e.scheduledDate).sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1)) : [];
+  const addSelected = addCandidates.filter(e => adding?.selected[e.entryNo]);
+  const addTotal = addSelected.reduce((s, e) => s + e.remainingAmtLCY, 0);
+  const submitPayment = async () => {
+    if (!adding?.date || !addSelected.length) return;
+    if (await setDate(addSelected, adding.date, 'add')) setAdding(null);
   };
 
   const exportExcel = () => {
@@ -150,6 +164,10 @@ export default function ChinaPaymentsView() {
           {t('Open vendor entries with payment method CHINA TRF, grouped by Scheduled Payment Date (live from BC). Changing a date updates it in Vendor Ledger Entries.')}
         </p>
         <div className="flex gap-2">
+          <button onClick={() => setAdding({ vendorNo: vendorList[0]?.vendorNo || '', date: '', selected: {} })} disabled={!vendorList.length}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 disabled:opacity-50">
+            <Plus size={14} /> {t('Add payment')}
+          </button>
           <button onClick={exportExcel} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-sm font-bold hover:bg-gray-50"><Download size={14} /> {t('Export Excel')}</button>
           <button onClick={load} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-sm font-bold hover:bg-gray-50"><RefreshCw size={14} /> {t('Reload from BC')}</button>
         </div>
@@ -242,6 +260,77 @@ export default function ChinaPaymentsView() {
           </table>
         </div>
       </div>
+      {/* Nuevo pago: facturas sin fecha del proveedor, total a medida que se marcan */}
+      {adding && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex justify-center items-center p-4" onClick={() => saving === null && setAdding(null)}>
+          <div className="bg-white border border-gray-200 rounded-2xl w-full max-w-4xl max-h-[90vh] shadow-2xl flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center p-5 border-b border-gray-200 bg-gray-50">
+              <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2"><Plus size={18} /> {t('Add payment')}</h3>
+              <button onClick={() => setAdding(null)} className="text-gray-900 hover:text-gray-600"><X size={20} /></button>
+            </div>
+            <div className="p-5 flex flex-wrap gap-4 items-end border-b border-gray-200">
+              <label className="text-sm font-bold text-gray-900">
+                {t('Vendor')}
+                <select value={adding.vendorNo} onChange={e => setAdding({ vendorNo: e.target.value, date: adding.date, selected: {} })}
+                  className="block mt-1 bg-white border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-normal">
+                  {vendorList.map(v => <option key={v.vendorNo} value={v.vendorNo}>{v.name}</option>)}
+                </select>
+              </label>
+              <label className="text-sm font-bold text-gray-900">
+                {t('Payment date')}
+                <input type="date" value={adding.date} onChange={e => setAdding({ ...adding, date: e.target.value })}
+                  className="block mt-1 bg-white border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-normal" />
+              </label>
+              <p className="text-xs text-gray-600 font-semibold pb-2">{t('Open invoices of the vendor without Scheduled Payment Date (To be confirmed).')}</p>
+            </div>
+            <div className="overflow-auto flex-1">
+              <table className="w-full text-left text-sm">
+                <thead className="sticky top-0 bg-gray-50 text-gray-700 font-semibold">
+                  <tr>
+                    <th className="p-3 w-10">
+                      <input type="checkbox" checked={addCandidates.length > 0 && addSelected.length === addCandidates.length}
+                        onChange={e => setAdding({ ...adding, selected: e.target.checked ? Object.fromEntries(addCandidates.map(c => [c.entryNo, true])) : {} })} />
+                    </th>
+                    <th className="p-3">{t('Vendor Invoice No.')}</th>
+                    <th className="p-3">{t('Document')}</th>
+                    <th className="p-3">{t('Posting Date')}</th>
+                    <th className="p-3">{t('Due Date')}</th>
+                    <th className="p-3 text-right">{t('Amount (EUR)')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {addCandidates.length === 0 && <tr><td colSpan={6} className="p-6 text-center text-gray-600">{t('This vendor has no open invoices without a payment date.')}</td></tr>}
+                  {addCandidates.map(e => (
+                    <tr key={e.entryNo} className={`cursor-pointer ${adding.selected[e.entryNo] ? 'bg-indigo-50' : 'hover:bg-gray-50'}`}
+                      onClick={() => setAdding({ ...adding, selected: { ...adding.selected, [e.entryNo]: !adding.selected[e.entryNo] } })}>
+                      <td className="p-3"><input type="checkbox" readOnly checked={!!adding.selected[e.entryNo]} /></td>
+                      <td className="p-3 font-semibold">{e.externalDocumentNo || '—'}</td>
+                      <td className="p-3">{e.documentNo}{e.documentType !== 'Invoice' && <span className="ml-1 text-xs text-gray-500">({e.documentType})</span>}</td>
+                      <td className="p-3">{e.postingDate ? fmtDate(e.postingDate) : '-'}</td>
+                      <td className={`p-3 ${e.dueDate && e.dueDate < today ? 'text-red-600 font-semibold' : ''}`}>{e.dueDate ? fmtDate(e.dueDate) : '-'}</td>
+                      <td className="p-3 text-right font-semibold">{eur(e.remainingAmtLCY)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="p-5 border-t border-gray-200 bg-gray-50 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-sm">
+                <span className="text-gray-700 font-semibold">{t('{n} of {total} invoices selected', { n: addSelected.length, total: addCandidates.length })}</span>
+                <span className="ml-3 text-lg font-black text-gray-900">{eur(addTotal)}</span>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setAdding(null)} className="px-4 py-2 rounded-lg border border-gray-200 bg-white text-sm font-bold">{t('Cancel')}</button>
+                <button onClick={submitPayment} disabled={!adding.date || !addSelected.length || saving !== null}
+                  title={!adding.date ? t('Choose the payment date') : !addSelected.length ? t('Select at least one invoice') : ''}
+                  className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 disabled:opacity-50">
+                  {saving === 'add' ? t('Saving…') : t('Schedule payment')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
