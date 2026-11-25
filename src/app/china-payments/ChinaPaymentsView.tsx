@@ -2,7 +2,8 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, RefreshCw, X, Calendar, Download, Plus } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { companyLabel } from '@/contexts/CompanyContext';
+import { exportChinaPayments } from './exportExcel';
 import { useT } from '@/contexts/LanguageContext';
 import DocPdfLink, { purchasePdfKind } from '@/components/DocPdfLink';
 
@@ -102,17 +103,12 @@ export default function ChinaPaymentsView() {
     if (await setDate(addSelected, adding.date, 'add')) setAdding(null);
   };
 
-  const exportExcel = () => {
-    const rows = vendors.flatMap(v => v.payments.flatMap(p => p.list.map(e => ({
-      [t('Vendor')]: `${e.vendorNo} ${e.vendorName}`,
-      [t('Payment date')]: p.date ? fmtDate(p.date) : t('To be confirmed'),
-      [t('Vendor Invoice No.')]: e.externalDocumentNo, [t('Document')]: e.documentNo, [t('Type')]: e.documentType,
-      [t('Posting Date')]: e.postingDate ? fmtDate(e.postingDate) : '', [t('Due Date')]: e.dueDate ? fmtDate(e.dueDate) : '',
-      [t('Currency')]: e.currencyCode || 'EUR', [t('Remaining')]: e.remainingAmount, [t('Remaining (EUR)')]: e.remainingAmtLCY,
-    }))));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'China payments');
-    XLSX.writeFile(wb, `China_payments_${company}_${today}.xlsx`.replace(/\s+/g, '_'));
+  const [exporting, setExporting] = useState(false);
+  const exportExcel = async () => {
+    setExporting(true);
+    try {
+      await exportChinaPayments({ vendors, byDate, grandTotal, company, companyLabel: companyLabel(company), today, t });
+    } catch (e: any) { alert(t('Could not create the Excel: {error}', { error: e.message || e })); } finally { setExporting(false); }
   };
 
   const dateLabel = (d: string) => d ? fmtDate(d) : t('To be confirmed');
@@ -168,7 +164,7 @@ export default function ChinaPaymentsView() {
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 disabled:opacity-50">
             <Plus size={14} /> {t('Add payment')}
           </button>
-          <button onClick={exportExcel} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-sm font-bold hover:bg-gray-50"><Download size={14} /> {t('Export Excel')}</button>
+          <button onClick={exportExcel} disabled={exporting} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-sm font-bold hover:bg-gray-50 disabled:opacity-50"><Download size={14} /> {exporting ? t('Exporting…') : t('Export Excel')}</button>
           <button onClick={load} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-sm font-bold hover:bg-gray-50"><RefreshCw size={14} /> {t('Reload from BC')}</button>
         </div>
       </div>

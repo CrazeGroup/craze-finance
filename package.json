@@ -20,6 +20,7 @@
     "bcryptjs": "^3.0.3",
     "chart.js": "^4.5.1",
     "date-fns": "^4.4.0",
+    "exceljs": "^4.4.0",
     "html2pdf.js": "^0.14.0",
     "jose": "^6.2.5",
     "lucide-react": "^1.27.0",
