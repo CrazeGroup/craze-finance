@@ -17,7 +17,7 @@ export async function buildChinaPaymentsXlsx(opts: {
   vendors: Vendor[]; byDate: [string, number][]; grandTotal: number; company: string; companyLabel: string; today: string;
   t: (s: string, p?: Record<string, any>) => string;
 }) {
-  const { vendors, byDate, grandTotal, company, companyLabel, today, t } = opts;
+  const { vendors, byDate, grandTotal, today, t } = opts;
   const ExcelJS = (await import('exceljs')).default;
   const wb = new ExcelJS.Workbook();
   const tbc = t('To be confirmed');
@@ -31,8 +31,8 @@ export async function buildChinaPaymentsXlsx(opts: {
   });
   ws.columns = [{ width: 44 }, { width: 18 }, { width: 14 }, { width: 14 }, { width: 10 }, { width: 18 }, { width: 18 }];
 
-  ws.addRow([t('China Payments') + ` – ${companyLabel}`]).font = { bold: true, size: 14 };
-  ws.addRow([t('Payment forecast to China vendors (CHINA TRF)') + ` · ${new Date(`${today}T00:00:00`).toLocaleDateString('en-GB')}`]).font = { italic: true, color: { argb: 'FF6B7280' } };
+  ws.addRow([t('Schedule of Payments')]).font = { bold: true, size: 14 };
+  ws.addRow([t('Payment forecast') + ` ${new Date(`${today}T00:00:00`).toLocaleDateString('en-GB')}`]).font = { italic: true, color: { argb: 'FF6B7280' } };
   ws.addRow([]);
 
   // Pagos programados (todas las proveedores), como las tarjetas de la página

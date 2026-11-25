@@ -67,6 +67,8 @@ const es: Record<string, string> = {
   'Open vendor entries with payment method CHINA TRF, grouped by Scheduled Payment Date (live from BC). Changing a date updates it in Vendor Ledger Entries.': 'Movimientos de proveedor abiertos con forma de pago CHINA TRF, agrupados por Scheduled Payment Date (en directo de BC). Cambiar una fecha la actualiza en Vendor Ledger Entries.',
   'Reload from BC': 'Recargar de BC',
   'Scheduled payments': 'Pagos programados',
+  'Schedule of Payments': 'Calendario de pagos',
+  'Payment forecast': 'Previsión de pagos',
   'Exporting…': 'Exportando…',
   'Could not create the Excel: {error}': 'No se pudo crear el Excel: {error}',
   'Grand total': 'Total general',
