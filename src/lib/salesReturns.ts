@@ -44,7 +44,7 @@ async function bcComments(ctx: BcContext): Promise<Map<string, SroComment[]>> {
   const entity = await readSetting('purchaseNotesEntity', 'recordLinks');
   let rows: any[];
   try {
-    rows = await bcFetchAll(odataUrl(`${ctx.customApiBase}/${entity}`, {}), ctx.token);
+    rows = await bcFetchAll(odataUrl(`${ctx.customApiBase}/${entity}`, { $filter: "tableNo eq 36" }), ctx.token);
   } catch (e: any) {
     if (/404|not found|ResourceNotFound|No HTTP resource/i.test(e.message || '')) {
       throw new Error(`BC does not publish the Notes (Record Links) yet: they must be published in the custom API as "${entity}".`);
