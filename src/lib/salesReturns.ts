@@ -39,12 +39,12 @@ async function headers(ctx: BcContext): Promise<Omit<SalesReturn, 'company' | 'c
 
 // Notes de BC de las Return Orders (FactBox "Notes" = Record Links de tipo Note, tabla 2000000068, texto en un BLOB):
 // la misma entidad de la API custom que Notas de compra (recordLinks, setting purchaseNotesEntity). Record ID
-// "Sales Header: Return Order,CRZ-RO26-00026". Map no → notas. Lanza un error legible si BC no la publica.
+// "Sales Header: Return Order,CRZ-RO26-00026" (tableNo no es filtrable; recordId sí, por rango). Map no → notas. Lanza un error legible si BC no la publica.
 async function bcComments(ctx: BcContext): Promise<Map<string, SroComment[]>> {
   const entity = await readSetting('purchaseNotesEntity', 'recordLinks');
   let rows: any[];
   try {
-    rows = await bcFetchAll(odataUrl(`${ctx.customApiBase}/${entity}`, { $filter: "tableNo eq 36" }), ctx.token);
+    rows = await bcFetchAll(odataUrl(`${ctx.customApiBase}/${entity}`, { $filter: "recordId ge 'Sales Header: Return Order,' and recordId le 'Sales Header: Return Order,ZZZZZZZZZZZZZZZZZZZZ'" }), ctx.token);
   } catch (e: any) {
     if (/404|not found|ResourceNotFound|No HTTP resource/i.test(e.message || '')) {
       throw new Error(`BC does not publish the Notes (Record Links) yet: they must be published in the custom API as "${entity}".`);

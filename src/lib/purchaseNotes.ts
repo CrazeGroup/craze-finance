@@ -43,7 +43,11 @@ async function fetchNotes(ctx: BcContext): Promise<PurchaseNote[]> {
   const entity = await readSetting('purchaseNotesEntity', 'recordLinks');
   let rows: any[];
   try {
-    rows = await bcFetchAll(odataUrl(`${ctx.customApiBase}/${entity}`, { $filter: "tableNo eq 38 or tableNo eq 122 or tableNo eq 124" }), ctx.token);
+    // tableNo no es filtrable en BC; recordId sí, por rango (una consulta por tipo de documento)
+    const ranges = ['Purchase Header: Invoice,', 'Purchase Header: Credit Memo,', 'Purch. Inv. Header: ', 'Purch. Cr. Memo Hdr.: '];
+    rows = (await Promise.all(ranges.map(r => bcFetchAll(odataUrl(`${ctx.customApiBase}/${entity}`, {
+      $filter: `recordId ge '${r}' and recordId le '${r}ZZZZZZZZZZZZZZZZZZZZ'`,
+    }), ctx.token)))).flat();
   } catch (e: any) {
     if (/404|not found|BadRequest_ResourceNotFound|No HTTP resource/i.test(e.message || '')) {
       throw new NotesNotPublished(`The BC custom API does not publish the entity "${entity}" (Record Links / Notes).`);
