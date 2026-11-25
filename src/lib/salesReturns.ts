@@ -1,6 +1,7 @@
 import prisma from '@/lib/prisma';
 import { bcFetchAll, getBcContext, odataUrl, BcContext } from '@/lib/bcClient';
 import { readSetting } from '@/lib/reporting/cache';
+import { sroReminderLog } from '@/lib/sroReminders';
 
 // Sales Return Orders (SRO): todas las abiertas de BC (API custom salesHeaders, documentType Return Order) con
 // Assigned User ID, Campaign No. y XML Status (campo AIT), más sus comentarios:
@@ -14,6 +15,7 @@ export type SalesReturn = {
   documentDate: string; postingDate: string; orderDate: string; status: string;
   assignedUserId: string; campaignNo: string; salespersonCode: string; typeOfReturn: string; xmlStatus: string;
   amount: number; amountInclVat: number; currency: string; comments: SroComment[];
+  lastReminder?: { at: string; by: string; user: string } | null;
 };
 
 const s = (v: any) => (v == null ? '' : String(v).trim());
@@ -69,10 +71,11 @@ async function bcComments(ctx: BcContext): Promise<Map<string, SroComment[]>> {
 
 export async function salesReturns(company: string): Promise<{ rows: SalesReturn[]; commentsError: string | null }> {
   const ctx = await getBcContext(company);
-  const [heads, bc, app] = await Promise.all([
+  const [heads, bc, app, log] = await Promise.all([
     headers(ctx),
     bcComments(ctx).then(m => ({ m, error: null as string | null })).catch((e: any) => ({ m: new Map<string, SroComment[]>(), error: String(e.message || e) })),
     prisma.cashflowComment.findMany({ where: { companyId: company, targetKey: { startsWith: 'sro:' } }, orderBy: { createdAt: 'asc' } }),
+    sroReminderLog(company).catch(() => ({ users: {}, sros: {} } as Awaited<ReturnType<typeof sroReminderLog>>)),
   ]);
   const appBy = new Map<string, SroComment[]>();
   for (const c of app) {
@@ -80,7 +83,7 @@ export async function salesReturns(company: string): Promise<{ rows: SalesReturn
     appBy.set(no, [...(appBy.get(no) || []), { source: 'app', id: c.id, date: c.createdAt.toISOString(), text: c.text, author: c.author || '' }]);
   }
   const rows = heads.map(h => ({
-    ...h, company,
+    ...h, company, lastReminder: log.sros?.[h.no] || null,
     comments: [...(bc.m.get(h.no) || []), ...(appBy.get(h.no) || [])].sort((a, b) => a.date.localeCompare(b.date)),
   }));
   return { rows, commentsError: bc.error };

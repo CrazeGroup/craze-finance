@@ -2,7 +2,8 @@
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { RefreshCw, Search, Download, MessageSquare, ChevronRight, ChevronDown, ArrowUp, ArrowDown, ArrowUpDown, Trash2, AlertTriangle } from 'lucide-react';
+import { RefreshCw, Search, Download, MessageSquare, ChevronRight, ChevronDown, ArrowUp, ArrowDown, ArrowUpDown, Trash2, AlertTriangle, Mail } from 'lucide-react';
+import SroReminderDialog from './SroReminderDialog';
 import { useCompany, companyLabel } from '@/contexts/CompanyContext';
 import { useT } from '@/contexts/LanguageContext';
 
@@ -12,6 +13,7 @@ type Sro = {
   documentDate: string; postingDate: string; orderDate: string; status: string;
   assignedUserId: string; campaignNo: string; salespersonCode: string; typeOfReturn: string; xmlStatus: string;
   amount: number; amountInclVat: number; currency: string; comments: Comment[];
+  lastReminder?: { at: string; by: string; user: string } | null;
 };
 type GroupBy = 'none' | 'customer' | 'user' | 'campaign';
 type Since = 'any' | 'today' | 'yesterday' | 'week' | 'month';
@@ -48,6 +50,7 @@ export default function SalesReturnsPage() {
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'lastComment', dir: -1 });
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [draft, setDraft] = useState<Record<string, string>>({});
+  const [remind, setRemind] = useState<{ user?: string } | null>(null);
   const all = selectedCompany === 'ALL';
 
   useEffect(() => {
@@ -145,6 +148,7 @@ export default function SalesReturnsPage() {
       'Document Date': r.documentDate, 'Posting Date': r.postingDate, Status: r.status, 'Assigned User ID': r.assignedUserId,
       'Campaign No.': r.campaignNo, 'Type of Return': r.typeOfReturn, 'XML Status': r.xmlStatus, Amount: r.amount, Currency: r.currency,
       Comments: r.comments.length, 'Last comment': lastDay(r), 'Comment dates': commentDays(r).join(', '),
+      'Last reminder': r.lastReminder ? iso(new Date(r.lastReminder.at)) : '',
       'Comment texts': r.comments.map(c => `${dayOf(c)} ${c.author ? c.author + ': ' : ''}${c.text}`).join('\n'),
     }));
     const wb = XLSX.utils.book_new();
@@ -199,6 +203,9 @@ export default function SalesReturnsPage() {
           </select>
         </label>
         <div className="flex-1" />
+        <button onClick={() => setRemind({})} disabled={!rows.some(r => r.assignedUserId)} className="flex items-center gap-1.5 px-3 py-2 text-sm font-bold rounded-lg border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-50">
+          <Mail size={14} /> {t('Remind assigned users')}
+        </button>
         <button onClick={exportExcel} disabled={!visible.length} className="flex items-center gap-1.5 px-3 py-2 text-sm font-bold rounded-lg border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-50">
           <Download size={14} /> {t('Export Excel')}
         </button>
@@ -246,7 +253,13 @@ export default function SalesReturnsPage() {
                 <Fragment key={g.label || '_'}>
                   {groupBy !== 'none' && (
                     <tr className="bg-teal-50 border-t border-teal-200">
-                      <td colSpan={cols - 3} className="px-3 py-2 font-black text-teal-900">{g.label || t('(blank)')} <span className="font-semibold text-teal-700">· {t('{n} return orders', { n: g.rows.length })}</span></td>
+                      <td colSpan={cols - 3} className="px-3 py-2 font-black text-teal-900">{g.label || t('(blank)')} <span className="font-semibold text-teal-700">· {t('{n} return orders', { n: g.rows.length })}</span>
+                        {groupBy === 'user' && g.label && (
+                          <button onClick={() => setRemind({ user: g.label })} className="ml-3 inline-flex items-center gap-1 px-2 py-0.5 rounded border border-teal-300 bg-white text-xs font-bold text-teal-800 hover:bg-teal-100">
+                            <Mail size={12} /> {t('Remind')}
+                          </button>
+                        )}
+                      </td>
                       <td className="px-3 py-2 text-right font-black text-teal-900 whitespace-nowrap">{money(g.rows.reduce((s, r) => s + r.amount, 0))}</td>
                       <td className="px-3 py-2 text-right font-bold text-teal-900">{g.rows.reduce((s, r) => s + r.comments.length, 0) || ''}</td>
                       <td />
@@ -267,7 +280,9 @@ export default function SalesReturnsPage() {
                           <td className="px-3 py-2 whitespace-nowrap">{r.externalDocumentNo}</td>
                           <td className="px-3 py-2 whitespace-nowrap">{fmtDay(r.documentDate)}</td>
                           <td className="px-3 py-2"><span className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${r.status === 'Released' ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-700'}`}>{r.status}</span></td>
-                          <td className="px-3 py-2 whitespace-nowrap">{r.assignedUserId}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{r.assignedUserId}
+                            {r.lastReminder && <div className="text-[10px] font-semibold text-amber-700 flex items-center gap-1" title={`${r.lastReminder.user} · ${r.lastReminder.by}`}><Mail size={10} /> {t('reminded {date}', { date: fmtDay(iso(new Date(r.lastReminder.at))) })}</div>}
+                          </td>
                           <td className="px-3 py-2 whitespace-nowrap">{r.campaignNo}</td>
                           <td className="px-3 py-2 whitespace-nowrap">{r.typeOfReturn}</td>
                           <td className="px-3 py-2 whitespace-nowrap">{r.xmlStatus && <span className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${r.xmlStatus === 'Received' ? 'bg-emerald-100 text-emerald-800' : 'bg-sky-100 text-sky-800'}`}>{r.xmlStatus}</span>}</td>
@@ -320,6 +335,13 @@ export default function SalesReturnsPage() {
           </table>
         </div>
       </div>
+      {remind && (
+        <SroReminderDialog rows={rows} presetUser={remind.user} onClose={() => setRemind(null)}
+          onSent={(user, list, at) => {
+            const sent = new Set(list.map(x => `${x.company}|${x.no}`));
+            setRows(prev => prev.map(r => (sent.has(key(r)) ? { ...r, lastReminder: { at, by: '', user } } : r)));
+          }} />
+      )}
     </div>
   );
 }
