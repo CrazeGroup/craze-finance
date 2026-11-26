@@ -158,6 +158,7 @@ const es: Record<string, string> = {
   'Same as the {date} posting, same amount': 'Como el {date}, mismo importe',
   'Same as the {date} posting: check the split between the lines': 'Como el {date}: revisa el reparto entre las líneas',
   'Same as the {date} posting "{desc}"': 'Como "{desc}" el {date}',
+  'Payment run of {n} payments, 25,000–30,000 € at month end: German payroll, as the {date} posting "{desc}"': 'Payment run de {n} pagos, 25.000–30.000 € a final de mes: nóminas de Alemania, como "{desc}" el {date}',
   'Same as the {date} posting (corrected to {via}) "{desc}"': 'Como "{desc}" el {date} (corregido a {via})',
   'Invoice': 'Factura',
   'History': 'Histórico',

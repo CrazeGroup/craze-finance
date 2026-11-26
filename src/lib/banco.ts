@@ -512,6 +512,9 @@ function pickRule(m: Movement, rules: Rule[] | undefined) {
 // nombre (Sabadell) y para movimientos de otros extractos.
 type Booking = { date: string; amount: number; description: string; balType: AccountType; balNo: string; via?: string };
 
+// Payment run de nóminas de Alemania: importe y desde qué día del mes (ver sugerencias)
+const PAYROLL_RUN = { min: 25000, max: 30000, fromDay: 20 };
+
 // Palabras que no distinguen un movimiento
 const GENERIC = new Set(['compra', 'compras', 'tarj', 'tarjeta', 'card', 'transferencia', 'transf', 'trf', 'recibo', 'pago', 'pagos', 'cargo',
   'abono', 'adeudo', 'sepa', 'devolucion', 'anul', 'anulacion', 'payment', 'paypal', 'sumup', 'visa', 'mastercard', 'xxxx', 'xxxxxxxx',
@@ -794,13 +797,16 @@ export function suggest(
       continue;
     }
 
-    // Sammelüberweisung del online banking con varios pagos ("DATUM 23.11.2026, 18.01 UHR ANZAHL 11"): las nóminas,
-    // registradas cada mes en la cuenta de sueldos ("Verbind. Lohn u. Gehalt" 3720 00); el texto no dice nada más
+    // Payment run del online banking ("DATUM 23.11.2026, 18.01 UHR ANZAHL 11"): el texto no dice a quién se paga. Las
+    // nóminas de Alemania son el payment run de 25.000–30.000 € desde el día 20 del mes; los de proveedores suelen ser
+    // mayores. Van a la cuenta de las nóminas anteriores ("Verbind. Lohn u. Gehalt" 3720 00)
     const batch = m.amount < 0 && Number(m.purpose.match(/\bDATUM\b.*\bUHR\b.*\bANZAHL\s+(\d+)/i)?.[1] || 0);
-    const payroll = batch && batch >= 2 ? books.filter(b => b.amount < 0 && b.balType === 'G/L Account' && /lohn|gehalt|n[oó]mina|salar|payroll/i.test(b.description))
+    const payrollRun = !!batch && batch >= 2 && -m.amount >= PAYROLL_RUN.min && -m.amount <= PAYROLL_RUN.max
+      && Number(m.date.slice(8, 10)) >= PAYROLL_RUN.fromDay;
+    const payroll = payrollRun ? books.filter(b => b.amount < 0 && b.balType === 'G/L Account' && /lohn|gehalt|n[oó]mina|salar|payroll/i.test(b.description))
       .sort((a, b) => b.date.localeCompare(a.date))[0] : null;
     if (payroll) {
-      const when = `Batch transfer of ${batch} payments: payroll, as the ${payroll.date.split('-').reverse().join('.')} posting "${payroll.description.substring(0, 40)}"`;
+      const when = `Payment run of ${batch} payments, 25,000–30,000 € at month end: German payroll, as the ${payroll.date.split('-').reverse().join('.')} posting "${payroll.description.substring(0, 40)}"`;
       out.set(m.idx, { documentNo, source: 'History', note: when, lines: [line(payroll.balType, payroll.balNo, documentNo || payroll.description)] });
       continue;
     }
