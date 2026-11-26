@@ -355,11 +355,13 @@ const token = (v: string) => new RegExp(`(?<![A-Za-z\\d])${v.replace(/[.*+?^${}(
 export function guessHeader(t: string) {
   const invoiceNo = (t.match(/(?:Invoice|Rechnungs?|Debit Note|Credit Note|Gutschrift|Factura|Facture|Beleg)[ -]?(?:Number|No\.?|Nr\.?|nummer|n[º°o]\.?)\s*:?\s*([A-Z0-9][A-Z0-9\-\/.]{3,})/i)
     // Notas de débito de Amazon: "Numéro Note de Débit:", "Número de Nota de Débito:", "Numero Nota di Debito:"
-    || t.match(/N[uú]m[eé]ro (?:de (?:la )?)?Not[ae] (?:de |di )D[eéè]bit[oa]?\s*:?\s*([A-Z0-9][A-Z0-9\-\/.]{3,})/i))?.[1]?.replace(/\.$/, '') || '';
+    || t.match(/N[uú]m[eé]ro (?:de (?:la )?)?Not[ae] (?:de |di )D[eéè]bit[oa]?\s*:?\s*([A-Z0-9][A-Z0-9\-\/.]{3,})/i)
+    // Italiano: "Numero Fattura: 2222652428" (Amazon EU SARL, Succursale Italiana), "Fattura n. 123"
+    || t.match(/(?:Numero (?:della )?Fattura|N\. ?Fattura|Fattura (?:n\.?|nr\.?|numero))\s*:?\s*([A-Z0-9][A-Z0-9\-\/.]{3,})/i))?.[1]?.replace(/\.$/, '') || '';
   let invoiceDate = '';
   // Las etiquetas concretas, en todas sus apariciones (la primera puede ser texto: "der Monat des Rechnungsdatums");
   // la genérica, solo la primera
-  const specific = /(?:Invoice Date|Debit Note Date|Rechnungsdatum|Belegdatum|Fecha(?: de)? (?:la )?factura|Date de (?:la )?facture|Date (?:de la )?Note de D[ée]bit|Fecha (?:de (?:la )?)?Nota de D[ée]bito|Data (?:della )?Nota di Debito)(?![A-Za-zäöü])\s*[:;]?\s*/gi;
+  const specific = /(?:Invoice Date|Debit Note Date|Rechnungsdatum|Belegdatum|Fecha(?: de)? (?:la )?factura|Date de (?:la )?facture|Date (?:de la )?Note de D[ée]bit|Fecha (?:de (?:la )?)?Nota de D[ée]bito|Data (?:della )?Nota di Debito|Data (?:della )?fattura)(?![A-Za-zäöü])\s*[:;]?\s*/gi;
   for (const m of [...t.matchAll(specific), ...[t.match(/(?:Datum|Date|Fecha)\s*:?\s*/i)].filter(x => x)]) {
     const end = m!.index! + m![0].length;
     invoiceDate = columnDate(t, m!.index!, end) || dates(t.slice(end, end + 25))[0]?.iso || '';

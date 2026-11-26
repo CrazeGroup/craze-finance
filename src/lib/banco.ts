@@ -516,7 +516,9 @@ type Booking = { date: string; amount: number; description: string; balType: Acc
 const GENERIC = new Set(['compra', 'compras', 'tarj', 'tarjeta', 'card', 'transferencia', 'transf', 'trf', 'recibo', 'pago', 'pagos', 'cargo',
   'abono', 'adeudo', 'sepa', 'devolucion', 'anul', 'anulacion', 'payment', 'paypal', 'sumup', 'visa', 'mastercard', 'xxxx', 'xxxxxxxx',
   'aktiengesellschaft', 'company', 'unlimited', 'spain', 'espana', 'services', 'servicios', 'international', 'group', 'holding', 'gutschrift',
-  'lastschrift', 'ueberweisung', 'uberweisung', 'folgelastschrift', 'erstlastschrift', 'kartenzahlung', 'girocard', 'sabadell', 'santander']);
+  'lastschrift', 'ueberweisung', 'uberweisung', 'folgelastschrift', 'erstlastschrift', 'kartenzahlung', 'girocard', 'sabadell', 'santander',
+  // Sammelüberweisung del online banking ("DATUM 23.11.2026, 18.01 UHR ANZAHL 11"): no dice a quién se paga
+  'datum', 'uhr', 'anzahl', 'conto', 'online', 'term']);
 const words = (s: string, own: Set<string>) => new Set(normName(s).split(' ').filter(w => w.length >= 3 && !/\d/.test(w) && !GENERIC.has(w) && !own.has(w)));
 
 // Correcciones: un movimiento anulado (Reversed, o a mano con el mismo importe en positivo y en negativo contra la
@@ -585,6 +587,11 @@ function fromHistory(m: Movement, books: Booking[], own: Set<string>) {
   // La misma referencia que un movimiento anterior ("501010093839/Gewerbesteuer"): el más reciente del mismo signo
   const refs = refNumbers(m.purpose);
   if (refs.size) {
+    // Una referencia registrada en cuentas distintas no identifica a nadie: el nº de la tarjeta en "COMPRA TARJ.
+    // 5540XXXXXXXX6011 … 5540015047866011" sale en todas las compras con esa tarjeta (Sabadell)
+    const accounts = new Map<string, Set<string>>();
+    for (const b of books) for (const r of refNumbers(b.description)) if (refs.has(r)) accounts.set(r, (accounts.get(r) || new Set()).add(`${b.balType}|${b.balNo}`));
+    for (const [r, a] of accounts) if (a.size > 1) refs.delete(r);
     const hits = books.filter(b => [...refNumbers(b.description)].some(r => refs.has(r)) && Math.sign(b.amount) === Math.sign(m.amount))
       .sort((a, b) => b.date.localeCompare(a.date));
     if (hits.length) {
@@ -784,6 +791,17 @@ export function suggest(
       const single = line(rule.accountType, rule.accountNo, description);
       const applied = withApply(single);
       out.set(m.idx, { documentNo, source: 'History', note: [when, applied.note].filter(Boolean).join(' · '), lines: applied.lines });
+      continue;
+    }
+
+    // Sammelüberweisung del online banking con varios pagos ("DATUM 23.11.2026, 18.01 UHR ANZAHL 11"): las nóminas,
+    // registradas cada mes en la cuenta de sueldos ("Verbind. Lohn u. Gehalt" 3720 00); el texto no dice nada más
+    const batch = m.amount < 0 && Number(m.purpose.match(/\bDATUM\b.*\bUHR\b.*\bANZAHL\s+(\d+)/i)?.[1] || 0);
+    const payroll = batch && batch >= 2 ? books.filter(b => b.amount < 0 && b.balType === 'G/L Account' && /lohn|gehalt|n[oó]mina|salar|payroll/i.test(b.description))
+      .sort((a, b) => b.date.localeCompare(a.date))[0] : null;
+    if (payroll) {
+      const when = `Batch transfer of ${batch} payments: payroll, as the ${payroll.date.split('-').reverse().join('.')} posting "${payroll.description.substring(0, 40)}"`;
+      out.set(m.idx, { documentNo, source: 'History', note: when, lines: [line(payroll.balType, payroll.balNo, documentNo || payroll.description)] });
       continue;
     }
 
