@@ -47,6 +47,7 @@ const es: Record<string, string> = {
   'Item {no} has no GTIN in BC': 'El artículo {no} no tiene GTIN en BC',
   'Component {no} of {parent} has no GTIN in BC': 'El componente {no} de {parent} no tiene GTIN en BC',
   'The invoice has lines with different VAT rates; only one rate is supported': 'La factura tiene líneas con distintos tipos de IVA; solo se admite uno',
+  'Rounding difference of {amount} absorbed by the first discount ({code} {pct} %) so the totals match BC': 'Diferencia de redondeo de {amount} absorbida por el primer descuento ({code} {pct} %) para que los totales cuadren con BC',
   'Missing invoice or confirmation': 'Falta la factura o la confirmación',
 };
 export default es;

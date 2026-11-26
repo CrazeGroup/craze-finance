@@ -158,10 +158,17 @@ export async function buildEdekaInvoice(company: string, no: string, opts: { tes
   for (const d of discounts.filter(d => d.base === 'gross')) d.amount = r2(linesTotal * d.pct / 100);
   rest = r2(linesTotal - discounts.filter(d => d.base === 'gross').reduce((s, d) => s + d.amount, 0));
   for (const d of discounts.filter(d => d.base === 'rest')) { d.amount = r2(rest * d.pct / 100); rest = r2(rest - d.amount); }
-  const discTotal = r2(discounts.reduce((s, d) => s + d.amount, 0));
-  const base = r2(linesTotal - discTotal), vat = r2(base * vatPct / 100), total = r2(base + vat);
   const bc = { base: Number(h.totalAmountExcludingTax) || 0, vat: Number(h.totalTaxAmount) || 0, total: Number(h.totalAmountIncludingTax) || 0 };
-  if (Math.abs(total - bc.total) > 0.005) warnings.push(`Total ${total.toFixed(2)} differs from BC (${bc.total.toFixed(2)}) by ${(total - bc.total).toFixed(2)}: the gross prices are recalculated from BC's net prices`);
+  // Diferencia de redondeo con BC (≤ 0,05): la absorbe el primer descuento, como en las facturas tecleadas a mano
+  // (CRZ-SI26-03948: DI 2 % = 137,01 y no 137,02, para que la base sea la de BC); así base, IVA y total = BC.
+  const rounding = r2(linesTotal - discounts.reduce((s, d) => s + d.amount, 0) - bc.base);
+  if (rounding && Math.abs(rounding) <= 0.05 && discounts[0]) discounts[0].amount = r2(discounts[0].amount + rounding);
+  const discTotal = r2(discounts.reduce((s, d) => s + d.amount, 0));
+  const base = r2(linesTotal - discTotal);
+  const matchesBc = Math.abs(base - bc.base) < 0.005;
+  const vat = matchesBc ? bc.vat : r2(base * vatPct / 100), total = r2(base + vat);
+  if (!matchesBc) warnings.push(`Total ${total.toFixed(2)} differs from BC (${bc.total.toFixed(2)}) by ${(total - bc.total).toFixed(2)}: check the gross prices and the discount chain`);
+  else if (rounding) warnings.push(`Rounding difference of ${rounding.toFixed(2)} absorbed by the first discount (${discounts[0].code} ${discounts[0].pct} %) so the totals match BC`);
 
   const header: Record<string, string> = {
     InvoiceNumber: h.number, InvoiceDate: ymd(h.invoiceDate), OrderNumberBuyer: h.externalDocumentNumber || '',
