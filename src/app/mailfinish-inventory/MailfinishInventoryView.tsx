@@ -69,7 +69,7 @@ export default function MailfinishInventoryView() {
     return Array.from(m.values())
       .filter(x => (!onlyDiff || Object.values(x.byMonth).some(v => Math.abs(v.mf - v.bc) >= 0.5))
         && (!s || `${x.label} ${x.codes.join(' ')} ${x.description}`.toLowerCase().includes(s)))
-      .sort((a, b) => (a.label || '~' + a.codes[0]).localeCompare(b.label || '~' + b.codes[0]));
+      .sort((a, b) => Number(!a.label) - Number(!b.label) || (a.label || a.codes[0] || '').localeCompare(b.label || b.codes[0] || ''));   // sin artículo de BC, al final
   }, [data, onlyDiff, search]);
   const MEASURES = [
     { key: 'mf', label: 'Mailfinish', get: (v: { mf: number; bc: number }) => v.mf, diff: false },
