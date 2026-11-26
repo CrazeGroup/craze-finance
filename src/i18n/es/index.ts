@@ -19,12 +19,13 @@ import ocr from './ocr';
 import magazines from './magazines';
 import documents from './documents';
 import salesReturns from './salesReturns';
+import edeka from './edeka';
 import settings from './settings';
 import server from './server';
 
 const ES: Record<string, string> = {
   ...common, ...menu, ...dashboard, ...collections, ...cashflow, ...openEntries, ...payments, ...banco, ...closing,
-  ...inventory, ...controlling, ...royalties, ...commercial, ...amazon, ...customs, ...ocr, ...magazines, ...documents, ...salesReturns,
+  ...inventory, ...controlling, ...royalties, ...commercial, ...amazon, ...customs, ...ocr, ...magazines, ...documents, ...salesReturns, ...edeka,
   ...settings, ...server,
 };
 export default ES;

@@ -23,6 +23,7 @@ const MODULES = [
   { id: 'commercial', label: 'Commercial Analysis' },
   { id: 'amazon', label: 'Amazon (margin per customer)' },
   { id: 'sales_returns', label: 'Sales Return Orders (follow-up and comments)' },
+  { id: 'edeka_edi', label: 'EDEKA EDI (invoices to EDEKA via Transus)' },
   { id: 'logistic_cost', label: 'Logistic Cost (CRAZE GmbH)' },
   { id: 'customer_margin', label: 'Customer Margin (CRAZE GmbH)' },
   { id: 'intercompany', label: 'Intercompany' },

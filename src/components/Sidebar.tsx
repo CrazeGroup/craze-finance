@@ -107,6 +107,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
     { href: '/commercial', label: 'Commercial Analysis', module: 'commercial' },
     { href: '/amazon', label: 'Amazon', module: 'amazon' },
     { href: '/sales-returns', label: 'Sales Return Orders', module: 'sales_returns' },
+    { href: '/edeka-invoices', label: 'EDEKA EDI', module: 'edeka_edi' },
     // Solo para CRAZE GmbH
     ...(selectedCompany === 'CRAZE' ? [{ href: '/logistic-cost', label: 'Logistic Cost', module: 'logistic_cost' }, { href: '/customer-margin', label: 'Customer Margin', module: 'customer_margin' }] : []),
     { href: '/intercompany', label: 'Intercompany', module: 'intercompany' },
