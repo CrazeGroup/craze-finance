@@ -14,6 +14,29 @@ export const VENDOR = 'VE-00175';        // MailFinish a.s.
 export const STORAGE_ITEM = 'AA-00009';  // LOGISTIC COSTS - Storage
 const MAGAZINE_PREFIX: Record<string, string> = { galupy: '05995', inkee: '05993' };
 
+// Códigos propios de Mailfinish (CR0000xxx) que usaba hasta pasar a nuestros nº de artículo (junio de 2026).
+// Convalidación del usuario; en el inventario de mayo de 2026 cada código tiene exactamente el stock de su artículo
+// en BC (CR0000015 + CR0000027 = 78440).
+const CR_CODES: Record<string, string> = {
+  CR0000001: '46593',    // GALUPY Unicorn With Crystals from Swarovski
+  CR0000003: '71496',    // GALUPY Rainbow Unicorn
+  CR0000005: '65204',    // GALUPY Mermaid
+  CR0000007: '71380',    // INKEE - GALUPY Mermaid
+  CR0000009: '70055',    // INKEE - GALUPY Unicorn
+  CR0000011: '73339',    // DIAMONDZ - GALUPY UNICORN Keychain Set
+  CR0000013: '74541',    // MAGIC SLIME - Bag Surprise Galupy Unicorn
+  CR0000015: '78440',    // INKEE - Unicorn Professions Surprise Bath Bomb
+  CR0000017: '43547DE',  // INKEE - Galupy Unicorn Surprise Bath Bomb
+  CR0000019: '59210DE',  // INKEE - Galupy Mermaid Surprise Bath Bomb
+  CR0000021: '75418',    // Keychain Galupy Rainbow Unicorn Cuddly Toy
+  CR0000023: '05993_2501', // INKEE Magazin 01/25
+  CR0000025: '81716',    // GALUPY Rainbow Unicorn Series 2
+  CR0000027: '78440',    // INKEE - Unicorn Surprise Bath Bomb XOXO
+  CR0000029: '83062',    // INKEE - Princess-Figur
+};
+// Devoluciones pendientes de procesar en Mailfinish (REM + fecha): no son stock de ningún artículo, se ignoran
+const IGNORED = (code: string, desc: string) => /^REM\d+$/i.test(code) || /returned goods waiting for processing/i.test(desc);
+
 // Avisos traducibles en el navegador: t(text, params)
 export type MfWarning = { text: string; params?: Record<string, string> };
 export type MfRow = {
@@ -78,6 +101,8 @@ export function parseStorageExcel(data: ArrayBuffer | Uint8Array) {
 function resolver(items: Map<string, string>, map: Record<string, string>, withStock: Set<string>) {
   const byUpper = new Map(Array.from(items.keys()).map(k => [k.toUpperCase(), k]));
   return (base: string, desc: string): string | null => {
+    const cr = CR_CODES[base.toUpperCase()];
+    if (cr && items.has(cr)) return cr;
     if (map[base] && items.has(map[base])) return map[base];
     if (items.has(base)) return base;
     if (byUpper.has(base.toUpperCase())) return byUpper.get(base.toUpperCase())!;
@@ -174,7 +199,8 @@ export async function mailfinishInventory(ctx: BcContext, year: string): Promise
       return rows.get(key)!;
     };
     for (const [code, s] of r.stock) {
-      if (/_3$/.test(code) || /\bUNUSABLE\s*$/i.test(s.desc)) continue;   // UNUSABLE: eliminado con Destroy, no está en BC
+      if (/_3$/.test(code) || /\bUNUSABLE\s*$/i.test(s.desc)) continue;
+      if (IGNORED(code, s.desc)) continue;   // UNUSABLE: eliminado con Destroy, no está en BC
       const base = code;
       const desc = s.desc;
       const item = resolve(base, desc);
