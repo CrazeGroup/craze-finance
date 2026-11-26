@@ -120,6 +120,7 @@ export default function Sidebar({ permissions = [], username = '', authEnabled =
     ...(selectedCompany === 'Craze Entertainment' ? [
       { href: '/magazines', label: 'D-FORCE/MF', module: 'dforce' },
       { href: '/magazine-profitability', label: 'Magazine Profitability', module: 'magazine_profitability' },
+      { href: '/mailfinish-inventory', label: 'Mailfinish Inventory', module: 'mailfinish_inventory' },
     ] : []),
     { href: '/insurances', label: 'Insurance', module: 'seguros' },
     { href: '/contracts', label: 'Contracts', module: 'contratos' },

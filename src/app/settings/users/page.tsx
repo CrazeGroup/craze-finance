@@ -33,6 +33,7 @@ const MODULES = [
   { id: 'ocr', label: 'OCR' },
   { id: 'dforce', label: 'D-FORCE/MF: D-FORCE and MAILFINISH (Craze Entertainment)' },
   { id: 'magazine_profitability', label: 'Magazine Profitability (Craze Entertainment)' },
+  { id: 'mailfinish_inventory', label: 'Mailfinish Inventory (Craze Entertainment)' },
   { id: 'seguros', label: 'Insurance' },
   { id: 'configuracion', label: 'Settings and Users' },
 ];
