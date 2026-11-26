@@ -11,7 +11,7 @@ const COMPANY = 'Craze Entertainment';
 const dmy = (d: string) => (d ? d.split('-').reverse().join('/') : '');
 const diffCls = (v: number) => (Math.abs(v) < 0.5 ? 'text-gray-400' : v > 0 ? 'text-amber-700 font-semibold' : 'text-red-600 font-semibold');
 const sum = (rows: MfRow[], f: (r: MfRow) => number) => rows.reduce((s, r) => s + f(r), 0);
-const totalDiff = (r: MfRow) => r.mfGood + r.mfDamaged - r.bcGood - r.bcDamaged;
+const diff = (r: MfRow) => r.mf - r.bc;
 
 export default function MailfinishInventoryView() {
   const { t, locale } = useT();
@@ -49,7 +49,7 @@ export default function MailfinishInventoryView() {
   const rows = useMemo(() => {
     if (!sel) return [];
     const s = search.trim().toLowerCase();
-    return sel.rows.filter(r => (!onlyDiff || Math.abs(r.mfGood - r.bcGood) >= 0.5 || Math.abs(r.mfDamaged - r.bcDamaged) >= 0.5)
+    return sel.rows.filter(r => (!onlyDiff || Math.abs(diff(r)) >= 0.5)
       && (!s || `${r.bcItem || ''} ${r.codes.join(' ')} ${r.description}`.toLowerCase().includes(s)));
   }, [sel, onlyDiff, search]);
 
@@ -59,7 +59,7 @@ export default function MailfinishInventoryView() {
     const m = new Map<string, { key: string; label: string; description: string; byMonth: Record<string, number> }>();
     for (const mo of data.months) for (const r of mo.rows) {
       const x = m.get(r.key) || { key: r.key, label: r.bcItem || r.codes.join(', '), description: r.description, byMonth: {} };
-      x.byMonth[mo.month] = totalDiff(r);
+      x.byMonth[mo.month] = diff(r);
       m.set(r.key, x);
     }
     return Array.from(m.values()).filter(x => Object.values(x.byMonth).some(v => Math.abs(v) >= 0.5)).sort((a, b) => a.label.localeCompare(b.label));
@@ -69,8 +69,7 @@ export default function MailfinishInventoryView() {
     if (!sel) return;
     const sheet = XLSX.utils.json_to_sheet(sel.rows.map(r => ({
       [t('BC item')]: r.bcItem || '', [t('Mailfinish code')]: r.codes.join(', '), [t('Description')]: r.description,
-      [`Mailfinish`]: r.mfGood, [`BC ${'MAILFINISH'}`]: r.bcGood, [t('Difference')]: r.mfGood - r.bcGood,
-      [`Mailfinish UNUSABLE`]: r.mfDamaged, [`BC DESTR MAIL`]: r.bcDamaged, [`${t('Difference')} UNUSABLE`]: r.mfDamaged - r.bcDamaged,
+      Mailfinish: r.mf, 'BC MAILFINISH': r.bc, [t('Difference')]: diff(r),
     })));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, sheet, sel.month);
@@ -87,7 +86,7 @@ export default function MailfinishInventoryView() {
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {t('Reload from BC')}
         </button>
         <p className="text-xs text-gray-500 max-w-3xl">
-          {t('Month-end stock reported by Mailfinish (Excel attached to each Storage invoice, units of the last day) compared with BC stock on the same day: MAILFINISH location, and DESTR MAIL for the UNUSABLE codes (_3).')}
+          {t('Month-end stock reported by Mailfinish (Excel attached to each Storage invoice, units of the last day) compared with BC stock in the MAILFINISH location on the same day. UNUSABLE codes (_3) are ignored: they are destroyed and no longer in BC.')}
         </p>
       </div>
 
@@ -116,28 +115,21 @@ export default function MailfinishInventoryView() {
                   <th className="px-3 py-2 text-right">Mailfinish</th>
                   <th className="px-3 py-2 text-right">BC MAILFINISH</th>
                   <th className="px-3 py-2 text-right">{t('Difference')}</th>
-                  <th className="px-3 py-2 text-right">Mailfinish UNUSABLE</th>
-                  <th className="px-3 py-2 text-right">BC DESTR MAIL</th>
-                  <th className="px-3 py-2 text-right">{t('Difference')}</th>
                   <th className="px-3 py-2 text-right">{t('Items with differences')}</th>
                 </tr>
               </thead>
               <tbody>
                 {data.months.map(m => {
-                  const g = sum(m.rows, r => r.mfGood) - sum(m.rows, r => r.bcGood);
-                  const d = sum(m.rows, r => r.mfDamaged) - sum(m.rows, r => r.bcDamaged);
-                  const n = m.rows.filter(r => Math.abs(r.mfGood - r.bcGood) >= 0.5 || Math.abs(r.mfDamaged - r.bcDamaged) >= 0.5).length;
+                  const g = sum(m.rows, diff);
+                  const n = m.rows.filter(r => Math.abs(diff(r)) >= 0.5).length;
                   return (
                     <tr key={m.month} onClick={() => setMonth(m.month)}
                       className={`border-t border-gray-100 cursor-pointer ${m.month === month ? 'bg-pink-50' : 'hover:bg-gray-50'}`}>
                       <td className="px-3 py-2 font-medium capitalize">{monthName(m.month)}</td>
                       <td className="px-3 py-2 text-gray-600">{m.invoice}<DocPdfLink company={COMPANY} documentNo={m.invoice} /> <span className="text-xs text-gray-400">{m.file}</span></td>
-                      <td className="px-3 py-2 text-right">{u(sum(m.rows, r => r.mfGood))}</td>
-                      <td className="px-3 py-2 text-right">{u(sum(m.rows, r => r.bcGood))}</td>
+                      <td className="px-3 py-2 text-right">{u(sum(m.rows, r => r.mf))}</td>
+                      <td className="px-3 py-2 text-right">{u(sum(m.rows, r => r.bc))}</td>
                       <td className={`px-3 py-2 text-right ${diffCls(g)}`}>{sd(g)}</td>
-                      <td className="px-3 py-2 text-right">{u(sum(m.rows, r => r.mfDamaged))}</td>
-                      <td className="px-3 py-2 text-right">{u(sum(m.rows, r => r.bcDamaged))}</td>
-                      <td className={`px-3 py-2 text-right ${diffCls(d)}`}>{sd(d)}</td>
                       <td className="px-3 py-2 text-right">{n}</td>
                     </tr>
                   );
@@ -178,9 +170,6 @@ export default function MailfinishInventoryView() {
                       <th className="px-3 py-2 text-right">Mailfinish</th>
                       <th className="px-3 py-2 text-right">BC MAILFINISH</th>
                       <th className="px-3 py-2 text-right">{t('Difference')}</th>
-                      <th className="px-3 py-2 text-right">Mailfinish UNUSABLE</th>
-                      <th className="px-3 py-2 text-right">BC DESTR MAIL</th>
-                      <th className="px-3 py-2 text-right">{t('Difference')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -189,22 +178,16 @@ export default function MailfinishInventoryView() {
                         <td className="px-3 py-1.5 font-medium">{r.bcItem || <span className="text-red-600">{t('not in BC')}</span>}</td>
                         <td className="px-3 py-1.5 text-gray-600">{r.codes.join(', ') || <span className="text-gray-400">{t('not reported')}</span>}</td>
                         <td className="px-3 py-1.5 text-gray-600">{r.description}</td>
-                        <td className="px-3 py-1.5 text-right">{u(r.mfGood)}</td>
-                        <td className="px-3 py-1.5 text-right">{u(r.bcGood)}</td>
-                        <td className={`px-3 py-1.5 text-right ${diffCls(r.mfGood - r.bcGood)}`}>{sd(r.mfGood - r.bcGood)}</td>
-                        <td className="px-3 py-1.5 text-right">{u(r.mfDamaged)}</td>
-                        <td className="px-3 py-1.5 text-right">{u(r.bcDamaged)}</td>
-                        <td className={`px-3 py-1.5 text-right ${diffCls(r.mfDamaged - r.bcDamaged)}`}>{sd(r.mfDamaged - r.bcDamaged)}</td>
+                        <td className="px-3 py-1.5 text-right">{u(r.mf)}</td>
+                        <td className="px-3 py-1.5 text-right">{u(r.bc)}</td>
+                        <td className={`px-3 py-1.5 text-right ${diffCls(diff(r))}`}>{sd(diff(r))}</td>
                       </tr>
                     ))}
                     <tr className="border-t-2 border-gray-300 font-semibold bg-gray-50">
                       <td className="px-3 py-2" colSpan={3}>{t('Total')} ({rows.length})</td>
-                      <td className="px-3 py-2 text-right">{u(sum(rows, r => r.mfGood))}</td>
-                      <td className="px-3 py-2 text-right">{u(sum(rows, r => r.bcGood))}</td>
-                      <td className={`px-3 py-2 text-right ${diffCls(sum(rows, r => r.mfGood - r.bcGood))}`}>{sd(sum(rows, r => r.mfGood - r.bcGood))}</td>
-                      <td className="px-3 py-2 text-right">{u(sum(rows, r => r.mfDamaged))}</td>
-                      <td className="px-3 py-2 text-right">{u(sum(rows, r => r.bcDamaged))}</td>
-                      <td className={`px-3 py-2 text-right ${diffCls(sum(rows, r => r.mfDamaged - r.bcDamaged))}`}>{sd(sum(rows, r => r.mfDamaged - r.bcDamaged))}</td>
+                      <td className="px-3 py-2 text-right">{u(sum(rows, r => r.mf))}</td>
+                      <td className="px-3 py-2 text-right">{u(sum(rows, r => r.bc))}</td>
+                      <td className={`px-3 py-2 text-right ${diffCls(sum(rows, diff))}`}>{sd(sum(rows, diff))}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -215,7 +198,7 @@ export default function MailfinishInventoryView() {
           {/* Evolución de las diferencias */}
           {matrix.length > 0 && (
             <>
-              <h2 className="font-semibold text-gray-900">{t('Differences by month (Mailfinish − BC, both locations)')}</h2>
+              <h2 className="font-semibold text-gray-900">{t('Differences by month (Mailfinish − BC)')}</h2>
               <section className="bg-white rounded-xl border border-gray-200 max-h-[70vh] overflow-auto">
                 <table className="w-full text-sm">
                   <thead className="text-xs text-gray-500 uppercase sticky top-0 z-10 bg-gray-50 shadow-[inset_0_-1px_0_rgb(229,231,235)]">

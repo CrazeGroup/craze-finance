@@ -16,7 +16,7 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const year = /^\d{4}$/.test(searchParams.get('year') || '') ? searchParams.get('year')! : String(new Date().getFullYear());
     const force = searchParams.get('force') === '1';
-    const data = await cached(`mfInventory1:${year}`, 6 * HOUR, async () => mailfinishInventory(await getBcContext(COMPANY), year), force);
+    const data = await cached(`mfInventory2:${year}`, 6 * HOUR, async () => mailfinishInventory(await getBcContext(COMPANY), year), force);
     return NextResponse.json(data);
   } catch (error: any) {
     console.error('Mailfinish inventory:', error);

@@ -244,7 +244,7 @@ const es: Record<string, string> = {
   "The Assembly Order was created in BC but does not match: {issues}.": "La Assembly Order se ha creado en BC pero no coincide: {issues}.",
   // Mailfinish Inventory
   "Reload from BC": "Releer de BC",
-  "Month-end stock reported by Mailfinish (Excel attached to each Storage invoice, units of the last day) compared with BC stock on the same day: MAILFINISH location, and DESTR MAIL for the UNUSABLE codes (_3).": "Stock de fin de mes que informa Mailfinish (Excel adjunto a cada factura de Storage, unidades del último día) comparado con el stock de BC ese mismo día: location MAILFINISH, y DESTR MAIL para los códigos UNUSABLE (_3).",
+  "Month-end stock reported by Mailfinish (Excel attached to each Storage invoice, units of the last day) compared with BC stock in the MAILFINISH location on the same day. UNUSABLE codes (_3) are ignored: they are destroyed and no longer in BC.": "Stock de fin de mes que informa Mailfinish (Excel adjunto a cada factura de Storage, unidades del último día) comparado con el stock de BC en la location MAILFINISH ese mismo día. Los códigos UNUSABLE (_3) se ignoran: se eliminan con Destroy y ya no están en BC.",
   "Reading the Storage invoices and their Excel files in BC…": "Leyendo en BC las facturas de Storage y sus Excel…",
   "No inventory Excel attached to a Storage invoice for: {months}": "Sin Excel de inventario adjunto a una factura de Storage para: {months}",
   "Month": "Mes",
@@ -258,7 +258,7 @@ const es: Record<string, string> = {
   "not in BC": "no está en BC",
   "not reported": "no informado",
   "Total": "Total",
-  "Differences by month (Mailfinish − BC, both locations)": "Diferencias por mes (Mailfinish − BC, las dos locations)",
+  "Differences by month (Mailfinish − BC)": "Diferencias por mes (Mailfinish − BC)",
   "Could not read {file} of {invoice}: {error}": "No se ha podido leer {file} de {invoice}: {error}",
   "{month}: two inventory files ({first}, {second}); the latest is used.": "{month}: dos ficheros de inventario ({first}, {second}); se usa el más reciente.",
   "The file's last day is {day}, not the end of the month.": "El último día del fichero es el {day}, no el fin de mes.",

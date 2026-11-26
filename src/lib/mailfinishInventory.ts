@@ -1,13 +1,14 @@
 import * as XLSX from 'xlsx';
 import { bcFetchAll, odataUrl, type BcContext } from '@/lib/bcClient';
-import { outputMap, LOC_GOOD, LOC_DAMAGED } from '@/lib/mailfinish';
+import { outputMap, LOC_GOOD } from '@/lib/mailfinish';
 
 // Mailfinish Inventory (Craze Entertainment): el stock que Mailfinish dice tener a fin de mes contra el de BC.
 // Mailfinish adjunta a cada factura de almacenaje (artículo AA-00009 "LOGISTIC COSTS - Storage", nombre "05.xlsx"…)
 // un Excel con una fila por artículo × palet × día del mes (hoja "table - …": Karta | ID | Popis | Sklad | Den |
 // Paletod. | Kusů | Pozice). Inventario a fin de mes = suma de Kusů del último día (lo que el usuario hacía con una
 // tabla dinámica filtrando el último día). Karta = nº de artículo de BC (o su variante con letras, 43547 → 43547DE);
-// "_3" al final = UNUSABLE (II. Wahl), que en BC está en DESTR MAIL; el resto en MAILFINISH.
+// "_3" al final = UNUSABLE (II. Wahl): se ignora, porque esas unidades las vamos eliminando con Destroy y en BC ya no
+// están. El resto se compara con la location MAILFINISH.
 
 export const VENDOR = 'VE-00175';        // MailFinish a.s.
 export const STORAGE_ITEM = 'AA-00009';  // LOGISTIC COSTS - Storage
@@ -17,7 +18,7 @@ const MAGAZINE_PREFIX: Record<string, string> = { galupy: '05995', inkee: '05993
 export type MfWarning = { text: string; params?: Record<string, string> };
 export type MfRow = {
   key: string; bcItem: string | null; codes: string[]; description: string;
-  mfGood: number; bcGood: number; mfDamaged: number; bcDamaged: number;
+  mf: number; bc: number;
 };
 export type MfMonth = {
   month: string; lastDay: string; endOfMonth: string; invoice: string; invoiceDate: string; file: string;
@@ -146,7 +147,7 @@ export async function mailfinishInventory(ctx: BcContext, year: string): Promise
   const maxEom = eom(months[months.length - 1]);
   const [entries, itemRows, map] = await Promise.all([
     bcFetchAll(odataUrl(`${ctx.odataCompanyBase}/Item_Ledger_Entries_Excel`, {
-      $filter: `(Location_Code eq '${LOC_GOOD}' or Location_Code eq '${LOC_DAMAGED}') and Posting_Date le ${maxEom}`,
+      $filter: `Location_Code eq '${LOC_GOOD}' and Posting_Date le ${maxEom}`,
       $select: 'Item_No,Location_Code,Posting_Date,Quantity',
     }), ctx.token),
     bcFetchAll(odataUrl(`${ctx.apiBase}/items`, { $select: 'number,displayName' }), ctx.token),
@@ -169,25 +170,25 @@ export async function mailfinishInventory(ctx: BcContext, year: string): Promise
     }
     const rows = new Map<string, MfRow>();
     const row = (key: string, bcItem: string | null, description: string) => {
-      if (!rows.has(key)) rows.set(key, { key, bcItem, codes: [], description, mfGood: 0, bcGood: 0, mfDamaged: 0, bcDamaged: 0 });
+      if (!rows.has(key)) rows.set(key, { key, bcItem, codes: [], description, mf: 0, bc: 0 });
       return rows.get(key)!;
     };
     for (const [code, s] of r.stock) {
-      const damaged = /_3$/.test(code);
-      const base = code.replace(/_3$/, '');
-      const desc = s.desc.replace(/\s*UNUSABLE\s*$/i, '');
+      if (/_3$/.test(code) || /\bUNUSABLE\s*$/i.test(s.desc)) continue;   // UNUSABLE: eliminado con Destroy, no está en BC
+      const base = code;
+      const desc = s.desc;
       const item = resolve(base, desc);
       const x = row(item || `?${base}`, item, item ? items.get(item) || desc : desc);
       if (!x.codes.includes(code)) x.codes.push(code);
-      if (damaged) x.mfDamaged += s.qty; else x.mfGood += s.qty;
+      x.mf += s.qty;
     }
     for (const x of rows.values()) if (!x.bcItem) mw.push({ text: '{codes} ({description}): no item in BC.', params: { codes: x.codes.join(', '), description: x.description } });
-    // Lo que BC tiene en esas locations, informado o no por Mailfinish
+    // Lo que BC tiene en MAILFINISH, informado o no por Mailfinish
     for (const [k, qty] of bc) {
       if (Math.abs(qty) < 0.0001) continue;
-      const [item, loc] = k.split('|');
+      const [item] = k.split('|');
       const x = row(item, item, items.get(item) || '');
-      if (loc === LOC_DAMAGED) x.bcDamaged += qty; else x.bcGood += qty;
+      x.bc += qty;
     }
     return {
       month, lastDay: r.lastDay, endOfMonth: end, invoice: r.invoice, invoiceDate: r.invoiceDate, file: r.file,
