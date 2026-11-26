@@ -513,7 +513,7 @@ function pickRule(m: Movement, rules: Rule[] | undefined) {
 type Booking = { date: string; amount: number; description: string; balType: AccountType; balNo: string; via?: string };
 
 // Payment run de nóminas de Alemania: importe y desde qué día del mes (ver sugerencias)
-const PAYROLL_RUN = { min: 25000, max: 30000, fromDay: 20 };
+const PAYROLL_RUN = { min: 25000, max: 40000, fromDay: 20 };
 
 // Palabras que no distinguen un movimiento
 const GENERIC = new Set(['compra', 'compras', 'tarj', 'tarjeta', 'card', 'transferencia', 'transf', 'trf', 'recibo', 'pago', 'pagos', 'cargo',
@@ -798,7 +798,7 @@ export function suggest(
     }
 
     // Payment run del online banking ("DATUM 23.11.2026, 18.01 UHR ANZAHL 11"): el texto no dice a quién se paga. Las
-    // nóminas de Alemania son el payment run de 25.000–30.000 € desde el día 20 del mes; los de proveedores suelen ser
+    // nóminas de Alemania son el payment run de 25.000–40.000 € desde el día 20 del mes; los de proveedores suelen ser
     // mayores. Van a la cuenta de las nóminas anteriores ("Verbind. Lohn u. Gehalt" 3720 00)
     const batch = m.amount < 0 && Number(m.purpose.match(/\bDATUM\b.*\bUHR\b.*\bANZAHL\s+(\d+)/i)?.[1] || 0);
     const payrollRun = !!batch && batch >= 2 && -m.amount >= PAYROLL_RUN.min && -m.amount <= PAYROLL_RUN.max
@@ -806,7 +806,7 @@ export function suggest(
     const payroll = payrollRun ? books.filter(b => b.amount < 0 && b.balType === 'G/L Account' && /lohn|gehalt|n[oó]mina|salar|payroll/i.test(b.description))
       .sort((a, b) => b.date.localeCompare(a.date))[0] : null;
     if (payroll) {
-      const when = `Payment run of ${batch} payments, 25,000–30,000 € at month end: German payroll, as the ${payroll.date.split('-').reverse().join('.')} posting "${payroll.description.substring(0, 40)}"`;
+      const when = `Payment run of ${batch} payments, 25,000–40,000 € at month end: German payroll, as the ${payroll.date.split('-').reverse().join('.')} posting "${payroll.description.substring(0, 40)}"`;
       out.set(m.idx, { documentNo, source: 'History', note: when, lines: [line(payroll.balType, payroll.balNo, documentNo || payroll.description)] });
       continue;
     }
