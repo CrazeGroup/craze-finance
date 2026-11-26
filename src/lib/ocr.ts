@@ -3,6 +3,7 @@ import { bcFetchAll, BcContext, odataUrl } from '@/lib/bcClient';
 import { attachFile, bcRequest } from '@/lib/bcWrite';
 import { cached, readSetting, writeSetting, HOUR } from '@/lib/reporting/cache';
 import { companyCurrency } from '@/lib/royalties';
+import { embeddedEInvoice, eInvoiceIds, eInvoiceSummary, eInvoiceText, looksXml, parseEInvoice, xmlText, type EInvoice, type EInvoiceSummary } from '@/lib/einvoice';
 
 // OCR de facturas de compra: del PDF de un proveedor a una Purchase Invoice sin registrar en BC.
 // Sin IA: reglas sobre el texto y las facturas ya registradas del proveedor.
@@ -31,6 +32,7 @@ export type OcrResult = {
   file: string; scanned: boolean; ocr: boolean; currency: string; ids: string[]; vatRates: Record<string, number>;
   candidates: VendorCandidate[]; vendor: VendorCandidate | null; history: HistoryInvoice[];
   suggestion: OcrSuggestion | null; existing: { no: string; status: string }[]; warnings: string[];
+  einvoice?: EInvoiceSummary | null;
 };
 
 const q = (s: string) => s.replace(/'/g, "''");
@@ -730,13 +732,26 @@ async function amazonSiblings(ctx: BcContext, exclude: string) {
 export async function processPdf(ctx: BcContext, file: string, data: Uint8Array, vendorNo?: string, ocrText?: string): Promise<OcrResult> {
   const warnings: string[] = [];
   let text = '';
-  try { text = await pdfText(data); } catch (e: any) { warnings.push(`Could not read the text of the PDF (${e.message}).`); }
-  const scanned = text.replace(/\s/g, '').length < 40;
+  // Factura electrónica: XRechnung (fichero XML) o ZUGFeRD / Factur-X (el XML dentro del PDF). Sus datos son exactos:
+  // el texto del PDF solo sirve para el modelo; sin PDF, el texto se hace con el XML
+  let einv: { file: string; invoice: EInvoice } | null = null;
+  const isXml = looksXml(file, data);
+  if (isXml) {
+    const invoice = parseEInvoice(xmlText(data));
+    if (!invoice) throw new Error('The XML file is not an e-invoice (XRechnung / ZUGFeRD: CII or UBL).');
+    einv = { file, invoice };
+    text = eInvoiceText(invoice);
+  } else {
+    try { text = await pdfText(data); } catch (e: any) { warnings.push(`Could not read the text of the PDF (${e.message}).`); }
+    einv = await embeddedEInvoice(data).catch(() => null);
+    if (einv && text.replace(/\s/g, '').length < 40) text = eInvoiceText(einv.invoice);
+  }
+  const scanned = !einv && text.replace(/\s/g, '').length < 40;
   const ocr = scanned && !!ocrText && ocrText.replace(/\s/g, '').length >= 20;
   if (ocr) { text = ocrText!.replace(/[ \t]+/g, ' ').trim(); warnings.push('PDF without text: read from the image with OCR (Tesseract). Check the date, invoice no. and amounts.'); }
   else if (scanned) { text = ''; warnings.push(ocrText == null ? 'Scanned PDF (no text): it cannot be read. Choose the vendor and enter the data manually.' : 'Scanned PDF: OCR (Tesseract) did not extract readable text. Choose the vendor and enter the data manually.'); }
-  const ids = identifiers(text);
-  const currency = detectCurrency(text);
+  const ids = [...new Set([...identifiers(text), ...(einv ? eInvoiceIds(einv.invoice) : [])])];
+  const currency = einv?.invoice.currency || detectCurrency(text);
   const candidates = text ? await matchVendors(ctx, text, ids, currency) : [];
   const vendor = vendorNo ? await vendorByNumber(ctx, vendorNo) : candidates[0] || null;
   if (vendorNo && !vendor) warnings.push(`Vendor ${vendorNo} does not exist in ${ctx.companyName}.`);
@@ -785,7 +800,11 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
   // Importes con el % de IVA de los grupos de IVA propuestos (y los % para recalcular en la página al cambiar de grupo)
   const rates = vendor ? await vatRates(ctx, vendor.number, suggestion?.vatBusPostingGroup).catch(() => ({} as Record<string, number>)) : {};
   // (devolución de Amazon: el importe es el total, sin IVA)
-  if (suggestion && text && !amazonReturnDoc) applyVatRates(suggestion, text, rates);
+  if (einv && vendor) {
+    // Sin facturas del proveedor: las líneas de la factura electrónica, sin cuenta (se elige en la página)
+    if (!suggestion) suggestion = fromEInvoiceLines(einv.invoice);
+    applyEInvoice(suggestion, einv.invoice, rates, warnings);
+  } else if (suggestion && text && !amazonReturnDoc) applyVatRates(suggestion, text, rates);
   if (suggestion?.documentType === 'credit_note') warnings.push('This is a credit note: it will be created as a Purchase Credit Memo (change the document type if it is an invoice).');
   // La divisa del PDF manda aunque el proveedor no tenga facturas en ella (Uber en Macao: MOP; el modelo puede estar en
   // CHF); la local va vacía al crearla. Se avisa si no existe en BC
@@ -799,7 +818,61 @@ export async function processPdf(ctx: BcContext, file: string, data: Uint8Array,
     warnings.push(`The invoice is in ${currency} and vendor ${vendor.number} in ${vendor.currency}: is it another vendor (e.g. the card in ${currency})?`);
   }
   const existing = vendor && suggestion?.invoiceNo ? await existingFor(ctx, vendor.number, suggestion.invoiceNo, suggestion.documentType === 'credit_note') : [];
-  return { file, scanned, ocr, currency, ids, vatRates: rates, candidates, vendor, history, suggestion, existing, warnings };
+  const einvoice = einv ? eInvoiceSummary(einv.invoice, einv.file) : null;
+  return { file, scanned, ocr, currency, ids, vatRates: rates, candidates, vendor, history, suggestion, existing, warnings, einvoice };
+}
+
+// ---------- Factura electrónica (ZUGFeRD / XRechnung) ----------
+// Propuesta con las líneas del XML cuando el proveedor no tiene facturas en BC: cuenta y grupo de IVA, a mano
+function fromEInvoiceLines(e: EInvoice): OcrSuggestion {
+  return {
+    documentType: e.creditNote ? 'credit_note' : 'invoice', invoiceNo: e.number, invoiceDate: e.issueDate, postingDate: e.issueDate,
+    dueDate: e.dueDate, postingDescription: '', currency: e.currency, net: e.net, vat: e.vat, total: e.total,
+    lines: e.lines.map(l => ({ lineType: 'Account', number: '', description: l.name.substring(0, 100), description2: (l.sellerId || '').substring(0, 50), quantity: Math.abs(l.quantity) || 1, unitCost: r2(Math.abs(l.amount) / (Math.abs(l.quantity) || 1)), taxCode: '' })),
+    comment: `Lines taken from the e-invoice (${e.format}): choose the account and VAT group of each line.`,
+  };
+}
+
+// Cabecera e importes exactos del XML sobre la propuesta del modelo: nº, fechas, divisa, tipo de documento y totales.
+// Las líneas del modelo se reparten la base de cada % de IVA del XML según el % de su grupo de IVA (VAT Posting Setup);
+// si los % no casan, el neto entero en la proporción del modelo
+function applyEInvoice(s: OcrSuggestion, e: EInvoice, rates: Record<string, number>, warnings: string[]) {
+  const sign = e.creditNote && (e.total ?? 0) < 0 ? -1 : 1;
+  if (e.number) s.invoiceNo = e.number;
+  if (e.issueDate) {
+    // La fecha de registro solo se queda si el modelo la toma de otro sitio (ETS/ATS…)
+    if (!s.postingDate || s.postingDate === s.invoiceDate) s.postingDate = e.issueDate;
+    s.invoiceDate = e.issueDate;
+  }
+  if (e.dueDate) s.dueDate = e.dueDate;
+  if (e.currency) s.currency = e.currency;
+  s.documentType = e.creditNote ? 'credit_note' : 'invoice';
+  const net = e.net != null ? r2(e.net * sign) : null;
+  s.net = net; s.vat = e.vat != null ? r2(e.vat * sign) : null; s.total = e.total != null ? r2(e.total * sign) : null;
+  const ls = s.lines.filter(l => l.lineType !== 'Comment');
+  if (net == null || !ls.length) return;
+  const spread = (group: OcrLine[], amount: number) => {
+    const sum = group.reduce((a, l) => a + l.quantity * l.unitCost, 0);
+    let rest = amount;
+    group.forEach((l, k) => {
+      const part = k === group.length - 1 ? r2(rest) : r2(sum ? amount * (l.quantity * l.unitCost) / sum : amount / group.length);
+      rest -= part;
+      l.unitCost = r2(part / (l.quantity || 1));
+    });
+  };
+  // Las líneas que salen del propio XML ya traen su importe
+  if (ls.every(l => !l.number)) return;
+  const taxes = e.taxes.filter(t => Math.abs(t.basis) >= 0.005);
+  const byPct = new Map<number, OcrLine[]>();
+  for (const l of ls) { const p = rates[l.taxCode]; if (p != null) byPct.set(p, [...(byPct.get(p) || []), l]); }
+  const matched = taxes.length > 0 && taxes.every(t => byPct.has(t.pct)) && byPct.size === new Set(taxes.map(t => t.pct)).size && [...byPct.values()].flat().length === ls.length;
+  if (matched) for (const t of taxes) spread(byPct.get(t.pct)!, r2(taxes.filter(x => x.pct === t.pct).reduce((a, x) => a + x.basis, 0) * sign));
+  else {
+    spread(ls, net);
+    const xmlPcts = [...new Set(taxes.map(t => t.pct))].join(' / ');
+    const linePcts = [...new Set(ls.map(l => rates[l.taxCode]).filter(p => p != null))].join(' / ');
+    if (xmlPcts && linePcts && xmlPcts !== linePcts) warnings.push(`The e-invoice has VAT ${xmlPcts} % and the proposed VAT groups ${linePcts} %: check the VAT group of the lines.`);
+  }
 }
 
 // ---------- Crear en BC ----------

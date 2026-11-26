@@ -602,5 +602,13 @@ const es: Record<string, string> = {
   'Payment Proposal: approval reminder sent': 'Payment Proposal: recordatorio de aprobación enviado',
   'No approver or document selected.': 'No hay ningún aprobador ni documento seleccionado.',
   'At most 30 approvers at a time.': 'Como máximo 30 aprobadores a la vez.',
+  'The XML file is not an e-invoice (XRechnung / ZUGFeRD: CII or UBL).': 'El fichero XML no es una factura electrónica (XRechnung / ZUGFeRD: CII o UBL).',
+  'Lines taken from the e-invoice ({format}): choose the account and VAT group of each line.': 'Líneas tomadas de la factura electrónica ({format}): elige la cuenta y el grupo de IVA de cada línea.',
+  'The e-invoice has VAT {xml} % and the proposed VAT groups {lines} %: check the VAT group of the lines.': 'La factura electrónica tiene IVA {xml} % y los grupos de IVA propuestos {lines} %: revisa el grupo de IVA de las líneas.',
+  'Email «{subject}»: {n} file(s) ({files})': 'Correo «{subject}»: {n} fichero(s) ({files})',
+  'Email «{subject}»: no PDF or e-invoice attachments': 'Correo «{subject}»: sin PDF ni factura electrónica adjunta',
+  'Email «{subject}»: e-invoice XML used, PDF copy skipped ({files})': 'Correo «{subject}»: se usa el XML de la factura electrónica, se omite la copia en PDF ({files})',
+  '{file}: the XML is not an e-invoice (XRechnung / ZUGFeRD), skipped': '{file}: el XML no es una factura electrónica (XRechnung / ZUGFeRD), omitido',
+  '{file}: not a PDF, an e-invoice XML or an email, skipped': '{file}: no es un PDF, un XML de factura electrónica ni un correo, omitido',
 };
 export default es;

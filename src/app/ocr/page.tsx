@@ -6,7 +6,7 @@ import DocPdfLink from '@/components/DocPdfLink';
 import FeedbackButton, { sendFeedback } from '@/components/FeedbackButton';
 import { useCompany } from '@/contexts/CompanyContext';
 import { useT } from '@/contexts/LanguageContext';
-import { ACCEPT, droppedFiles, expandFiles, isPdf, pickInvoice } from './emailFiles';
+import { ACCEPT, droppedFiles, expandFiles, isDoc, isXml, pickInvoice } from './emailFiles';
 import { ocrPdf } from './tesseract';
 
 type Line = { lineType: string; number: string; description: string; description2: string; quantity: number; unitCost: number; taxCode: string };
@@ -19,7 +19,13 @@ type Suggestion = {
 type Doc = {
   file: string; error?: string; loading?: boolean; reading?: boolean; scanned: boolean; ocr?: boolean; currency: string; ids: string[]; vatRates?: Record<string, number>;
   candidates: Candidate[]; vendor: Candidate | null; history: HistoryInvoice[]; suggestion: Suggestion | null;
-  existing: { no: string; status: string }[]; warnings: string[];
+  existing: { no: string; status: string }[]; warnings: string[]; einvoice?: EInvoice | null;
+};
+// Factura electrónica leída del XML (ZUGFeRD / Factur-X dentro del PDF, o XRechnung)
+type EInvoice = {
+  format: string; profile: string; file: string; number: string; typeCode: string; seller: string; sellerVat: string; iban: string; orderRef: string; buyerReference: string;
+  lines: { name: string; sellerId: string; quantity: number; unit: string; price: number; amount: number; vatPct: number | null }[];
+  taxes: { pct: number; basis: number; vat: number; category: string }[]; net: number | null; vat: number | null; total: number | null;
 };
 // Valores editables de cada factura antes de crearla (importes como texto, formato es-ES)
 type FormLine = Omit<Line, 'quantity' | 'unitCost'> & { quantity: string; unitCost: string };
@@ -119,7 +125,7 @@ export default function OcrPage() {
     }
   };
   const read = async (list: File[]) => {
-    const pdfs = list.filter(f => isPdf(f) && !files.some(x => x.name === f.name));
+    const pdfs = list.filter(f => isDoc(f) && !files.some(x => x.name === f.name));
     const dup = list.filter(f => files.some(x => x.name === f.name));
     setNotice(dup.length ? t('Already in the list and not processed again: {files}', { files: dup.map(f => f.name).join(', ') }) : null);
     if (!pdfs.length) return;
@@ -146,14 +152,14 @@ export default function OcrPage() {
   };
 
   // Opción 1: cada PDF es una factura
-  const addBatch = (list: File[]) => setBatch(b => [...b, ...list.filter(f => isPdf(f) && !b.some(x => x.name === f.name))]);
+  const addBatch = (list: File[]) => setBatch(b => [...b, ...list.filter(f => isDoc(f) && !b.some(x => x.name === f.name))]);
   // Ficheros elegidos o soltados: PDFs, o correos de Outlook (.msg/.eml) de los que se sacan sus PDFs
-  const expand = async (list: File[], types: string[] = []) => {
+  const expand = async (list: File[], types: string[] = [], withCopies = false) => {
     if (!list.length) {
       setNotice(t('No file received{received}. If dragging from Outlook does not work, save the PDF to the desktop and drag it from there.', { received: types.length ? t(' (the browser received: {types})', { types: types.join(', ') }) : '' }));
       return [];
     }
-    const { pdfs, notes } = await expandFiles(list);
+    const { pdfs, notes } = await expandFiles(list, withCopies);
     setNotice(notes.length ? notes.join(' · ') : null);
     return pdfs;
   };
@@ -161,7 +167,7 @@ export default function OcrPage() {
   // Fila: al cuadro de adjuntos todo son adjuntos; a la factura o a la fila sin factura, el que parece la factura
   // (por el nombre) es la factura y el resto adjuntos
   const toRow = async (r: Row, list: File[], box: 'invoice' | 'att' | 'row', types?: string[]) => {
-    const pdfs = await expand(list, types);
+    const pdfs = await expand(list, types, true);
     if (!pdfs.length) return;
     if (box === 'att' || r.invoice) { addRowAttachments(r.id, pdfs); return; }
     const { invoice, rest } = pickInvoice(pdfs);
@@ -261,7 +267,7 @@ export default function OcrPage() {
         <header>
           <h1 className="text-3xl font-black text-black tracking-tight flex items-center gap-2"><ScanText /> OCR</h1>
           <p className="text-gray-500 mt-1 text-sm">
-            {t('Upload vendor invoices as PDF: the vendor is recognised and the header and lines are proposed just like its latest invoices posted in BC ({company}).', { company: selectedCompany })}{' '}
+            {t('Upload vendor invoices as PDF or e-invoice (ZUGFeRD / Factur-X, XRechnung XML): the vendor is recognised and the header and lines are proposed just like its latest invoices posted in BC ({company}).', { company: selectedCompany })}{' '}
             {t('Review each one and create it as an unposted Purchase Invoice with the PDF attached; then post it in BC.')}
           </p>
         </header>
@@ -276,11 +282,11 @@ export default function OcrPage() {
               onDrop={async e => { e.preventDefault(); const d = await droppedFiles(e); toBatch(d.files, d.types); }}>
               <div>
                 <p className="font-bold text-gray-900">{t('1 · Invoices only')}</p>
-                <p className="text-xs text-gray-500">{t('Each PDF is one invoice. Pick or drag as many as you like, also from Outlook (attachments or the whole email).')}</p>
+                <p className="text-xs text-gray-500">{t('Each PDF or XML is one invoice. Pick or drag as many as you like, also from Outlook (attachments or the whole email).')}</p>
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 <label className="cursor-pointer inline-flex items-center gap-2 bg-white border border-gray-300 text-gray-900 text-sm font-semibold px-4 py-2 rounded-lg hover:bg-gray-50">
-                  <Upload size={16} /> {t('Choose PDF invoices')}
+                  <Upload size={16} /> {t('Choose invoices (PDF / XML)')}
                   <input type="file" accept={ACCEPT} multiple className="hidden" onChange={e => { toBatch(Array.from(e.target.files || [])); e.target.value = ''; }} />
                 </label>
                 <button onClick={processBatch} disabled={!batch.length}
@@ -400,10 +406,11 @@ function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRem
       <FileText size={16} className="text-gray-400" />
       <span className="font-bold text-gray-900">{d.vendor ? `${d.vendor.number} · ${d.vendor.name}` : t('Vendor not recognised')}</span>
       <span className="text-xs text-gray-500">{d.file}{d.ocr ? ` · ${t('no text, read with OCR')}` : d.scanned ? ` · ${t('scanned (no text)')}` : ''}</span>
-      {s && <span className="ml-auto text-sm text-gray-600">PDF: {t('net')} <b>{fmt(s.net)}</b> · {t('VAT')} {fmt(s.vat)} · {t('total')} <b>{fmt(s.total)} {s.currency || d.currency}</b></span>}
+      {d.einvoice && <span title={d.einvoice.profile} className="text-xs font-semibold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">{t('E-invoice')} · {d.einvoice.format}</span>}
+      {s && <span className="ml-auto text-sm text-gray-600">{d.einvoice ? 'XML' : 'PDF'}: {t('net')} <b>{fmt(s.net)}</b> · {t('VAT')} {fmt(s.vat)} · {t('total')} <b>{fmt(s.total)} {s.currency || d.currency}</b></span>}
       {pdf && (
         <button onClick={togglePdf} className={`${s ? '' : 'ml-auto '}inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg border ${pdfUrl ? 'border-indigo-300 bg-indigo-50 text-indigo-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}>
-          {pdfUrl ? <EyeOff size={14} /> : <Eye size={14} />} {pdfUrl ? t('Hide PDF') : t('View PDF')}
+          {pdfUrl ? <EyeOff size={14} /> : <Eye size={14} />} {pdf && isXml(pdf) ? (pdfUrl ? t('Hide XML') : t('View XML')) : pdfUrl ? t('Hide PDF') : t('View PDF')}
         </button>
       )}
       {!d.loading && (
@@ -421,6 +428,7 @@ function DocCard({ d, f, attachments, onAttachNow, st, selected, onToggle, onRem
         <a href={pdfUrl} target="_blank" rel="noreferrer" className="inline-block mt-1 text-xs text-indigo-700 hover:underline">{t('Open in a new tab')}</a>
       </div>
     )}
+    {d.einvoice && !d.loading && <EInvoiceLines e={d.einvoice} fmt={fmt} />}
   </>);
   if (d.loading) return <section className="bg-white border border-gray-200 rounded-xl shadow-sm">{head}<p className="p-4 text-sm text-gray-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> {d.reading ? t('PDF without text: reading the image with OCR…') : t('Reading the PDF…')}</p></section>;
   if (d.error) return <div className="rounded-lg border px-4 py-3 text-sm bg-red-50 border-red-200 text-red-800"><b>{d.file}</b>: {tx(d.error)}</div>;
@@ -642,5 +650,43 @@ function FileChip({ name, onRemove, strong, attachment }: { name: string; onRemo
       <span className="truncate" title={name}>{name}</span>
       <button onClick={onRemove} title={t('Remove')} className="shrink-0 text-gray-400 hover:text-red-600"><X size={12} /></button>
     </span>
+  );
+}
+
+// Datos de la factura electrónica (XML): nº, proveedor, referencias, líneas e IVA tal como los manda el proveedor
+function EInvoiceLines({ e, fmt }: { e: EInvoice; fmt: (v: number | null | undefined) => string }) {
+  const { t } = useT();
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="px-4 py-2 border-b border-gray-200 bg-emerald-50/40 text-xs text-gray-700">
+      <button onClick={() => setOpen(o => !o)} className="inline-flex items-center gap-1 font-semibold text-emerald-900">
+        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        {t('E-invoice data: {n} lines', { n: e.lines.length })}
+      </button>
+      <span className="ml-2">{t('No.')} <b>{e.number}</b> · {e.seller}{e.sellerVat ? ` · ${e.sellerVat}` : ''}{e.iban ? ` · IBAN ${e.iban}` : ''}{e.orderRef ? ` · ${t('Order')} ${e.orderRef}` : ''}{e.buyerReference ? ` · ${t('Buyer reference')} ${e.buyerReference}` : ''}</span>
+      {open && (
+        <div className="mt-2 max-h-80 overflow-auto border border-gray-200 rounded-lg bg-white">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-gray-50 text-gray-600">
+              <tr><th className="p-2 text-left">{t('Description')}</th><th className="p-2 text-left">{t('Vendor item')}</th><th className="p-2 text-right">{t('Quantity')}</th><th className="p-2 text-right">{t('Price')}</th><th className="p-2 text-right">{t('Amount')}</th><th className="p-2 text-right">{t('VAT')} %</th></tr>
+            </thead>
+            <tbody>
+              {e.lines.map((l, i) => (
+                <tr key={i} className="border-t border-gray-100">
+                  <td className="p-2">{l.name}</td><td className="p-2">{l.sellerId}</td>
+                  <td className="p-2 text-right">{l.quantity} {l.unit}</td><td className="p-2 text-right">{fmt(l.price)}</td>
+                  <td className="p-2 text-right">{fmt(l.amount)}</td><td className="p-2 text-right">{l.vatPct ?? ''}</td>
+                </tr>
+              ))}
+              {e.taxes.map((x, i) => (
+                <tr key={`t${i}`} className="border-t border-gray-200 bg-gray-50 font-semibold">
+                  <td className="p-2" colSpan={4}>{t('VAT {pct} % on {basis}', { pct: x.pct, basis: fmt(x.basis) })}</td><td className="p-2 text-right">{fmt(x.vat)}</td><td />
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
