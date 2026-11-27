@@ -47,6 +47,7 @@ export type CreditInfo = { full: boolean; memos: { no: string; date: string; amo
 type InvLite = { number: string; customerNumber: string; externalDocumentNumber?: string; totalAmountExcludingTax: number };
 const creditsFor = (inv: InvLite, memos: any[]): CreditInfo | null => {
   const amount = Number(inv.totalAmountExcludingTax) || 0;
+  memos = memos.filter(m => Math.abs(Number(m.totalAmountExcludingTax) || 0) >= 0.005); // abonos a 0 no cuentan
   const direct = memos.filter(m => m.invoiceNumber === inv.number);
   const sameOrder = direct.length ? [] : memos.filter(m => !m.invoiceNumber && m.customerNumber === inv.customerNumber && inv.externalDocumentNumber
     && m.externalDocumentNumber === inv.externalDocumentNumber);
