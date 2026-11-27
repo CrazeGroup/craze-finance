@@ -227,10 +227,13 @@ export default function HistoryView() {
       && (!s || codeHit || i.no.toLowerCase().includes(s) || i.description.toLowerCase().includes(s) || i.bcTariff.includes(sCode)));
     return { c, items, show: items.length > 0 || (!onlyIssues && (!s || codeHit)) };
   }).filter(v => v.show);
+  // Artículo por número o por nombre (descripción de BC), p. ej. "glime"
+  const itemHit = (i: { no: string; description?: string }) => i.no.toLowerCase().includes(s) || (i.description || '').toLowerCase().includes(s);
   const entryIssue = (e: Entry) => !!e.error || (!e.check && !e.dhl && !e.statement) || !!e.check?.unassigned.length || !!e.check?.positions.some(p => p.items.some(i => BAD.has(i.status)));
   const visibleEntries = entries.filter(e => (!onlyIssues || entryIssue(e))
     && (!s || [e.atc, e.invoiceNo, ...e.orders, ...e.transport].some(x => x.toLowerCase().includes(s))
-      || !!e.check?.positions.some(p => p.tariff.includes(sCode) || p.items.some(i => i.no.toLowerCase().includes(s)))));
+      || !!e.check?.positions.some(p => p.tariff.includes(sCode) || p.items.some(itemHit))
+      || !!e.check?.unassigned.some(itemHit)));
 
   const allItems = entries.flatMap(e => e.check?.positions.flatMap(p => p.items) || []);
   const count = (st: Item['status']) => allItems.filter(i => i.status === st).length;
@@ -289,7 +292,7 @@ export default function HistoryView() {
         </div>
         <div className="relative">
           <Search size={14} className="absolute left-2.5 top-2.5 text-gray-400" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder={t('Code, item, AT/C or order')}
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder={t('Code, item no. or name, AT/C or order')}
             className="border border-gray-300 rounded-lg pl-8 pr-2 py-1.5 text-sm w-72" />
         </div>
         <label className="flex items-center gap-2 text-sm text-gray-700">
@@ -437,6 +440,13 @@ export default function HistoryView() {
                           : e.dhl ? <span className="text-xs text-gray-500">{t('DHL Express clearance: the PDF has no tariff codes')}</span>
                           : e.statement ? <span className="text-xs text-gray-500">{t('Monthly Bundeskasse statement (not a declaration)')}</span>
                           : <span className="text-xs text-amber-800 flex items-center gap-1"><AlertCircle size={13} /> {t('The PDF does not include the positions ("Beleg" part)')}</span>}
+                        {s && e.check && (() => {
+                          // Artículos que coinciden con la búsqueda (por nº o nombre), con su posición
+                          const hits = new Map<string, string>();
+                          for (const p of e.check.positions) for (const i of p.items) if (itemHit(i)) hits.set(i.no, `${i.no} · ${i.description || ''} (${t('pos. {n}', { n: p.pos })})`);
+                          for (const i of e.check.unassigned) if (itemHit(i)) hits.set(i.no, `${i.no} · ${i.description || ''} (${t('no position')})`);
+                          return hits.size ? <div className="mt-1 text-xs text-indigo-800">{Array.from(hits.values()).map(h => <div key={h}>{h}</div>)}</div> : null;
+                        })()}
                       </td>
                     </tr>
                     {open[k] && (
