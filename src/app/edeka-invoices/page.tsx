@@ -8,7 +8,8 @@ import { useCompany } from '@/contexts/CompanyContext';
 // EDEKA EDI: facturas a EDEKA (Bill-to EDEKA Zentralhandels) → mensaje TRANSUSXML con precios brutos, descuentos
 // DI/EAB/TD escalonados a nivel de factura y FSDU con sus artículos como unidades de consumo. Vista previa, descarga
 // del XML (para la pestaña Test de Transus) y envío por WebConnect con confirmación. Ver src/lib/edekaInvoice.ts.
-type Row = { no: string; date: string; sellTo: string; sellToName: string; shipTo: string; orderNo: string; amount: number; amountInclVat: number; sent?: { at: string; by: string; transactionId: string; test: boolean } | null };
+type Credit = { full: boolean; memos: { no: string; date: string; amount: number }[] };
+type Row = { credit?: Credit | null; no: string; date: string; sellTo: string; sellToName: string; shipTo: string; orderNo: string; amount: number; amountInclVat: number; sent?: { at: string; by: string; transactionId: string; test: boolean } | null };
 type Build = {
   no: string; xml: string; warnings: string[]; header: Record<string, string>;
   articles: { line: number; itemNo: string; gtin: string; code: string; description: string; kind: 'item' | 'display' | 'component'; parentGtin?: string; qty: number; grossPrice: number; netPriceBc?: number; amount: number; consumerUnits?: number }[];
@@ -141,10 +142,10 @@ export default function EdekaInvoicesPage() {
                       <td className="p-3 text-gray-700">{r.shipTo}</td>
                       <td className="p-3">{r.orderNo}</td>
                       <td className="p-3 text-right font-semibold">{n2(r.amount)}</td>
-                      <td className="p-3 text-xs">{r.sent ? <span className="text-green-700 font-bold">{t('Sent {date}', { date: new Date(r.sent.at).toLocaleDateString(locale) })}{r.sent.test ? ` (${t('test')})` : ''}</span> : <span className="text-gray-500">{t('Not sent')}</span>}</td>
+                      <td className="p-3 text-xs">{r.credit && <div className={`font-bold ${r.credit.full ? 'text-red-700' : 'text-amber-700'}`}>{t(r.credit.full ? 'Credited by {nos}' : 'Partly credited by {nos}', { nos: r.credit.memos.map(m => m.no).join(', ') })}</div>}{r.sent ? <span className="text-green-700 font-bold">{t('Sent {date}', { date: new Date(r.sent.at).toLocaleDateString(locale) })}{r.sent.test ? ` (${t('test')})` : ''}</span> : <span className="text-gray-500">{t('Not sent')}</span>}</td>
                       <td className="p-3 whitespace-nowrap" onClick={e => e.stopPropagation()}>
                         <button onClick={() => download(r.no)} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-gray-200 text-xs font-semibold hover:bg-gray-100 mr-1" title={t('Download XML')}><Download size={12} /> XML</button>
-                        <button disabled={sending !== null} onClick={() => send(r)} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-indigo-200 text-indigo-800 text-xs font-semibold hover:bg-indigo-50 disabled:opacity-50"><Send size={12} /> {sending === r.no ? t('Sending…') : t('Send')}</button>
+                        <button disabled={sending !== null || !!r.credit?.full} title={r.credit?.full ? t('Credited invoices are not sent') : undefined} onClick={() => send(r)} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-indigo-200 text-indigo-800 text-xs font-semibold hover:bg-indigo-50 disabled:opacity-50"><Send size={12} /> {sending === r.no ? t('Sending…') : t('Send')}</button>
                       </td>
                     </tr>
                     {open === r.no && (

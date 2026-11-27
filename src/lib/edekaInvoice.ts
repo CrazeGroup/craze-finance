@@ -41,7 +41,25 @@ const q = (s: string) => s.replace(/'/g, "''");
 // Código de artículo del proveedor = parte numérica inicial (34309DEX → 34309, 86087PAL → 86087), como en BC/Transus
 const supplierCode = (no: string) => no.match(/^\d+/)?.[0] || no;
 
+// Abonos de una factura: el abono que la cita (invoiceNumber) o, si no la cita, uno del mismo cliente y pedido (External
+// Document No.) por el mismo importe (CRZ-SC26-00196 anula CRZ-SI26-01983 de BUDNI). full = abonada entera (no se envía).
+export type CreditInfo = { full: boolean; memos: { no: string; date: string; amount: number }[] };
+type InvLite = { number: string; customerNumber: string; externalDocumentNumber?: string; totalAmountExcludingTax: number };
+const creditsFor = (inv: InvLite, memos: any[]): CreditInfo | null => {
+  const amount = Number(inv.totalAmountExcludingTax) || 0;
+  const direct = memos.filter(m => m.invoiceNumber === inv.number);
+  const sameOrder = direct.length ? [] : memos.filter(m => !m.invoiceNumber && m.customerNumber === inv.customerNumber && inv.externalDocumentNumber
+    && m.externalDocumentNumber === inv.externalDocumentNumber);
+  const byAmount = sameOrder.filter(m => Math.abs(Number(m.totalAmountExcludingTax) - amount) < 0.005);
+  const list = direct.length ? direct : byAmount.length ? byAmount : sameOrder;
+  if (!list.length) return null;
+  const total = list.reduce((s, m) => s + (Number(m.totalAmountExcludingTax) || 0), 0);
+  return { full: total >= amount - 0.005, memos: list.map(m => ({ no: m.number, date: m.creditMemoDate, amount: Number(m.totalAmountExcludingTax) || 0 })) };
+};
+const MEMO_SELECT = 'number,creditMemoDate,customerNumber,externalDocumentNumber,invoiceNumber,totalAmountExcludingTax,status';
+
 export type EdekaListRow = {
+  credit?: CreditInfo | null;
   no: string; date: string; sellTo: string; sellToName: string; shipTo: string; orderNo: string; amount: number; amountInclVat: number;
   sent?: { at: string; by: string; transactionId: string; test: boolean } | null;
 };
@@ -53,12 +71,17 @@ export async function listEdekaInvoices(company: string, from: string, to: strin
     $filter: `billToCustomerNumber eq '${EDEKA_INVOICEE}' and invoiceDate ge ${from} and invoiceDate le ${to}`,
     $select: 'number,invoiceDate,customerNumber,customerName,shipToName,externalDocumentNumber,totalAmountExcludingTax,totalAmountIncludingTax,status',
   }), ctx.token);
+  // Abonos a EDEKA desde el inicio del periodo (un abono puede ser posterior al final del periodo)
+  const memos = await bcFetchAll(odataUrl(`${ctx.apiBase}/salesCreditMemos`, {
+    $filter: `billToCustomerNumber eq '${EDEKA_INVOICEE}' and creditMemoDate ge ${from}`, $select: MEMO_SELECT,
+  }), ctx.token).then(r => r.filter((m: any) => m.status !== 'Canceled')).catch(() => []);
   const sent = await prisma.apiConfig.findMany({ where: { key: { startsWith: `edeka:sent:${company}:` } } });
   const sentMap = new Map(sent.map(s => [s.key, JSON.parse(s.config || '{}')]));
   return rows.filter((r: any) => r.status !== 'Canceled').map((r: any) => ({
     no: r.number, date: r.invoiceDate, sellTo: r.customerNumber, sellToName: r.customerName, shipTo: r.shipToName || '',
     orderNo: r.externalDocumentNumber || '', amount: Number(r.totalAmountExcludingTax) || 0, amountInclVat: Number(r.totalAmountIncludingTax) || 0,
     sent: sentMap.get(sentKey(company, r.number)) || null,
+    credit: creditsFor(r, memos),
   })).sort((a, b) => (a.date === b.date ? (a.no < b.no ? 1 : -1) : a.date < b.date ? 1 : -1));
 }
 
@@ -67,7 +90,7 @@ type ArticleOut = {
   parentGtin?: string; qty: number; grossPrice: number; netPriceBc?: number; amount: number; consumerUnits?: number;
 };
 export type EdekaBuild = {
-  no: string; xml: string; warnings: string[];
+  no: string; xml: string; warnings: string[]; credit: CreditInfo | null;
   header: Record<string, string>;
   articles: ArticleOut[];
   discounts: { code: string; pct: number; base: string; amount: number }[];
@@ -82,6 +105,13 @@ export async function buildEdekaInvoice(company: string, no: string, opts: { tes
   const warnings: string[] = [];
   const h = await one(ctx, odataUrl(`${ctx.apiBase}/salesInvoices`, { $filter: `number eq '${q(no)}'` }));
   if (!h) throw new Error(`Invoice ${no} not found in BC`);
+  const memos = await bcFetchAll(odataUrl(`${ctx.apiBase}/salesCreditMemos`, {
+    $filter: `customerNumber eq '${q(h.customerNumber)}' and creditMemoDate ge ${h.invoiceDate}`, $select: MEMO_SELECT,
+  }), ctx.token).then(r => r.filter((m: any) => m.status !== 'Canceled')).catch(() => []);
+  const credit = creditsFor(h, memos);
+  if (credit) warnings.push(credit.full
+    ? `Fully credited by ${credit.memos.map(m => m.no).join(', ')}: do not send it`
+    : `Partly credited by ${credit.memos.map(m => `${m.no} (${m.amount.toFixed(2)})`).join(', ')}`);
   if (h.billToCustomerNumber !== EDEKA_INVOICEE) warnings.push(`The bill-to customer is ${h.billToCustomerNumber} ${h.billToName}, not EDEKA Zentralhandels (${EDEKA_INVOICEE})`);
 
   const [lines, cards, shipments, chain] = await Promise.all([
@@ -218,7 +248,7 @@ export async function buildEdekaInvoice(company: string, no: string, opts: { tes
     el('IsDutyFree', 'N', 4), el('DiscountAmount', discTotal.toFixed(2), 4), '  </InvoiceVATTotals>', '</Message>', '</Messages>');
 
   return {
-    no: h.number, xml: out.filter(Boolean).join('\n') + '\n', warnings, header, articles,
+    no: h.number, xml: out.filter(Boolean).join('\n') + '\n', warnings, credit, header, articles,
     discounts: discounts.map(d => ({ code: d.code, pct: d.pct, base: d.base, amount: d.amount })),
     totals: { lines: linesTotal, discounts: discTotal, base, vat, total, vatPct }, bc,
   };
@@ -227,6 +257,7 @@ export async function buildEdekaInvoice(company: string, no: string, opts: { tes
 // Envía el XML a Transus (WebConnect M10100) y guarda el envío. Solo con confirmación explícita desde la página.
 export async function sendEdekaInvoice(company: string, no: string, test: boolean, by: string) {
   const build = await buildEdekaInvoice(company, no, { test });
+  if (build.credit?.full) throw new Error(`Fully credited by ${build.credit.memos.map(m => m.no).join(', ')}: do not send it`);
   const res = await transusCall('M10100', { Message: Buffer.from(build.xml, 'utf-8').toString('base64') });
   const exitCode = res.fields?.ExitCode;
   const transactionId = res.fields?.TransactionID || '';
