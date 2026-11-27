@@ -216,6 +216,8 @@ export async function buildEdekaInvoice(company: string, no: string, opts: { tes
     el('Recipient', h.billToName), el('RecipientGLN', invoicee.GLN),
     el('IsTestMessage', opts.test ? 'Y' : 'N'),
     el('InvoiceNumber', h.number), el('InvoiceType', 'NOR'), el('InvoiceDate', ymd(h.invoiceDate)),
+    // EDEKA: Transus Online pone el nº de acción como texto libre (FTX+ZZZ+++Aktionsnummer 11111126); ActionNumber solo no sale en el EDIFACT
+    el('UnspecifiedTextCode', h.externalDocumentNumber ? 'ZZZ' : undefined), el('UnspecifiedText', h.externalDocumentNumber ? `Aktionsnummer ${h.externalDocumentNumber}` : undefined),
     el('OrderNumberBuyer', h.externalDocumentNumber), el('OrderDate', ymd(h.invoiceDate)),
     el('DeliveryDate', shipDate ? `${shipDate}0000` : undefined),
     el('DespatchAdviceNumber', despatchNo), el('DespatchAdviceDate', shipDate),
